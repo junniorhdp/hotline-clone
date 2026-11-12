@@ -15,7 +15,8 @@ import { COLORS } from './utils.js';
 const STICK_CSS_RADIUS = 56;
 const BUTTON_CSS_HEIGHT = 48;
 const AIM_DEADZONE = 0.15;     // fracción del radio: por debajo no se cambia la mirada
-const FIRE_THRESHOLD = 0.3;    // fracción del radio: por encima el joystick derecho ataca
+const FIRE_THRESHOLD = 0.3;    // fracción del radio: arrastrado más allá, ataca al instante
+const HOLD_FIRE_DELAY = 0.1;   // s: mantenido sin arrastrar, ataca tras este tiempo
 const MARGIN = 6;
 const GAMEPLAY = new Set(['playing', 'cleared']);
 
@@ -128,6 +129,7 @@ export class TouchControls {
 
     const L = this.layout();
     const half = g.scene.width / 2;
+    let endedAim = null;
     for (const t of input.touches.values()) {
       const p = g.toInternal(t.x, t.y);
       if (t.isNew && !this.roles.has(t.id)) {
@@ -139,7 +141,7 @@ export class TouchControls {
           this.move = { id: t.id, ox: p.x, oy: p.y, x: p.x, y: p.y };
           this.roles.set(t.id, 'move');
         } else if (p.x >= half && !this.aim) {
-          this.aim = { id: t.id, ox: p.x, oy: p.y, x: p.x, y: p.y };
+          this.aim = { id: t.id, ox: p.x, oy: p.y, x: p.x, y: p.y, held: 0, fired: false };
           this.roles.set(t.id, 'aim');
         } else {
           this.roles.set(t.id, 'ignored');
@@ -150,7 +152,7 @@ export class TouchControls {
       }
       if (t.ended) {
         if (this.move && this.move.id === t.id) this.move = null;
-        if (this.aim && this.aim.id === t.id) this.aim = null;
+        if (this.aim && this.aim.id === t.id) { endedAim = this.aim; this.aim = null; }
         this.roles.delete(t.id);
       }
     }
@@ -161,13 +163,25 @@ export class TouchControls {
       return len > 1 ? { x: dx / len, y: dy / len, len: 1 } : { x: dx, y: dy, len };
     };
     input.moveAxis = this.move ? vec(this.move) : { x: 0, y: 0 };
+    // Joystick derecho:
+    // - mantenerlo ataca a la cadencia del arma: al instante si se arrastra más allá de
+    //   FIRE_THRESHOLD, o tras HOLD_FIRE_DELAY aunque el dedo esté quieto (así, al arrastrar para
+    //   apuntar, el primer disparo ya sale en la dirección buena);
+    // - un toque rápido que se levanta antes de disparar = un ataque en la dirección actual.
     if (this.aim) {
+      this.aim.held += dt;
       const v = vec(this.aim);
       input.aimActive = true;
       if (v.len > AIM_DEADZONE) input.aimAngle = Math.atan2(v.y, v.x);
-      input.aimFiring = v.len > FIRE_THRESHOLD;
+      input.aimFiring = v.len > FIRE_THRESHOLD || this.aim.held >= HOLD_FIRE_DELAY;
+      if (input.aimFiring) this.aim.fired = true;
     } else {
       input.aimActive = input.aimFiring = false;
+      if (endedAim && !endedAim.fired) {
+        const v = vec(endedAim);
+        if (v.len > AIM_DEADZONE) { input.aimAngle = Math.atan2(v.y, v.x); input.aimActive = true; }
+        input.tapAttack = true;
+      }
     }
   }
 

@@ -24,6 +24,7 @@ export class Input {
     this.aimActive = false;
     this.aimAngle = 0;
     this.aimFiring = false;
+    this.tapAttack = false;  // toque rápido en el joystick derecho: un ataque
 
     window.addEventListener('keydown', (e) => {
       if (BLOCKED_DEFAULTS.has(e.code)) e.preventDefault();
@@ -117,6 +118,7 @@ export class Input {
   endStep() {
     this.pressed.clear();
     this.mousePressed.left = this.mousePressed.right = false;
+    this.tapAttack = false;
     for (const [id, t] of this.touches) {
       if (t.ended) this.touches.delete(id);
       else t.isNew = false;

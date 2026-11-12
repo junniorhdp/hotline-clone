@@ -222,8 +222,11 @@ Colores centralizados en `COLORS` (`src/utils.js`) y `PALETTE` (`src/sprites.js`
 - **Orientación**: apaisado obligatorio. En vertical con táctil, `game.needsRotate` pausa el juego
   y muestra "GIRA EL DISPOSITIVO".
 - **Controles** (`touch.js`, solo en `playing`/`cleared`): joystick izquierdo flotante (mitad
-  izquierda) → `input.moveAxis` analógico; joystick derecho flotante (mitad derecha) → apunta y,
-  empujado más del 30% del radio, `input.aimFiring` = ataca con cualquier arma a su cadencia.
+  izquierda) → `input.moveAxis` analógico; joystick derecho flotante (mitad derecha) → apunta y ataca:
+  mantenido, `input.aimFiring` = ataca con cualquier arma a su cadencia (al instante si se arrastra
+  más del 30% del radio, o tras `HOLD_FIRE_DELAY` 0,1 s con el dedo quieto); un toque rápido que se
+  levanta antes de disparar → `input.tapAttack` = un ataque. No exigir arrastre para atacar: en el
+  móvil lo natural es tocar o mantener (fue un bug real).
   Botones LANZAR (= clic derecho), PATADA (= E) y REINICIAR (= R): reutilizan la entrada existente.
   Tamaños en píxeles CSS (`STICK_CSS_RADIUS`, `BUTTON_CSS_HEIGHT`) para que midan lo mismo que un dedo.
 - **Fuera de la partida** un toque = clic en ese punto (menús, tarjetas). Antes se comprueban los
