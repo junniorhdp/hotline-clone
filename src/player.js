@@ -1,7 +1,7 @@
 import { moveAndSlide, lineOfSight, isSolidAt, castRay } from './map.js';
 import { WEAPON_DEFS, Bullet, Pickup, inMeleeArc, drawWeaponShape } from './weapons.js';
 import { COLORS, TAU } from './utils.js';
-import { drawSprite, sprites, pixelRect } from './sprites.js';
+import { drawSprite, sprites, pixelRect, WORLD_PX } from './sprites.js';
 import { DEFAULT_EFFECTS } from './masks.js';
 
 const SPEED = 210;
@@ -13,7 +13,7 @@ const STEP_INTERVAL = 0.3;
 const KICK_COOLDOWN = 0.35;
 const AIM_MAX_DIST = 360;    // largo máximo del indicador de apuntado (armas de alcance ilimitado)
 const AIM_START = 18;        // el indicador empieza en la boca del arma
-const AIM_DOT_SPACING = 8;
+const AIM_DOT_SPACING = 10;
 
 export class Player {
   // `perks` = efectos de la máscara elegida (ver maskEffects en masks.js).
@@ -245,8 +245,8 @@ export class Player {
     ctx.fillStyle = COLORS.player;
     if (def.melee) {
       const r = def.range + 4;
-      const steps = Math.max(4, Math.round((def.arc * r) / 7));
-      ctx.globalAlpha = 0.5;
+      const steps = Math.max(5, Math.round((def.arc * r) / 5));
+      ctx.globalAlpha = 0.75;
       for (let i = 0; i <= steps; i++) {
         const a = this.angle - def.arc / 2 + (def.arc * i) / steps;
         pixelRect(ctx, this.x + Math.cos(a) * r - 1, this.y + Math.sin(a) * r - 1);
@@ -269,26 +269,37 @@ export class Player {
       }
       return len;
     };
-    const dots = (angle, len, spacing, alpha) => {
+    // size = lado del punto en píxeles internos.
+    const dots = (angle, len, spacing, alpha, size) => {
       const cos = Math.cos(angle), sin = Math.sin(angle);
       for (let d = AIM_START; d < len; d += spacing) {
-        ctx.globalAlpha = alpha * (1 - (d / len) * 0.45);
-        pixelRect(ctx, this.x + cos * d - 1, this.y + sin * d - 1);
+        ctx.globalAlpha = alpha * (1 - (d / len) * 0.4);
+        pixelRect(ctx, this.x + cos * d - size, this.y + sin * d - size, size, size);
       }
     };
 
     if (empty) ctx.fillStyle = '#7d6f98';
     const len = lineLength(this.angle, true);
-    dots(this.angle, len, AIM_DOT_SPACING, empty ? 0.4 : 0.85);
+    dots(this.angle, len, AIM_DOT_SPACING, empty ? 0.45 : 0.95, 2);
     if (def.pellets > 1 && !empty) {
       const spread = def.spread * this.perks.spreadMul;
-      for (const side of [-1, 1]) dots(this.angle + spread * side, lineLength(this.angle + spread * side, false), AIM_DOT_SPACING * 2, 0.55);
+      for (const side of [-1, 1]) dots(this.angle + spread * side, lineLength(this.angle + spread * side, false), AIM_DOT_SPACING, 0.6, 1);
     }
-    // Marca al final: una pequeña cruz donde acaba la línea (pared u objetivo).
+    // Mira al final de la línea (donde impactaría): esquinas de un cuadrado de 9×9 píxeles con
+    // contorno oscuro para que se lea sobre cualquier suelo.
     if (!empty) {
       const ex = this.x + Math.cos(this.angle) * len, ey = this.y + Math.sin(this.angle) * len;
-      ctx.globalAlpha = 0.8;
-      for (const [ox, oy] of [[0, 0], [-2, 0], [2, 0], [0, -2], [0, 2]]) pixelRect(ctx, ex + ox * 2 - 1, ey + oy * 2 - 1);
+      const part = (dx, dy, w, h) => pixelRect(ctx, ex + dx * WORLD_PX, ey + dy * WORLD_PX, w, h);
+      const shapes = [
+        [-4, -4, 3, 1], [-4, -4, 1, 3], [2, -4, 3, 1], [4, -4, 1, 3],
+        [-4, 4, 3, 1], [-4, 2, 1, 3], [2, 4, 3, 1], [4, 2, 1, 3], [0, 0, 1, 1],
+      ];
+      ctx.globalAlpha = 0.85;
+      ctx.fillStyle = '#140a24';
+      for (const [dx, dy, w, h] of shapes) part(dx - 1, dy - 1, w + 2, h + 2);
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = COLORS.player;
+      for (const [dx, dy, w, h] of shapes) part(dx, dy, w, h);
     }
     ctx.restore();
   }

@@ -10,6 +10,9 @@ HTML5 Canvas, JavaScript Vanilla (ES Modules) y Vite. Sin frameworks ni librerí
 - Despliegue: cada push a `main` compila y publica en GitHub Pages (`.github/workflows/deploy.yml`)
   → https://junniorhdp.github.io/hotline-clone/ . En Settings → Pages la fuente debe ser "GitHub Actions".
 - `npm run preview` — sirve el build
+- Versión: `vite.config.js` define `__APP_VERSION__` (commit de GitHub Actions o "dev") y el título
+  la muestra arriba a la izquierda, para comprobar que el navegador no sirve una copia guardada
+  (GitHub Pages permite cachear la página ~10 min).
 
 ## Arquitectura (reglas)
 - Todo el código del juego vive en `src/` y es modular, un módulo por responsabilidad:
@@ -148,7 +151,8 @@ Alcance en unidades del mundo (1 casilla = 32). Cadencia = segundos entre ataque
 
 - **Indicador de apuntado** (`player.drawAim`, PC y móvil, se dibuja bajo el jugador): armas de
   fuego → línea de puntos hasta la primera pared/puerta/enemigo (tope `AIM_MAX_DIST` o el alcance del
-  arma) con una cruz al final; la escopeta añade dos líneas tenues con su apertura (incluye
+  arma), puntos de 2×2 px y una mira cuadrada de 9×9 px con contorno oscuro al final (donde
+  impactaría); la escopeta añade dos líneas finas con su apertura (incluye
   `perks.spreadMul`); sin munición la línea se apaga. Cuerpo a cuerpo → arco de puntos con `range`
   y `arc` del arma. La mira del ratón (PC) se mantiene.
 - `auto: true` = dispara mientras se mantiene el clic (si no, un clic = un disparo; el melee

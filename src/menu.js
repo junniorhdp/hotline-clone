@@ -16,6 +16,9 @@ const TITLE_OPTIONS = [
 ];
 const RANK_COLORS = { S: COLORS.player, A: COLORS.weapon, B: COLORS.enemy, C: COLORS.blood };
 const DIM = '#7d6f98';
+/* global __APP_VERSION__ */
+// Lo define vite.config.js en el build (commit publicado o "dev").
+const APP_VERSION = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : 'dev';
 // iPhone/iPad (incluido el iPad que se presenta como Mac con pantalla táctil).
 const IS_IOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 
@@ -277,6 +280,8 @@ export class Menu {
     if (g.input.touchMode && IS_IOS) {
       drawText(ctx, 'IPHONE: QUITA EL MODO SILENCIO PARA OÍR EL JUEGO', cx, h - 24 - s.b, { color: COLORS.enemy, align: 'center' });
     }
+    // Versión (commit publicado): permite confirmar que no se ve una copia guardada del navegador.
+    drawText(ctx, `V ${APP_VERSION}`, 6 + s.l, 6 + s.t, { color: '#4a3d66' });
     const fs = this.fullscreenRect();
     if (fs) drawTouchButton(ctx, fs, false, 0.7);
   }
