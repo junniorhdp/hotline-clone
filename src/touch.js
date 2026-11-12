@@ -21,6 +21,22 @@ const GAMEPLAY = new Set(['playing', 'cleared']);
 
 const inside = (r, p) => p.x >= r.x && p.x < r.x + r.w && p.y >= r.y && p.y < r.y + r.h;
 
+// Botón táctil pixel art: fondo oscuro, borde de 1 px (rosa al pulsarlo) y texto centrado.
+export function drawTouchButton(ctx, b, lit, alpha = 0.55) {
+  ctx.globalAlpha = lit ? 0.95 : alpha;
+  ctx.fillStyle = '#140a24';
+  ctx.fillRect(b.x, b.y, b.w, b.h);
+  ctx.fillStyle = lit ? COLORS.wall : b.accent || '#3a2a55';
+  ctx.fillRect(b.x, b.y, b.w, 1);
+  ctx.fillRect(b.x, b.y + b.h - 1, b.w, 1);
+  ctx.fillRect(b.x, b.y, 1, b.h);
+  ctx.fillRect(b.x + b.w - 1, b.y, 1, b.h);
+  ctx.globalAlpha = lit ? 1 : Math.min(1, alpha + 0.25);
+  drawText(ctx, b.label, b.x + b.w / 2, b.y + Math.round((b.h - CELL_H) / 2) - 1,
+    { color: lit ? COLORS.text : '#c9bce6', align: 'center' });
+  ctx.globalAlpha = 1;
+}
+
 export class TouchControls {
   constructor(game) {
     this.game = game;
@@ -35,20 +51,31 @@ export class TouchControls {
     return (css * this.game.dpr) / this.game.view.scale;
   }
 
+  // Márgenes = MARGIN + zona segura del sistema (muesca, barra de inicio): nada táctil
+  // queda debajo de ellas.
   layout() {
     const { width: w, height: h } = this.game.scene;
+    const s = this.game.safe;
+    const left = MARGIN + s.l, right = w - MARGIN - s.r, bottom = h - MARGIN - s.b;
     const bh = Math.max(16, Math.round(this.px(BUTTON_CSS_HEIGHT)));
     const bw = Math.max(Math.round(bh * 1.8), measureText('LANZAR') + 12);
     const rh = Math.max(14, Math.round(bh * 0.75));
     return {
+      left, right, bottom,
       stickR: Math.max(16, Math.round(this.px(STICK_CSS_RADIUS))),
       buttons: [
-        { id: 'throw', label: 'LANZAR', x: w - MARGIN - bw, y: h - MARGIN - bh * 2 - 6, w: bw, h: bh },
-        { id: 'kick', label: 'PATADA', x: w - MARGIN - bw, y: h - MARGIN - bh, w: bw, h: bh },
+        { id: 'throw', label: 'LANZAR', x: right - bw, y: bottom - bh * 2 - 6, w: bw, h: bh },
+        { id: 'kick', label: 'PATADA', x: right - bw, y: bottom - bh, w: bw, h: bh },
         // Debajo de la miniatura de la máscara del HUD.
-        { id: 'retry', label: 'REINICIAR', x: MARGIN, y: 56, w: measureText('REINICIAR') + 12, h: rh },
+        { id: 'retry', label: 'REINICIAR', x: left, y: 56 + s.t, w: measureText('REINICIAR') + 12, h: rh },
       ],
     };
+  }
+
+  // Tamaño estándar de un botón táctil de pantalla (en píxeles internos) para `label`.
+  buttonSize(label) {
+    const h = Math.max(16, Math.round(this.px(BUTTON_CSS_HEIGHT * 0.85)));
+    return { w: Math.max(h * 2, measureText(label) + 14), h };
   }
 
   reset() {
@@ -75,15 +102,26 @@ export class TouchControls {
 
     if (!GAMEPLAY.has(g.state)) {
       if (this.move || this.aim || this.roles.size) this.reset();
-      // Menús y pantallas: tocar = hacer clic ahí. En resultados y fin de partida, tocar en
-      // cualquier sitio continúa; en la pantalla de muerte, reintenta.
+      // Pantallas fuera de la partida: primero los botones táctiles de la pantalla (VOLVER,
+      // TERMINAR…), que "pulsan" la tecla equivalente. Si no se toca ninguno: con el panel de
+      // récords abierto, tocar lo cierra; en resultados, tocar continúa; en el resto, el toque
+      // es un clic en ese punto (menús, tarjetas de máscara…).
+      const buttons = g.screenButtons();
       for (const t of input.touches.values()) {
         if (!t.isNew) continue;
+        const p = g.toInternal(t.x, t.y);
+        const hit = buttons.find((b) => inside(b, p));
+        if (hit) {
+          input.pressed.add(hit.key);
+          this.flash[hit.id] = 0.15;
+          continue;
+        }
+        if (g.showRecords) { input.pressed.add('Escape'); continue; }
+        if (g.state === 'results') { input.pressed.add('Enter'); continue; }
+        if (g.state === 'dead' || g.state === 'gameover') continue; // solo con sus botones
         input.mouse.x = t.x;
         input.mouse.y = t.y;
         input.mousePressed.left = true;
-        if (g.state === 'results' || g.state === 'gameover') input.pressed.add('Enter');
-        if (g.state === 'dead') input.pressed.add('KeyR');
       }
       return;
     }
@@ -138,31 +176,21 @@ export class TouchControls {
   draw(ctx) {
     const g = this.game;
     if (!g.input.touchMode || !GAMEPLAY.has(g.state)) return;
-    const { width: w, height: h } = g.scene;
     const L = this.layout();
     const R = L.stickR;
     const rightBase = L.buttons[0].x - R - 10;
 
     // Joysticks: si no se están usando, un círculo tenue indica dónde poner el pulgar.
-    this.drawStick(ctx, this.move, MARGIN + R + 6, h - MARGIN - R - 6, R, COLORS.player, false);
-    this.drawStick(ctx, this.aim, Math.min(rightBase, w - MARGIN - R), h - MARGIN - R - 6, R,
+    this.drawStick(ctx, this.move, L.left + R + 6, L.bottom - R - 6, R, COLORS.player, false);
+    this.drawStick(ctx, this.aim, Math.min(rightBase, L.right - R), L.bottom - R - 6, R,
       g.input.aimFiring ? COLORS.blood : COLORS.wall, g.input.aimFiring);
 
-    for (const b of L.buttons) {
-      const lit = this.flash[b.id] > 0;
-      ctx.globalAlpha = lit ? 0.9 : 0.55;
-      ctx.fillStyle = '#140a24';
-      ctx.fillRect(b.x, b.y, b.w, b.h);
-      ctx.fillStyle = lit ? COLORS.wall : '#3a2a55';
-      ctx.fillRect(b.x, b.y, b.w, 1);
-      ctx.fillRect(b.x, b.y + b.h - 1, b.w, 1);
-      ctx.fillRect(b.x, b.y, 1, b.h);
-      ctx.fillRect(b.x + b.w - 1, b.y, 1, b.h);
-      ctx.globalAlpha = lit ? 1 : 0.8;
-      drawText(ctx, b.label, b.x + b.w / 2, b.y + Math.round((b.h - CELL_H) / 2) - 1,
-        { color: lit ? COLORS.text : '#c9bce6', align: 'center' });
-    }
-    ctx.globalAlpha = 1;
+    for (const b of L.buttons) drawTouchButton(ctx, b, this.flash[b.id] > 0, 0.55);
+  }
+
+  // Botones de las pantallas fuera de la partida (los define game.screenButtons()).
+  drawScreenButtons(ctx) {
+    for (const b of this.game.screenButtons()) drawTouchButton(ctx, b, this.flash[b.id] > 0, 0.85);
   }
 
   drawStick(ctx, stick, idleX, idleY, R, color, firing) {

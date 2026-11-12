@@ -33,6 +33,8 @@ const INTERNAL_MIN_W = 256;
 const INTERNAL_MAX_W = 560;
 const INTERNAL_MAX_H = 320;     // en vertical la escena no crece sin límite
 const TOUCH_LOOKAHEAD = 50;     // adelanto de cámara (mundo) en modo táctil
+const LOW_FPS = 45;              // por debajo, durante LOW_FPS_SECONDS seguidos → efectos ligeros
+const LOW_FPS_SECONDS = 3;
 const COARSE_POINTER = window.matchMedia?.('(pointer: coarse)').matches ?? false;
 
 // Hit-stop: segundos que se congela la simulación en cada tipo de impacto.
@@ -139,6 +141,14 @@ export class Game {
     this.floorStats = new FloorStats();
     this.menu = new Menu(this);
     this.touch = new TouchControls(this);
+    this.toast = null;
+    // Elemento invisible que lee las zonas seguras CSS (env(safe-area-inset-*)).
+    this.safeProbe = document.createElement('div');
+    this.safeProbe.style.cssText = 'position:fixed;left:0;top:0;width:0;height:0;visibility:hidden;'
+      + 'pointer-events:none;padding:env(safe-area-inset-top) env(safe-area-inset-right) '
+      + 'env(safe-area-inset-bottom) env(safe-area-inset-left)';
+    document.body.appendChild(this.safeProbe);
+    canvas.addEventListener('pointerup', (e) => this.onPointerUp(e));
     this.fade = null;
     this.mask = MASKS[0];
     this.maskIndex = 0;
@@ -179,6 +189,11 @@ export class Game {
     this.ctx.imageSmoothingEnabled = false;
     this.camera.resize(iw, ih);
     this.fx.resize(iw, ih, sw, sh, this.view);
+    // Zonas seguras del sistema (muesca, esquinas, barra de inicio) en píxeles internos.
+    const cs = getComputedStyle(this.safeProbe);
+    const k = dpr / scale;
+    const inset = (v) => Math.ceil((parseFloat(v) || 0) * k);
+    this.safe = { t: inset(cs.paddingTop), r: inset(cs.paddingRight), b: inset(cs.paddingBottom), l: inset(cs.paddingLeft) };
   }
 
   // Coordenadas CSS relativas al canvas (ratón o dedo) → píxeles internos de la escena.
@@ -226,6 +241,7 @@ export class Game {
       this.fps = this.frames;
       this.frames = 0;
       this.fpsTimer -= 1;
+      this.checkPerformance();
     }
     requestAnimationFrame(this.loop);
   }
@@ -281,11 +297,95 @@ export class Game {
     if (hovered >= 0 && moved) this.maskIndex = hovered;
     if (this.maskIndex !== prev) this.sfx.play('empty');
 
+    // En táctil, el primer toque en una máscara solo la elige (para leer su pasiva); tocar la
+    // ya elegida empieza el piso.
+    if (input.touchMode && input.mousePressed.left && hovered >= 0 && hovered !== prev) return;
     if (input.wasPressed('Space') || input.wasPressed('Enter') || input.wasPressed('NumpadEnter')
       || (input.mousePressed.left && hovered >= 0)) {
       if (hovered >= 0 && input.mousePressed.left) this.maskIndex = hovered;
       this.transition(() => this.confirmMask());
     }
+  }
+
+  // --- Botones táctiles de pantalla ----------------------------------------------------------
+  // Solo en modo táctil, en las pantallas donde con teclado se usan Esc / R / Enter / T.
+  // `key` es la tecla que "pulsan" (TouchControls la inyecta): reutilizan la misma lógica.
+  screenButtons() {
+    if (!this.input.touchMode || this.fade) return [];
+    const w = this.scene.width, h = this.scene.height, s = this.safe;
+    const sized = (id, label, key, accent) => ({ id, label, key, accent, ...this.touch.buttonSize(label) });
+    // Fila de botones centrada en horizontal.
+    const row = (items, y) => {
+      const bs = items.map((it) => sized(...it));
+      let x = Math.round(w / 2 - (bs.reduce((sum, b) => sum + b.w, 0) + 8 * (bs.length - 1)) / 2);
+      for (const b of bs) { b.x = x; b.y = y; x += b.w + 8; }
+      return bs;
+    };
+    const bottomY = h - 6 - s.b - this.touch.buttonSize('X').h;
+    if (this.showRecords) return row([['close', 'CERRAR', 'Escape']], bottomY);
+    if (this.state === 'masks') {
+      const back = { ...sized('back', 'VOLVER', 'Escape'), x: 6 + s.l, y: 6 + s.t };
+      const records = sized('records', 'RÉCORDS', 'KeyT');
+      return [back, { ...records, x: w - 6 - s.r - records.w, y: 6 + s.t }];
+    }
+    if (this.state === 'dead') {
+      return row([['retry', 'REINTENTAR', 'KeyR', COLORS.player], ['end', 'TERMINAR', 'Enter', COLORS.blood],
+        ['records', 'RÉCORDS', 'KeyT']], Math.round(h / 2) + 8);
+    }
+    if (this.state === 'gameover') {
+      return row([['again', 'NUEVA PARTIDA', 'Enter', COLORS.player], ['menu', 'MENÚ', 'Escape']], bottomY);
+    }
+    return [];
+  }
+
+  // Texto de ayuda según el modo de control.
+  hint(desktop, touch) {
+    return this.input.touchMode ? touch : desktop;
+  }
+
+  // --- Rendimiento ------------------------------------------------------------------------------
+  // Si durante LOW_FPS_SECONDS seguidos (con la pestaña visible) va por debajo de LOW_FPS, se
+  // pasa a efectos "ligeros" (sin aberración cromática, lo más caro). Solo una vez por sesión.
+  checkPerformance() {
+    if (this.fx.lite || !this.fx.enabled || this.perfAdjusted) return;
+    if (document.visibilityState !== 'visible' || !document.hasFocus()) { this.lowFpsSeconds = 0; return; }
+    this.lowFpsSeconds = this.fps < LOW_FPS ? (this.lowFpsSeconds || 0) + 1 : 0;
+    if (this.lowFpsSeconds >= LOW_FPS_SECONDS) {
+      this.fx.lite = true;
+      this.perfAdjusted = true;
+      this.showToast('EFECTOS REDUCIDOS PARA GANAR FLUIDEZ');
+    }
+  }
+
+  showToast(text, seconds = 3) {
+    this.toast = { text, t: seconds };
+  }
+
+  drawToast(ctx) {
+    if (!this.toast) return;
+    this.toast.t -= this.frameDt;
+    if (this.toast.t <= 0) { this.toast = null; return; }
+    const w = this.scene.width, y = Math.round(this.scene.height * 0.62);
+    ctx.globalAlpha = Math.min(1, this.toast.t * 2);
+    ctx.fillStyle = 'rgba(13, 2, 33, 0.85)';
+    ctx.fillRect(0, y - 3, w, CELL_H + 5);
+    drawText(ctx, this.toast.text, Math.round(w / 2), y, { color: COLORS.enemy, align: 'center' });
+    ctx.globalAlpha = 1;
+  }
+
+  // La pantalla completa solo se puede pedir dentro del propio evento del usuario (no desde el
+  // bucle del juego): por eso el botón del título se atiende aquí, en el `pointerup`.
+  onPointerUp(e) {
+    if (this.state !== 'menu' || this.menu.screen !== 'title' || this.fade) return;
+    const r = this.menu.fullscreenRect();
+    if (!r) return;
+    const rect = this.canvas.getBoundingClientRect();
+    const p = this.toInternal(e.clientX - rect.left, e.clientY - rect.top);
+    if (p.x < r.x || p.x >= r.x + r.w || p.y < r.y || p.y >= r.y + r.h) return;
+    this.sfx.play('pickup');
+    document.documentElement.requestFullscreen({ navigationUI: 'hide' })
+      .then(() => screen.orientation?.lock?.('landscape').catch(() => {})) // solo Android
+      .catch(() => {});
   }
 
   // Reintenta el piso actual (R): los puntos vuelven a los que había al entrar.
@@ -449,7 +549,10 @@ export class Game {
     // Estas teclas funcionan siempre, incluso durante el hit-stop o muerto.
     if (input.wasPressed('F1')) this.debug = !this.debug;
     if (input.wasPressed('KeyM')) this.sfx.toggleMute();
-    if (input.wasPressed('KeyV')) this.fx.enabled = !this.fx.enabled;
+    // V: completos ↔ desactivados (si estaban en modo ligero automático, vuelve a completos).
+    if (input.wasPressed('KeyV')) {
+      if (this.fx.lite) { this.fx.lite = false; this.fx.enabled = true; } else this.fx.enabled = !this.fx.enabled;
+    }
     const confirm = input.wasPressed('Space') || input.wasPressed('Enter') || input.wasPressed('NumpadEnter');
     const back = input.wasPressed('Escape');
 
@@ -913,8 +1016,10 @@ export class Game {
       y += 12;
     }
     if (Math.floor(performance.now() / 400) % 2 === 0) {
-      drawText(ctx, r.last ? 'FIN DEL EDIFICIO · ESPACIO / ENTER: VER RÉCORDS'
-        : 'ESPACIO / ENTER → SIGUIENTE PISO · R REPETIR', cx, y, { color: COLORS.player, align: 'center' });
+      const prompt = r.last
+        ? this.hint('FIN DEL EDIFICIO · ESPACIO / ENTER: VER RÉCORDS', 'FIN DEL EDIFICIO · TOCA PARA VER LOS RÉCORDS')
+        : this.hint('ESPACIO / ENTER → SIGUIENTE PISO · R REPETIR', 'TOCA PARA CONTINUAR');
+      drawText(ctx, prompt, cx, y, { color: COLORS.player, align: 'center' });
     }
   }
 
@@ -990,7 +1095,8 @@ export class Game {
     drawText(ctx, 'MEJORES PARTIDAS', cx, 78, { color: COLORS.wall, align: 'center' });
     this.drawRecordsTable(ctx, w, 92, this.runId);
     if (Math.floor(performance.now() / 400) % 2 === 0) {
-      drawText(ctx, 'ESPACIO / ENTER: NUEVA PARTIDA · ESC: MENÚ', cx, h - 14, { color: COLORS.player, align: 'center' });
+      // En táctil esta zona la ocupan los botones NUEVA PARTIDA / MENÚ.
+      if (!this.input.touchMode) drawText(ctx, 'ESPACIO / ENTER: NUEVA PARTIDA · ESC: MENÚ', cx, h - 14, { color: COLORS.player, align: 'center' });
     }
   }
 
@@ -1003,7 +1109,7 @@ export class Game {
     drawText(ctx, 'MEJORES PARTIDAS', cx, top, { color: COLORS.wall, scale: 2, align: 'center' });
     if (!this.history.entries.length) drawText(ctx, 'TODAVÍA NO HAY PARTIDAS GUARDADAS', cx, top + 26, { color: '#7d6f98', align: 'center' });
     this.drawRecordsTable(ctx, w, top + 38, this.runId);
-    drawText(ctx, 'T / ESC: CERRAR', cx, top + 38 + 14 + MAX_ENTRIES * 11 + 10, { color: COLORS.player, align: 'center' });
+    if (!this.input.touchMode) drawText(ctx, 'T / ESC: CERRAR', cx, top + 38 + 14 + MAX_ENTRIES * 11 + 10, { color: COLORS.player, align: 'center' });
   }
 
   // Pantalla de selección: tarjetas con el icono de cada máscara, la elegida resaltada en neón
@@ -1045,9 +1151,11 @@ export class Game {
       y += 11;
     }
     if (Math.floor(performance.now() / 400) % 2 === 0) {
-      drawText(ctx, 'FLECHAS / RATÓN: ELEGIR · ESPACIO / ENTER: EMPEZAR', cx, h - 14, { color: COLORS.player, align: 'center' });
+      drawText(ctx, this.hint('FLECHAS / RATÓN: ELEGIR · ESPACIO / ENTER: EMPEZAR', 'TOCA UNA MÁSCARA: ELEGIR · OTRA VEZ: EMPEZAR'),
+        cx, h - 14 - this.safe.b, { color: COLORS.player, align: 'center' });
     }
-    drawText(ctx, 'T: MEJORES PARTIDAS · ESC: MENÚ', cx, h - 26, { color: '#7d6f98', align: 'center' });
+    // En táctil, VOLVER y RÉCORDS son botones (arriba).
+    if (!this.input.touchMode) drawText(ctx, 'T: MEJORES PARTIDAS · ESC: MENÚ', cx, h - 26, { color: '#7d6f98', align: 'center' });
   }
 
   // Escala de texto más grande (hasta `preferred`) con la que el texto cabe en `maxW`.
@@ -1095,40 +1203,47 @@ export class Game {
     const p = this.player;
     if (this.state === 'menu') {
       this.menu.draw(ctx, w, h);
+      this.drawToast(ctx);
       this.drawCrosshair(ctx);
       return;
     }
     if (this.state === 'masks') {
       this.drawMaskSelect(ctx, w, h);
       if (this.showRecords) this.drawRecordsOverlay(ctx, w, h);
+      this.touch.drawScreenButtons(ctx);
+      this.drawToast(ctx);
       this.drawCrosshair(ctx);
       return;
     }
     if (this.state === 'gameover') {
       this.drawGameOver(ctx, w, h);
+      this.touch.drawScreenButtons(ctx);
       this.drawCrosshair(ctx);
       return;
     }
     this.drawPopups(ctx);
 
+    // Márgenes del HUD: separación fija + zona segura (muesca / esquinas redondeadas).
+    const L = 6 + this.safe.l, R = w - 6 - this.safe.r, T = this.safe.t;
     const def = p.def;
     let weaponText = def.name;
     if (p.weapon && def.maxAmmo) weaponText += `  ${p.weapon.ammo}/${def.maxAmmo}`;
-    drawText(ctx, weaponText, 6, 4, { color: COLORS.player, scale: 2 });
+    drawText(ctx, weaponText, L, 4 + T, { color: COLORS.player, scale: 2 });
     // Miniatura de la máscara equipada (12×12 a ×2) con su nombre.
     ctx.fillStyle = '#140a24';
-    ctx.fillRect(5, 24, 26, 26);
-    ctx.drawImage(maskIcon(this.mask), 6, 25, 24, 24);
-    drawText(ctx, this.mask.name, 34, 25, { color: '#9d8fb8' });
-    if (p.noAmmoFlash > 0) drawText(ctx, 'SIN MUNICIÓN', 34, 37, { color: COLORS.blood });
+    ctx.fillRect(L - 1, 24 + T, 26, 26);
+    ctx.drawImage(maskIcon(this.mask), L, 25 + T, 24, 24);
+    drawText(ctx, this.mask.name, L + 28, 25 + T, { color: '#9d8fb8' });
+    if (p.noAmmoFlash > 0) drawText(ctx, 'SIN MUNICIÓN', L + 28, 37 + T, { color: COLORS.blood });
 
     const alive = this.enemies.filter((e) => e.alive).length;
-    drawText(ctx, `ENEMIGOS ${alive}/${this.enemies.length}`, w - 6, 4, { color: COLORS.enemy, align: 'right' });
-    drawText(ctx, `${this.score.total.toLocaleString('es')} PTS`, w - 6, 15, { color: COLORS.text, scale: 2, align: 'right', shadow: COLORS.wall });
-    drawText(ctx, `RÉCORD ${this.bestScore.toLocaleString('es')}`, w - 6, 36, { color: this.score.isRecord ? COLORS.enemy : '#9d8fb8', align: 'right' });
-    drawText(ctx, this.levelName, w - 6, 47, { color: '#9d8fb8', align: 'right' });
-    const flags = [this.sfx.muted && 'SONIDO OFF', !this.fx.enabled && 'EFECTOS OFF'].filter(Boolean).join(' · ');
-    if (flags) drawText(ctx, flags, w - 6, 58, { color: '#9d8fb8', align: 'right' });
+    drawText(ctx, `ENEMIGOS ${alive}/${this.enemies.length}`, R, 4 + T, { color: COLORS.enemy, align: 'right' });
+    drawText(ctx, `${this.score.total.toLocaleString('es')} PTS`, R, 15 + T, { color: COLORS.text, scale: 2, align: 'right', shadow: COLORS.wall });
+    drawText(ctx, `RÉCORD ${this.bestScore.toLocaleString('es')}`, R, 36 + T, { color: this.score.isRecord ? COLORS.enemy : '#9d8fb8', align: 'right' });
+    drawText(ctx, this.levelName, R, 47 + T, { color: '#9d8fb8', align: 'right' });
+    const flags = [this.sfx.muted && 'SONIDO OFF', !this.fx.enabled && 'EFECTOS OFF', this.fx.enabled && this.fx.lite && 'EFECTOS LIGEROS']
+      .filter(Boolean).join(' · ');
+    if (flags) drawText(ctx, flags, R, 58 + T, { color: '#9d8fb8', align: 'right' });
 
     this.drawComboMeter(ctx, w);
 
@@ -1139,8 +1254,8 @@ export class Game {
     }
 
     if (this.debug) {
-      drawText(ctx, `DEBUG · ${this.fps} FPS · BALAS ${this.bullets.length} · PART ${this.particles.list.length} · CASQ ${this.particles.shells.length}`, 6, 54, { color: COLORS.debug });
-      drawText(ctx, `ESCENA ${w}X${h} · ESCALA ${this.view.scale} · MÁSCARA ${this.mask.id}`, 6, 65, { color: COLORS.debug });
+      drawText(ctx, `DEBUG · ${this.fps} FPS · BALAS ${this.bullets.length} · PART ${this.particles.list.length} · CASQ ${this.particles.shells.length}`, L, 54 + T, { color: COLORS.debug });
+      drawText(ctx, `ESCENA ${w}X${h} · ESCALA ${this.view.scale} · MÁSCARA ${this.mask.id}`, L, 65 + T, { color: COLORS.debug });
     }
 
     const cx = Math.round(w / 2);
@@ -1152,17 +1267,22 @@ export class Game {
     if (this.state === 'cleared' && Math.floor(performance.now() / 300) % 3 !== 0) {
       const msg = '¡PISO DESPEJADO! VE A LA SALIDA';
       // Debajo del bloque de puntuación (termina en y≈67) para no solaparse con él.
-      drawText(ctx, msg, cx, 72, { color: COLORS.player, scale: this.fitScale(msg, w - 12), align: 'center' });
+      drawText(ctx, msg, cx, 72 + T, { color: COLORS.player, scale: this.fitScale(msg, w - 12), align: 'center' });
     }
     if (this.state === 'dead') {
+      // En táctil la franja crece para alojar los botones REINTENTAR / TERMINAR / RÉCORDS.
+      const touch = this.input.touchMode;
+      const bandH = touch ? 26 + 8 + this.touch.buttonSize('X').h + 8 : 52;
       ctx.fillStyle = 'rgba(13, 2, 33, 0.6)';
-      ctx.fillRect(0, Math.round(h / 2) - 26, w, 52);
+      ctx.fillRect(0, Math.round(h / 2) - 26, w, bandH);
       drawText(ctx, 'HAS MUERTO', cx, Math.round(h / 2) - 22, { color: COLORS.blood, scale: this.fitScale('HAS MUERTO', w - 12, 3), align: 'center' });
-      drawText(ctx, 'R REINTENTAR PISO · ENTER TERMINAR PARTIDA · T RÉCORDS', cx, Math.round(h / 2) + 10, { color: COLORS.text, align: 'center' });
+      if (!touch) drawText(ctx, 'R REINTENTAR PISO · ENTER TERMINAR PARTIDA · T RÉCORDS', cx, Math.round(h / 2) + 10, { color: COLORS.text, align: 'center' });
       if (this.showRecords) this.drawRecordsOverlay(ctx, w, h);
+      this.touch.drawScreenButtons(ctx);
     }
     this.touch.draw(ctx);
     if (this.state === 'results') this.drawResults(ctx, w, h);
+    this.drawToast(ctx);
 
     this.drawCrosshair(ctx);
   }

@@ -6,6 +6,7 @@ import { rand } from './utils.js';
 export class ScreenFx {
   constructor() {
     this.enabled = true;
+    this.lite = false;  // sin aberración cromática (rendimiento)
     this.glitch = 0;   // 0..1, sube en impactos y decae solo
     this.bandY = 0;
     this.red = document.createElement('canvas');
@@ -64,16 +65,20 @@ export class ScreenFx {
     if (!this.enabled) return;
 
     this.glitch = Math.max(0, this.glitch - dt * 3);
-    // El desplazamiento va en píxeles internos enteros: la franja de color también es "pixel art".
-    const off = Math.round(1 + this.glitch * 3) * scale;
-    this.tint(this.red, scene, '#ff0033');
-    this.tint(this.blue, scene, '#2244ff');
-    ctx.globalCompositeOperation = 'lighter';
-    ctx.globalAlpha = 0.16 + this.glitch * 0.22;
-    ctx.drawImage(this.red, x - off, y, w, h);
-    ctx.drawImage(this.blue, x + off, y, w, h);
-    ctx.globalCompositeOperation = 'source-over';
-    ctx.globalAlpha = 1;
+    // Modo ligero (`lite`, lo activa el juego si va lento): sin aberración cromática, que es lo
+    // más caro (dos copias tintadas de la escena por fotograma). Scanlines y VHS se mantienen.
+    if (!this.lite) {
+      // El desplazamiento va en píxeles internos enteros: la franja de color también es "pixel art".
+      const off = Math.round(1 + this.glitch * 3) * scale;
+      this.tint(this.red, scene, '#ff0033');
+      this.tint(this.blue, scene, '#2244ff');
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.globalAlpha = 0.16 + this.glitch * 0.22;
+      ctx.drawImage(this.red, x - off, y, w, h);
+      ctx.drawImage(this.blue, x + off, y, w, h);
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.globalAlpha = 1;
+    }
 
     // Banda VHS: una franja de filas internas que baja y se desplaza a saltos de píxel.
     const sh = scene.height;

@@ -226,13 +226,31 @@ Colores centralizados en `COLORS` (`src/utils.js`) y `PALETTE` (`src/sprites.js`
   empujado más del 30% del radio, `input.aimFiring` = ataca con cualquier arma a su cadencia.
   Botones LANZAR (= clic derecho), PATADA (= E) y REINICIAR (= R): reutilizan la entrada existente.
   Tamaños en píxeles CSS (`STICK_CSS_RADIUS`, `BUTTON_CSS_HEIGHT`) para que midan lo mismo que un dedo.
-- **Fuera de la partida** un toque = clic en ese punto (menús, máscaras). En resultados y fin de
-  partida, tocar en cualquier sitio continúa; en la muerte, reintenta; en récords, vuelve.
+- **Fuera de la partida** un toque = clic en ese punto (menús, tarjetas). Antes se comprueban los
+  **botones táctiles de pantalla** (`game.screenButtons()`, solo en modo táctil), que "pulsan" la
+  tecla equivalente para reutilizar la lógica del teclado:
+  máscaras → VOLVER (Esc) · RÉCORDS (T); muerte → REINTENTAR (R) · TERMINAR (Enter) · RÉCORDS (T);
+  fin de partida → NUEVA PARTIDA (Enter) · MENÚ (Esc); panel de récords → CERRAR (Esc, o tocar
+  en cualquier sitio). El selector de pisos tiene su VOLVER en `menu.backRect()`.
+  En resultados tocar en cualquier sitio continúa; en la pantalla de récords del menú, vuelve.
+- **Doble toque** en máscaras y pisos: el primer toque elige (se lee la pasiva / el récord), tocar
+  la ya elegida confirma. Con ratón un clic sigue confirmando directamente.
+- Textos de ayuda según el modo: `game.hint(textoEscritorio, textoTáctil)`.
 - `touch.update()` se ejecuta al principio de `game.update()`, antes de leer la entrada.
+- **Zonas seguras** (muesca, esquinas, barra de inicio): `game.safe = { t, r, b, l }` en píxeles
+  internos, leídas de `env(safe-area-inset-*)` con un elemento invisible (`safeProbe`) en cada
+  `resize()` (requiere `viewport-fit=cover`). HUD, joysticks, botones y pies de pantalla las suman
+  a sus márgenes. Las pantallas centradas no las necesitan.
+- **Pantalla completa**: botón en el título (`menu.fullscreenRect()`), solo si
+  `document.fullscreenEnabled` (en iPhone no existe). Se atiende en `game.onPointerUp` porque la
+  petición debe hacerse dentro del evento del usuario, no desde el bucle; en Android intenta
+  además bloquear la orientación en horizontal.
+- **Rendimiento**: si va por debajo de `LOW_FPS` (45) durante `LOW_FPS_SECONDS` (3 s) seguidos con
+  la pestaña visible, `fx.lite = true` (sin aberración cromática) y aviso "EFECTOS REDUCIDOS".
+  Una vez por sesión. `V` vuelve a efectos completos / los desactiva. El HUD indica "EFECTOS LIGEROS".
+- **iPhone**: aviso en el título de que el modo silencio apaga el audio del juego.
 - Gestos del navegador bloqueados (CSS `touch-action: none`, `preventDefault` en `touchstart/move/end`,
   `viewport` sin zoom); eso también evita los clics de ratón emulados tras cada toque.
-- Pendiente (Fase B): botones VOLVER / TERMINAR / RÉCORDS táctiles, textos de ayuda táctiles,
-  zonas seguras (muesca), comprobar audio en iPhone y ajuste automático de efectos según FPS.
 - Audio: en táctil se desbloquea en `pointerup`/`touchend` (el navegador no lo permite en `pointerdown`).
 
 ## Debug

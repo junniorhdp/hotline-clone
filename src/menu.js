@@ -1,6 +1,7 @@
 import { LEVELS, loadLevel, isWallTile } from './map.js';
 import { drawText, measureText, CELL_H } from './pixelfont.js';
 import { pixelLine } from './sprites.js';
+import { drawTouchButton } from './touch.js';
 import { COLORS, clamp } from './utils.js';
 
 // Menú principal estilo arcade. Vive en `game.state === 'menu'` con tres subpantallas:
@@ -15,6 +16,8 @@ const TITLE_OPTIONS = [
 ];
 const RANK_COLORS = { S: COLORS.player, A: COLORS.weapon, B: COLORS.enemy, C: COLORS.blood };
 const DIM = '#7d6f98';
+// iPhone/iPad (incluido el iPad que se presenta como Mac con pantalla táctil).
+const IS_IOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 
 // Miniatura de un piso: 1 píxel por casilla (paredes neón, puertas, salida y enemigos).
 const thumbs = new Map();
@@ -86,7 +89,9 @@ export class Menu {
       return;
     }
 
-    if (back) {
+    // Botón VOLVER táctil del selector de pisos = Esc.
+    const tappedBack = input.mousePressed.left && inside(this.backRect());
+    if (back || tappedBack) {
       g.sfx.play('empty');
       g.transition(() => this.open('title'), 0.15);
       return;
@@ -100,6 +105,8 @@ export class Menu {
       const hovered = cards.findIndex(inside);
       if (hovered >= 0 && moved) this.floorIndex = hovered;
       if (this.floorIndex !== prev) g.sfx.play('empty');
+      // En táctil, el primer toque en un piso solo lo elige; tocar el ya elegido empieza.
+      if (input.touchMode && input.mousePressed.left && hovered >= 0 && hovered !== prev) return;
       if (confirm || (input.mousePressed.left && hovered >= 0)) {
         if (input.mousePressed.left && hovered >= 0) this.floorIndex = hovered;
         if (g.floorStats.isUnlocked(this.floorIndex + 1)) {
@@ -119,6 +126,23 @@ export class Menu {
   }
 
   // --- Layouts compartidos por dibujo y ratón -------------------------------------------
+
+  // Botón VOLVER del selector de pisos (solo en táctil; con teclado se usa Esc).
+  backRect() {
+    const g = this.game;
+    if (this.screen !== 'floors' || !g.input.touchMode) return null;
+    return { id: 'back', label: 'VOLVER', x: 6 + g.safe.l, y: 6 + g.safe.t, ...g.touch.buttonSize('VOLVER') };
+  }
+
+  // Botón PANTALLA COMPLETA del título (si el navegador lo permite; en iPhone no existe).
+  // Lo atiende game.onPointerUp porque la petición debe hacerse dentro del evento del usuario.
+  fullscreenRect() {
+    const g = this.game;
+    if (this.screen !== 'title' || !document.fullscreenEnabled || document.fullscreenElement) return null;
+    const label = 'PANTALLA COMPLETA';
+    const size = g.input.touchMode ? g.touch.buttonSize(label) : { w: measureText(label) + 12, h: 15 };
+    return { id: 'fullscreen', label, x: g.scene.width - 6 - g.safe.r - size.w, y: 6 + g.safe.t, ...size };
+  }
 
   titleLayout() {
     const { width: w, height: h } = this.game.scene;
@@ -245,9 +269,16 @@ export class Menu {
       }
     });
 
-    drawText(ctx, 'FLECHAS / RATÓN: ELEGIR · ENTER: ACEPTAR', 6, h - 12, { color: DIM });
-    const best = this.game.history.best();
-    if (best) drawText(ctx, `RÉCORD ${best.toLocaleString('es')}`, w - 6, h - 12, { color: COLORS.enemy, align: 'right' });
+    const g = this.game, s = g.safe;
+    drawText(ctx, g.hint('FLECHAS / RATÓN: ELEGIR · ENTER: ACEPTAR', 'TOCA UNA OPCIÓN'), 6 + s.l, h - 12 - s.b, { color: DIM });
+    const best = g.history.best();
+    if (best) drawText(ctx, `RÉCORD ${best.toLocaleString('es')}`, w - 6 - s.r, h - 12 - s.b, { color: COLORS.enemy, align: 'right' });
+    // iPhone: el interruptor de silencio apaga el audio web del juego.
+    if (g.input.touchMode && IS_IOS) {
+      drawText(ctx, 'IPHONE: QUITA EL MODO SILENCIO PARA OÍR EL JUEGO', cx, h - 24 - s.b, { color: COLORS.enemy, align: 'center' });
+    }
+    const fs = this.fullscreenRect();
+    if (fs) drawTouchButton(ctx, fs, false, 0.7);
   }
 
   drawFloors(ctx, w, h) {
@@ -301,11 +332,14 @@ export class Menu {
     });
 
     const n = this.floorIndex + 1;
+    const floorName = LEVELS[this.floorIndex].name.split(' · ')[0];
     const msg = g.floorStats.isUnlocked(n)
-      ? `ENTER: EMPEZAR EN EL ${LEVELS[this.floorIndex].name.split(' · ')[0]}`
+      ? g.hint(`ENTER: EMPEZAR EN EL ${floorName}`, `TOCA OTRA VEZ PARA EMPEZAR EN EL ${floorName}`)
       : `COMPLETA EL PISO ${n - 1} PARA DESBLOQUEARLO`;
     drawText(ctx, msg, cx, Math.min(bottom + 8, h - 26), { color: g.floorStats.isUnlocked(n) ? COLORS.player : COLORS.blood, align: 'center' });
-    drawText(ctx, 'FLECHAS / RATÓN: ELEGIR · ESC: VOLVER', cx, h - 12, { color: DIM, align: 'center' });
+    drawText(ctx, g.hint('FLECHAS / RATÓN: ELEGIR · ESC: VOLVER', 'TOCA UN PISO PARA ELEGIRLO'), cx, h - 12 - g.safe.b, { color: DIM, align: 'center' });
+    const back = this.backRect();
+    if (back) drawTouchButton(ctx, back, false, 0.85);
   }
 
   drawRecords(ctx, w, h) {
@@ -317,6 +351,6 @@ export class Menu {
     drawText(ctx, 'MEJORES PARTIDAS', cx, top, { color: COLORS.wall, scale: 2, align: 'center' });
     if (!g.history.entries.length) drawText(ctx, 'TODAVÍA NO HAY PARTIDAS GUARDADAS', cx, top + 24, { color: DIM, align: 'center' });
     g.drawRecordsTable(ctx, w, top + 38, null);
-    drawText(ctx, 'ESC / ENTER: VOLVER', cx, h - 12, { color: COLORS.player, align: 'center' });
+    drawText(ctx, g.hint('ESC / ENTER: VOLVER', 'TOCA PARA VOLVER'), cx, h - 12 - g.safe.b, { color: COLORS.player, align: 'center' });
   }
 }
