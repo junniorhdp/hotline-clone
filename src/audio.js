@@ -111,8 +111,9 @@ export class Sfx {
     this.musicMode = 'action';  // 'action' | 'clear'
     this.musicTimer = null;
     const unlock = () => this.init();
-    window.addEventListener('pointerdown', unlock);
-    window.addEventListener('keydown', unlock);
+    // En táctil el navegador solo permite arrancar el audio al levantar el dedo (pointerup /
+    // touchend), no al tocar; con ratón y teclado basta con pulsar.
+    for (const type of ['pointerdown', 'pointerup', 'touchend', 'keydown']) window.addEventListener(type, unlock);
   }
 
   init() {

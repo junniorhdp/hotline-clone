@@ -5,6 +5,7 @@ HTML5 Canvas, JavaScript Vanilla (ES Modules) y Vite. Sin frameworks ni librerí
 
 ## Comandos
 - `npm run dev` — servidor de desarrollo (http://localhost:5173). En dev el juego está en `window.game`.
+- `npm run dev -- --host` — igual, pero accesible desde el móvil en la misma red (usa la URL "Network").
 - `npm run build` — build de producción en `dist/`
 - `npm run preview` — sirve el build
 
@@ -35,7 +36,8 @@ HTML5 Canvas, JavaScript Vanilla (ES Modules) y Vite. Sin frameworks ni librerí
   - `sprites.js` — sprites pixel art como cuadrículas de texto + paleta, horneados a bitmaps una vez;
     helpers `drawSprite`, `pixelRect`, `pixelDisc`, `snap`.
   - `pixelfont.js` — fuente bitmap 5×7 propia (con tildes y Ñ) y `drawText`; cachea cada texto renderizado.
-  - `input.js` — teclado y ratón; distingue "mantenido" de "pulsado este paso".
+  - `input.js` — teclado, ratón y dedos (Pointer Events); distingue "mantenido" de "pulsado este paso".
+  - `touch.js` — controles táctiles: joysticks flotantes y botones; traduce dedos a la entrada del juego.
   - `utils.js` — paleta de colores y helpers matemáticos/geométricos.
 - Game loop con paso fijo a 60 FPS: `requestAnimationFrame` + acumulador de `deltaTime`;
   `update(dt)` siempre recibe `1/60`. El render ocurre una vez por frame.
@@ -207,6 +209,29 @@ Colores centralizados en `COLORS` (`src/utils.js`) y `PALETTE` (`src/sprites.js`
 - Enemigos `#ffbe0b`
 - Sangre persistente `#d90429` (se pinta en una capa offscreen que solo se limpia al reiniciar)
 - Armas `#c77dff`, debug `#00ff9f`
+
+## Móvil y táctil
+- **Escalado en píxeles físicos**: el buffer del canvas mide CSS × `devicePixelRatio`; el estilo CSS
+  mide la ventana. La escala entera se elige sobre píxeles físicos y se garantiza que la escena
+  quepa (`INTERNAL_MIN_W`/`MIN_H`, `INTERNAL_MAX_H` en vertical). Todo lo que convierta
+  coordenadas de pantalla debe usar `game.toInternal(cssX, cssY)` (ya incluye el dpr).
+- **Modo táctil** (`input.touchMode`): se activa al tocar (o de entrada si el puntero es "coarse")
+  y se desactiva al usar ratón o teclado. Sin modo táctil no se dibuja ni se procesa nada táctil.
+- **Orientación**: apaisado obligatorio. En vertical con táctil, `game.needsRotate` pausa el juego
+  y muestra "GIRA EL DISPOSITIVO".
+- **Controles** (`touch.js`, solo en `playing`/`cleared`): joystick izquierdo flotante (mitad
+  izquierda) → `input.moveAxis` analógico; joystick derecho flotante (mitad derecha) → apunta y,
+  empujado más del 30% del radio, `input.aimFiring` = ataca con cualquier arma a su cadencia.
+  Botones LANZAR (= clic derecho), PATADA (= E) y REINICIAR (= R): reutilizan la entrada existente.
+  Tamaños en píxeles CSS (`STICK_CSS_RADIUS`, `BUTTON_CSS_HEIGHT`) para que midan lo mismo que un dedo.
+- **Fuera de la partida** un toque = clic en ese punto (menús, máscaras). En resultados y fin de
+  partida, tocar en cualquier sitio continúa; en la muerte, reintenta; en récords, vuelve.
+- `touch.update()` se ejecuta al principio de `game.update()`, antes de leer la entrada.
+- Gestos del navegador bloqueados (CSS `touch-action: none`, `preventDefault` en `touchstart/move/end`,
+  `viewport` sin zoom); eso también evita los clics de ratón emulados tras cada toque.
+- Pendiente (Fase B): botones VOLVER / TERMINAR / RÉCORDS táctiles, textos de ayuda táctiles,
+  zonas seguras (muesca), comprobar audio en iPhone y ajuste automático de efectos según FPS.
+- Audio: en táctil se desbloquea en `pointerup`/`touchend` (el navegador no lo permite en `pointerdown`).
 
 ## Debug
 - `F1` activa/desactiva el modo debug: hitboxes, conos de visión (cortados por puertas),

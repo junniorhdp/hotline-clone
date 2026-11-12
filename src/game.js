@@ -4,6 +4,7 @@ import { Score, COMBO_WINDOW } from './score.js';
 import { MASKS, maskEffects, maskIcon } from './masks.js';
 import { ScoreHistory, FloorStats, MAX_ENTRIES, newRunId, formatDate } from './scores-history.js';
 import { Menu } from './menu.js';
+import { TouchControls } from './touch.js';
 import { Player } from './player.js';
 import { Enemy } from './enemy.js';
 import { Door } from './doors.js';
@@ -30,6 +31,9 @@ const TARGET_INTERNAL_H = 216;
 const INTERNAL_MIN_H = 160;
 const INTERNAL_MIN_W = 256;
 const INTERNAL_MAX_W = 560;
+const INTERNAL_MAX_H = 320;     // en vertical la escena no crece sin límite
+const TOUCH_LOOKAHEAD = 50;     // adelanto de cámara (mundo) en modo táctil
+const COARSE_POINTER = window.matchMedia?.('(pointer: coarse)').matches ?? false;
 
 // Hit-stop: segundos que se congela la simulación en cada tipo de impacto.
 const HITSTOP = { kill: 0.05, finisher: 0.08, knock: 0.035, playerDeath: 0.12 };
@@ -134,27 +138,41 @@ export class Game {
     this.loop = this.loop.bind(this);
     this.floorStats = new FloorStats();
     this.menu = new Menu(this);
+    this.touch = new TouchControls(this);
     this.fade = null;
     this.mask = MASKS[0];
     this.maskIndex = 0;
-    window.addEventListener('resize', () => this.resize());
+    // En móvil la barra del navegador cambia el alto visible y se puede girar la pantalla.
+    const onResize = () => this.resize();
+    window.addEventListener('resize', onResize);
+    window.addEventListener('orientationchange', onResize);
+    window.visualViewport?.addEventListener('resize', onResize);
     this.resize();
     this.reset();
     this.openMenu();
   }
 
-  // Escala entera + resolución interna ajustada a la ventana; se escala sin suavizado.
-  // `view` es el rectángulo de pantalla que ocupa la escena (centrado si sobra algún píxel).
+  // El canvas se dimensiona en píxeles FÍSICOS (CSS × devicePixelRatio): en pantallas de
+  // densidad 2× o 3× el navegador no reescala la imagen y el pixel art sigue nítido.
+  // Escala entera elegida sobre píxeles físicos, garantizando que la escena quepa entera
+  // (si no, en pantallas estrechas se perderían los lados). `view` = rectángulo físico.
   resize() {
-    const sw = window.innerWidth, sh = window.innerHeight;
+    const dpr = Math.max(1, window.devicePixelRatio || 1);
+    const cssW = window.innerWidth, cssH = window.innerHeight;
+    const sw = Math.round(cssW * dpr), sh = Math.round(cssH * dpr);
     let scale = Math.max(1, Math.round(sh / TARGET_INTERNAL_H));
-    while (scale > 1 && sh / scale < INTERNAL_MIN_H) scale--;
-    const ih = Math.floor(sh / scale);
-    const iw = clamp(Math.floor(sw / scale), INTERNAL_MIN_W, INTERNAL_MAX_W);
+    while (scale > 1 && (sh / scale < INTERNAL_MIN_H || sw / scale < INTERNAL_MIN_W)) scale--;
+    const ih = Math.min(Math.floor(sh / scale), INTERNAL_MAX_H);
+    const iw = Math.min(Math.floor(sw / scale), INTERNAL_MAX_W);
     const w = iw * scale, h = ih * scale;
+    this.dpr = dpr;
+    this.cssW = cssW;
+    this.cssH = cssH;
     this.view = { x: Math.floor((sw - w) / 2), y: Math.floor((sh - h) / 2), w, h, scale };
     this.canvas.width = sw;
     this.canvas.height = sh;
+    this.canvas.style.width = `${cssW}px`;
+    this.canvas.style.height = `${cssH}px`;
     this.scene.width = iw;
     this.scene.height = ih;
     this.sceneCtx.imageSmoothingEnabled = false; // cambiar el tamaño reinicia el estado del contexto
@@ -163,10 +181,19 @@ export class Game {
     this.fx.resize(iw, ih, sw, sh, this.view);
   }
 
-  // Ratón en píxeles internos de la escena.
+  // Coordenadas CSS relativas al canvas (ratón o dedo) → píxeles internos de la escena.
+  toInternal(cssX, cssY) {
+    const v = this.view;
+    return { x: (cssX * this.dpr - v.x) / v.scale, y: (cssY * this.dpr - v.y) / v.scale };
+  }
+
   mouseInternal() {
-    const v = this.view, m = this.input.mouse;
-    return { x: (m.x - v.x) / v.scale, y: (m.y - v.y) / v.scale };
+    return this.toInternal(this.input.mouse.x, this.input.mouse.y);
+  }
+
+  // Juego apaisado obligatorio en dispositivos táctiles: en vertical se pausa y se pide girar.
+  get needsRotate() {
+    return this.cssH > this.cssW && (this.input.touchMode || COARSE_POINTER);
   }
 
   mouseWorld() {
@@ -415,6 +442,10 @@ export class Game {
 
   update(dt) {
     const input = this.input;
+    // Primero los controles táctiles: traducen los dedos a teclas/clics que se leen abajo.
+    this.touch.update(dt);
+    // En vertical (táctil) todo queda en pausa hasta que se gire el dispositivo.
+    if (this.needsRotate) return;
     // Estas teclas funcionan siempre, incluso durante el hit-stop o muerto.
     if (input.wasPressed('F1')) this.debug = !this.debug;
     if (input.wasPressed('KeyM')) this.sfx.toggleMute();
@@ -481,8 +512,16 @@ export class Game {
     if (this.player.alive) {
       // Se adelanta hacia donde apuntas, pero con tope: con la vista más cerrada el
       // jugador debe seguir siendo el centro de la acción.
-      const m = this.mouseWorld();
-      let lx = (m.x - tx) * CAMERA_LOOKAHEAD, ly = (m.y - ty) * CAMERA_LOOKAHEAD;
+      let lx, ly;
+      if (this.input.touchMode) {
+        // En táctil no hay ratón: se adelanta en la dirección en la que mira el jugador.
+        lx = Math.cos(this.player.angle) * TOUCH_LOOKAHEAD;
+        ly = Math.sin(this.player.angle) * TOUCH_LOOKAHEAD;
+      } else {
+        const m = this.mouseWorld();
+        lx = (m.x - tx) * CAMERA_LOOKAHEAD;
+        ly = (m.y - ty) * CAMERA_LOOKAHEAD;
+      }
       const len = Math.hypot(lx, ly);
       if (len > MAX_LOOKAHEAD) { lx *= MAX_LOOKAHEAD / len; ly *= MAX_LOOKAHEAD / len; }
       tx += lx;
@@ -726,6 +765,12 @@ export class Game {
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.fillStyle = COLORS.background;
     ctx.fillRect(0, 0, this.scene.width, this.scene.height);
+
+    if (this.needsRotate) {
+      this.drawRotatePrompt(ctx);
+      this.fx.compose(this.ctx, this.scene, this.frameDt);
+      return;
+    }
 
     // En el menú no se dibuja el piso: el fondo synthwave lo pinta el propio menú.
     if (this.state === 'menu') {
@@ -1012,8 +1057,28 @@ export class Game {
     return s;
   }
 
+  // Pantalla "gira el dispositivo": un móvil pixelado que alterna vertical/horizontal.
+  drawRotatePrompt(ctx) {
+    const w = this.scene.width, h = this.scene.height;
+    const cx = Math.round(w / 2), cy = Math.round(h / 2) - 20;
+    const landscape = Math.floor(performance.now() / 700) % 2 === 1;
+    const pw = landscape ? 44 : 24, ph = landscape ? 24 : 44;
+    const x = cx - pw / 2, y = cy - ph / 2;
+    ctx.fillStyle = landscape ? COLORS.player : COLORS.wall;
+    ctx.fillRect(x, y, pw, ph);
+    ctx.fillStyle = '#140a24';
+    ctx.fillRect(x + 2, y + 2, pw - 4, ph - 4);
+    ctx.fillStyle = landscape ? COLORS.player : COLORS.wall;
+    if (landscape) ctx.fillRect(x + pw - 4, cy - 2, 1, 4); else ctx.fillRect(cx - 2, y + ph - 4, 4, 1);
+    const title = 'GIRA EL DISPOSITIVO';
+    drawText(ctx, title, cx, cy + 32, { color: COLORS.wall, scale: this.fitScale(title, w - 12), align: 'center' });
+    drawText(ctx, 'NEON RUSH SE JUEGA EN HORIZONTAL', cx, cy + 56, { color: '#9d8fb8', align: 'center' });
+  }
+
   // Mira de píxeles con contorno oscuro (el cursor del sistema está oculto por CSS).
+  // En táctil no hay puntero que seguir: no se dibuja.
   drawCrosshair(ctx) {
+    if (this.input.touchMode) return;
     const m = this.mouseInternal();
     const x = Math.round(m.x), y = Math.round(m.y);
     const arms = [[-5, 0, 3, 1], [3, 0, 3, 1], [0, -5, 1, 3], [0, 3, 1, 3]];
@@ -1067,8 +1132,11 @@ export class Game {
 
     this.drawComboMeter(ctx, w);
 
-    drawText(ctx, 'WASD MOVER · CLIC IZQ ATACAR · CLIC DER RECOGER/LANZAR', 6, h - 24, { color: '#7d6f98' });
-    drawText(ctx, 'E PATADA · R REINICIAR · F1 DEBUG · M SONIDO · V EFECTOS', 6, h - 13, { color: '#7d6f98' });
+    // En táctil esa zona es de los joysticks: la ayuda de teclado no se muestra.
+    if (!this.input.touchMode) {
+      drawText(ctx, 'WASD MOVER · CLIC IZQ ATACAR · CLIC DER RECOGER/LANZAR', 6, h - 24, { color: '#7d6f98' });
+      drawText(ctx, 'E PATADA · R REINICIAR · F1 DEBUG · M SONIDO · V EFECTOS', 6, h - 13, { color: '#7d6f98' });
+    }
 
     if (this.debug) {
       drawText(ctx, `DEBUG · ${this.fps} FPS · BALAS ${this.bullets.length} · PART ${this.particles.list.length} · CASQ ${this.particles.shells.length}`, 6, 54, { color: COLORS.debug });
@@ -1093,6 +1161,7 @@ export class Game {
       drawText(ctx, 'R REINTENTAR PISO · ENTER TERMINAR PARTIDA · T RÉCORDS', cx, Math.round(h / 2) + 10, { color: COLORS.text, align: 'center' });
       if (this.showRecords) this.drawRecordsOverlay(ctx, w, h);
     }
+    this.touch.draw(ctx);
     if (this.state === 'results') this.drawResults(ctx, w, h);
 
     this.drawCrosshair(ctx);

@@ -45,12 +45,23 @@ export class Player {
     if (input.down('KeyD') || input.down('ArrowRight')) mx += 1;
     if (input.down('KeyW') || input.down('ArrowUp')) my -= 1;
     if (input.down('KeyS') || input.down('ArrowDown')) my += 1;
+    // Teclado: dirección normalizada (velocidad completa). Joystick: analógico, la velocidad
+    // es proporcional a cuánto se empuja.
+    let mag = 1;
+    if (mx || my) {
+      const len = Math.hypot(mx, my);
+      mx /= len;
+      my /= len;
+    } else if (input.moveAxis.x || input.moveAxis.y) {
+      mag = Math.min(1, Math.hypot(input.moveAxis.x, input.moveAxis.y));
+      mx = input.moveAxis.x / (mag || 1);
+      my = input.moveAxis.y / (mag || 1);
+    }
 
     this.bumpCd = Math.max(0, this.bumpCd - dt);
     if (mx || my) {
-      const len = Math.hypot(mx, my);
-      const speed = SPEED * this.perks.speedMul;
-      const hit = moveAndSlide(map, this, (mx / len) * speed * dt, (my / len) * speed * dt);
+      const speed = SPEED * this.perks.speedMul * mag;
+      const hit = moveAndSlide(map, this, mx * speed * dt, my * speed * dt);
       if ((hit.hitX || hit.hitY) && this.bumpCd <= 0) {
         game.particles.dust(this.x + (hit.hitX ? Math.sign(mx) * this.r : 0), this.y + (hit.hitY ? Math.sign(my) * this.r : 0), 4);
         this.bumpCd = 0.35;
@@ -64,8 +75,14 @@ export class Player {
       this.stepTimer = 0.05;
     }
 
-    const m = game.mouseWorld();
-    this.angle = Math.atan2(m.y - this.y, m.x - this.x);
+    if (input.touchMode) {
+      // Táctil: mira con el joystick derecho; si no se usa, mira hacia donde camina.
+      if (input.aimActive) this.angle = input.aimAngle;
+      else if (mx || my) this.angle = Math.atan2(my, mx);
+    } else {
+      const m = game.mouseWorld();
+      this.angle = Math.atan2(m.y - this.y, m.x - this.x);
+    }
 
     this.cooldown -= dt;
     this.swing = Math.max(0, this.swing - dt);
@@ -73,7 +90,9 @@ export class Player {
     this.noAmmoFlash = Math.max(0, this.noAmmoFlash - dt);
 
     // Melee y subfusil: se puede mantener pulsado. Pistola/escopeta: un clic, un disparo.
-    const wantsAttack = this.def.melee || this.def.auto ? input.mouse.left : input.mousePressed.left;
+    // Joystick derecho empujado: ataca con cualquier arma al ritmo de su cadencia.
+    const wantsAttack = input.aimFiring
+      || (this.def.melee || this.def.auto ? input.mouse.left : input.mousePressed.left);
     if (wantsAttack && this.cooldown <= 0) this.attack(game);
     if (input.mousePressed.right) this.throwOrPickup(game);
     if (input.wasPressed('KeyE') && this.cooldown <= 0) this.kick(game);

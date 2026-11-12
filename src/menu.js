@@ -114,7 +114,8 @@ export class Menu {
       return;
     }
 
-    if (this.screen === 'records' && confirm) g.transition(() => this.open('title'), 0.15);
+    // Tocar en cualquier sitio también vuelve (en táctil no hay tecla Esc).
+    if (this.screen === 'records' && (confirm || input.mousePressed.left)) g.transition(() => this.open('title'), 0.15);
   }
 
   // --- Layouts compartidos por dibujo y ratón -------------------------------------------
