@@ -1,7 +1,7 @@
-import { moveAndSlide, lineOfSight, isSolidAt } from './map.js';
+import { moveAndSlide, lineOfSight, isSolidAt, castRay } from './map.js';
 import { WEAPON_DEFS, Bullet, Pickup, inMeleeArc, drawWeaponShape } from './weapons.js';
 import { COLORS, TAU } from './utils.js';
-import { drawSprite, sprites } from './sprites.js';
+import { drawSprite, sprites, pixelRect } from './sprites.js';
 import { DEFAULT_EFFECTS } from './masks.js';
 
 const SPEED = 210;
@@ -11,6 +11,9 @@ const NOISE_RADIUS_KICK = 260;
 const FINISH_RANGE = 34;      // distancia (además del radio) para rematar; cubre el empuje del derribo
 const STEP_INTERVAL = 0.3;
 const KICK_COOLDOWN = 0.35;
+const AIM_MAX_DIST = 360;    // largo máximo del indicador de apuntado (armas de alcance ilimitado)
+const AIM_START = 18;        // el indicador empieza en la boca del arma
+const AIM_DOT_SPACING = 8;
 
 export class Player {
   // `perks` = efectos de la máscara elegida (ver maskEffects en masks.js).
@@ -228,6 +231,65 @@ export class Player {
     }
 
     drawSprite(ctx, 'player', 0, 0);
+    ctx.restore();
+  }
+
+  // Indicador de apuntado (PC y móvil), en el mundo y en píxeles:
+  // - armas de fuego: línea de puntos desde el arma hasta la primera pared, puerta o enemigo,
+  //   limitada al alcance; la escopeta añade dos líneas tenues con su apertura; sin munición
+  //   la línea se apaga;
+  // - cuerpo a cuerpo: arco de puntos con el alcance y la amplitud del golpe.
+  drawAim(ctx, game) {
+    const def = this.def;
+    ctx.save();
+    ctx.fillStyle = COLORS.player;
+    if (def.melee) {
+      const r = def.range + 4;
+      const steps = Math.max(4, Math.round((def.arc * r) / 7));
+      ctx.globalAlpha = 0.5;
+      for (let i = 0; i <= steps; i++) {
+        const a = this.angle - def.arc / 2 + (def.arc * i) / steps;
+        pixelRect(ctx, this.x + Math.cos(a) * r - 1, this.y + Math.sin(a) * r - 1);
+      }
+      ctx.restore();
+      return;
+    }
+
+    const empty = this.weapon.ammo <= 0;
+    const reach = Math.min(def.range, AIM_MAX_DIST);
+    const lineLength = (angle, stopAtEnemies) => {
+      let len = Math.min(castRay(game.map, this.x, this.y, angle, reach), reach);
+      if (!stopAtEnemies) return len;
+      const cos = Math.cos(angle), sin = Math.sin(angle);
+      for (const e of game.enemies) {
+        if (!e.alive) continue;
+        const dx = e.x - this.x, dy = e.y - this.y;
+        const along = dx * cos + dy * sin;
+        if (along > 0 && along < len && Math.abs(dy * cos - dx * sin) < e.r) len = along;
+      }
+      return len;
+    };
+    const dots = (angle, len, spacing, alpha) => {
+      const cos = Math.cos(angle), sin = Math.sin(angle);
+      for (let d = AIM_START; d < len; d += spacing) {
+        ctx.globalAlpha = alpha * (1 - (d / len) * 0.45);
+        pixelRect(ctx, this.x + cos * d - 1, this.y + sin * d - 1);
+      }
+    };
+
+    if (empty) ctx.fillStyle = '#7d6f98';
+    const len = lineLength(this.angle, true);
+    dots(this.angle, len, AIM_DOT_SPACING, empty ? 0.4 : 0.85);
+    if (def.pellets > 1 && !empty) {
+      const spread = def.spread * this.perks.spreadMul;
+      for (const side of [-1, 1]) dots(this.angle + spread * side, lineLength(this.angle + spread * side, false), AIM_DOT_SPACING * 2, 0.55);
+    }
+    // Marca al final: una pequeña cruz donde acaba la línea (pared u objetivo).
+    if (!empty) {
+      const ex = this.x + Math.cos(this.angle) * len, ey = this.y + Math.sin(this.angle) * len;
+      ctx.globalAlpha = 0.8;
+      for (const [ox, oy] of [[0, 0], [-2, 0], [2, 0], [0, -2], [0, 2]]) pixelRect(ctx, ex + ox * 2 - 1, ey + oy * 2 - 1);
+    }
     ctx.restore();
   }
 

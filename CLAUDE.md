@@ -146,6 +146,11 @@ Alcance en unidades del mundo (1 casilla = 32). Cadencia = segundos entre ataque
 | Escopeta | `shotgun` | mata | 270 | 0,65 s | 4 | 6 perdigones, dispersión ±0,3 rad |
 | Subfusil | `smg` | mata | ilimitado | 0,075 s (≈12 disparos/s), **automático** | 30 | dispersión ±0,12 rad |
 
+- **Indicador de apuntado** (`player.drawAim`, PC y móvil, se dibuja bajo el jugador): armas de
+  fuego → línea de puntos hasta la primera pared/puerta/enemigo (tope `AIM_MAX_DIST` o el alcance del
+  arma) con una cruz al final; la escopeta añade dos líneas tenues con su apertura (incluye
+  `perks.spreadMul`); sin munición la línea se apaga. Cuerpo a cuerpo → arco de puntos con `range`
+  y `arc` del arma. La mira del ratón (PC) se mantiene.
 - `auto: true` = dispara mientras se mantiene el clic (si no, un clic = un disparo; el melee
   siempre se puede mantener). Al vaciarse avisa "SIN MUNICIÓN"; se puede lanzar igualmente.
 - Toda baja/derribo pasa `cause` (`finisher`, `door`, `thrown`, `melee`, `bullet`, `fists`) a

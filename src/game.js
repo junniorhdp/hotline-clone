@@ -892,7 +892,10 @@ export class Game {
     for (const p of this.pickups) p.draw(ctx, this.time);
     for (const b of this.bullets) b.draw(ctx);
     for (const e of this.enemies) if (e.standing) e.draw(ctx, this.time, this);
-    if (this.player.alive) this.player.draw(ctx);
+    if (this.player.alive) {
+      this.player.drawAim(ctx, this);
+      this.player.draw(ctx);
+    }
     this.particles.draw(ctx);
     for (const d of this.doors) d.draw(ctx);
     // Glow neón sumado antes de las paredes: el halo se derrama sobre suelo y personajes.
