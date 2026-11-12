@@ -7,14 +7,16 @@ tres pisos de dificultad creciente.
 Hecho con **HTML5 Canvas**, **JavaScript Vanilla (ES Modules)** y **Vite**, sin frameworks ni
 librerías de juego. Todos los gráficos, la fuente, los efectos de sonido y la música se generan por código.
 
-## Cómo jugar
+**Jugar online:** https://junniorhdp.github.io/hotline-clone/ (se publica automáticamente desde `main`).
+
+## Cómo jugar en local
 
 ```bash
 npm install
 npm run dev
 ```
 
-Abre http://localhost:5173 en el navegador.
+Abre http://localhost:5173 en el navegador. Para probarlo en el móvil (misma Wi-Fi): `npm run dev -- --host` y abre la dirección "Network".
 
 ## Controles
 

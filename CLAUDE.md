@@ -6,7 +6,9 @@ HTML5 Canvas, JavaScript Vanilla (ES Modules) y Vite. Sin frameworks ni librerí
 ## Comandos
 - `npm run dev` — servidor de desarrollo (http://localhost:5173). En dev el juego está en `window.game`.
 - `npm run dev -- --host` — igual, pero accesible desde el móvil en la misma red (usa la URL "Network").
-- `npm run build` — build de producción en `dist/`
+- `npm run build` — build de producción en `dist/` (rutas relativas: `base: './'` en `vite.config.js`)
+- Despliegue: cada push a `main` compila y publica en GitHub Pages (`.github/workflows/deploy.yml`)
+  → https://junniorhdp.github.io/hotline-clone/ . En Settings → Pages la fuente debe ser "GitHub Actions".
 - `npm run preview` — sirve el build
 
 ## Arquitectura (reglas)
