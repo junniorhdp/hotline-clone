@@ -91,8 +91,9 @@ export class Player {
 
     // Melee y subfusil: se puede mantener pulsado. Pistola/escopeta: un clic, un disparo.
     // Joystick derecho mantenido: ataca con cualquier arma al ritmo de su cadencia; un toque
-    // rápido en él (`tapAttack`) da un único ataque.
-    const wantsAttack = input.aimFiring || input.tapAttack
+    // rápido en él o en el botón ATACAR (`tapAttack`) da un único ataque; ATACAR mantenido
+    // (`attackHeld`) ataca de forma continua.
+    const wantsAttack = input.aimFiring || input.tapAttack || input.attackHeld
       || (this.def.melee || this.def.auto ? input.mouse.left : input.mousePressed.left);
     if (wantsAttack && this.cooldown <= 0) {
       this.attack(game);

@@ -227,7 +227,10 @@ Colores centralizados en `COLORS` (`src/utils.js`) y `PALETTE` (`src/sprites.js`
   más del 30% del radio, o tras `HOLD_FIRE_DELAY` 0,1 s con el dedo quieto); un toque rápido que se
   levanta antes de disparar → `input.tapAttack` = un ataque. No exigir arrastre para atacar: en el
   móvil lo natural es tocar o mantener (fue un bug real).
-  Botones LANZAR (= clic derecho), PATADA (= E) y REINICIAR (= R): reutilizan la entrada existente.
+  Botón **ATACAR** (el principal: más grande, esquina inferior derecha): tocar = `input.tapAttack`
+  (un ataque), mantener = `input.attackHeld` (ataque continuo a la cadencia). Sin botón de patada:
+  un golpe cuerpo a cuerpo sin enemigo delante ya patea la puerta de enfrente (`kickDoor`).
+  LANZAR (= clic derecho) encima de ATACAR y REINICIAR (= R) bajo la máscara.
   Tamaños en píxeles CSS (`STICK_CSS_RADIUS`, `BUTTON_CSS_HEIGHT`) para que midan lo mismo que un dedo.
 - **Fuera de la partida** un toque = clic en ese punto (menús, tarjetas). Antes se comprueban los
   **botones táctiles de pantalla** (`game.screenButtons()`, solo en modo táctil), que "pulsan" la

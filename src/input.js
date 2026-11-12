@@ -24,7 +24,8 @@ export class Input {
     this.aimActive = false;
     this.aimAngle = 0;
     this.aimFiring = false;
-    this.tapAttack = false;  // toque rápido en el joystick derecho: un ataque
+    this.tapAttack = false;   // toque rápido (joystick derecho o botón ATACAR): un ataque
+    this.attackHeld = false;  // botón ATACAR mantenido: ataque continuo
 
     window.addEventListener('keydown', (e) => {
       if (BLOCKED_DEFAULTS.has(e.code)) e.preventDefault();

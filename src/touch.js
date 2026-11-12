@@ -5,10 +5,12 @@ import { COLORS } from './utils.js';
 // Controles táctiles: dos joysticks flotantes + botones, dibujados en pixel art.
 // Traducen los dedos de `input.touches` a los controles que ya entiende el juego:
 //   joystick izquierdo  → input.moveAxis (analógico, -1..1)
-//   joystick derecho    → input.aimAngle / aimActive y, empujado más allá de FIRE_THRESHOLD,
-//                         input.aimFiring (ataca/dispara solo respetando la cadencia del arma)
+//   joystick derecho    → input.aimAngle / aimActive y, mantenido, input.aimFiring (ataca/dispara
+//                         solo respetando la cadencia del arma)
+//   ATACAR              → tocar = un ataque (input.tapAttack); mantener = input.attackHeld (ataque
+//                         continuo a la cadencia del arma). Sin patada aparte: un golpe cuerpo a
+//                         cuerpo sin enemigo delante ya patea la puerta que haya enfrente.
 //   LANZAR              → clic derecho (recoger / lanzar)
-//   PATADA              → tecla E
 //   REINICIAR           → tecla R
 // Fuera de la partida (menús, máscaras, resultados…) un toque equivale a un clic en ese punto.
 // Los tamaños se definen en píxeles CSS (tamaño real del dedo) y se pasan a píxeles internos.
@@ -61,12 +63,15 @@ export class TouchControls {
     const bh = Math.max(16, Math.round(this.px(BUTTON_CSS_HEIGHT)));
     const bw = Math.max(Math.round(bh * 1.8), measureText('LANZAR') + 12);
     const rh = Math.max(14, Math.round(bh * 0.75));
+    // ATACAR es el botón principal: más grande y en la esquina, donde cae el pulgar.
+    const ah = Math.round(bh * 1.3);
+    const aw = Math.max(Math.round(ah * 1.6), measureText('ATACAR') + 12);
     return {
       left, right, bottom,
       stickR: Math.max(16, Math.round(this.px(STICK_CSS_RADIUS))),
       buttons: [
-        { id: 'throw', label: 'LANZAR', x: right - bw, y: bottom - bh * 2 - 6, w: bw, h: bh },
-        { id: 'kick', label: 'PATADA', x: right - bw, y: bottom - bh, w: bw, h: bh },
+        { id: 'attack', label: 'ATACAR', x: right - aw, y: bottom - ah, w: aw, h: ah, accent: COLORS.wall },
+        { id: 'throw', label: 'LANZAR', x: right - bw, y: bottom - ah - 6 - bh, w: bw, h: bh },
         // Debajo de la miniatura de la máscara del HUD.
         { id: 'retry', label: 'REINICIAR', x: left, y: 56 + s.t, w: measureText('REINICIAR') + 12, h: rh },
       ],
@@ -84,13 +89,13 @@ export class TouchControls {
     this.roles.clear();
     const input = this.game.input;
     input.moveAxis = { x: 0, y: 0 };
-    input.aimActive = input.aimFiring = false;
+    input.aimActive = input.aimFiring = input.attackHeld = false;
   }
 
   press(id) {
     const input = this.game.input;
+    if (id === 'attack') input.tapAttack = true; // golpe inmediato; mantenerlo sigue atacando
     if (id === 'throw') input.mousePressed.right = true;
-    if (id === 'kick') input.pressed.add('KeyE');
     if (id === 'retry') input.pressed.add('KeyR');
     this.flash[id] = 0.15;
   }
@@ -135,7 +140,7 @@ export class TouchControls {
       if (t.isNew && !this.roles.has(t.id)) {
         const button = L.buttons.find((b) => inside(b, p));
         if (button) {
-          this.roles.set(t.id, 'button');
+          this.roles.set(t.id, `button:${button.id}`);
           this.press(button.id);
         } else if (p.x < half && !this.move) {
           this.move = { id: t.id, ox: p.x, oy: p.y, x: p.x, y: p.y };
@@ -163,6 +168,8 @@ export class TouchControls {
       return len > 1 ? { x: dx / len, y: dy / len, len: 1 } : { x: dx, y: dy, len };
     };
     input.moveAxis = this.move ? vec(this.move) : { x: 0, y: 0 };
+    // ATACAR mantenido (los dedos que se levantaron ya no tienen rol).
+    input.attackHeld = [...this.roles.values()].includes('button:attack');
     // Joystick derecho:
     // - mantenerlo ataca a la cadencia del arma: al instante si se arrastra más allá de
     //   FIRE_THRESHOLD, o tras HOLD_FIRE_DELAY aunque el dedo esté quieto (así, al arrastrar para
@@ -199,7 +206,10 @@ export class TouchControls {
     this.drawStick(ctx, this.aim, Math.min(rightBase, L.right - R), L.bottom - R - 6, R,
       g.input.aimFiring ? COLORS.blood : COLORS.wall, g.input.aimFiring);
 
-    for (const b of L.buttons) drawTouchButton(ctx, b, this.flash[b.id] > 0, 0.55);
+    for (const b of L.buttons) {
+      const lit = this.flash[b.id] > 0 || (b.id === 'attack' && g.input.attackHeld);
+      drawTouchButton(ctx, b, lit, b.id === 'attack' ? 0.7 : 0.55);
+    }
   }
 
   // Botones de las pantallas fuera de la partida (los define game.screenButtons()).
