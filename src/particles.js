@@ -40,6 +40,16 @@ export class Particles {
     }
   }
 
+  // Astillas de la puerta al estamparla contra alguien (salen hacia donde gira la hoja).
+  splinters(x, y, angle, count = 10) {
+    for (let i = 0; i < count; i++) {
+      const a = angle + rand(-0.8, 0.8);
+      const s = rand(60, 260);
+      const life = rand(0.25, 0.55);
+      this.add({ type: 'chip', x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life, max: life, size: rand(1.5, 4) });
+    }
+  }
+
   blood(x, y, angle, count = 10) {
     for (let i = 0; i < count; i++) {
       const a = angle + rand(-0.6, 0.6);
@@ -59,7 +69,7 @@ export class Particles {
   // `onBloodLand(x, y, size)` se llama cuando una gota "cae" para pintarla en la capa de sangre.
   update(dt, map, onBloodLand) {
     for (const p of this.list) {
-      const drag = p.type === 'spark' ? 6 : p.type === 'dust' ? 4 : 3;
+      const drag = p.type === 'spark' ? 6 : p.type === 'dust' || p.type === 'chip' ? 4 : 3;
       const k = Math.exp(-drag * dt);
       p.vx *= k;
       p.vy *= k;
@@ -109,8 +119,8 @@ export class Particles {
         pixelRect(ctx, p.x - p.vx * 0.012, p.y - p.vy * 0.012);
       } else {
         ctx.globalCompositeOperation = 'source-over';
-        ctx.globalAlpha = p.type === 'dust' ? t * 0.5 : 1;
-        ctx.fillStyle = p.type === 'dust' ? COLORS.dust : COLORS.blood;
+        ctx.globalAlpha = p.type === 'dust' ? t * 0.5 : p.type === 'chip' ? Math.min(1, t * 2) : 1;
+        ctx.fillStyle = p.type === 'dust' ? COLORS.dust : p.type === 'chip' ? COLORS.door : COLORS.blood;
         const size = p.size > 3 ? 2 : 1;
         pixelRect(ctx, p.x, p.y, size, size);
       }

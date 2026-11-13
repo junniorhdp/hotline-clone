@@ -8,7 +8,7 @@ import { Menu } from './menu.js';
 import { TouchControls } from './touch.js';
 import { Player } from './player.js';
 import { Enemy } from './enemy.js';
-import { Door } from './doors.js';
+import { Door, ENEMY_PUSH_SPEED } from './doors.js';
 import { Pickup, Bullet, ENEMY_WEAPONS, segmentPointDistance } from './weapons.js';
 import { Particles } from './particles.js';
 import { Sfx } from './audio.js';
@@ -39,7 +39,7 @@ const LOW_FPS_SECONDS = 3;
 const COARSE_POINTER = window.matchMedia?.('(pointer: coarse)').matches ?? false;
 
 // Hit-stop: segundos que se congela la simulación en cada tipo de impacto.
-const HITSTOP = { kill: 0.05, finisher: 0.08, knock: 0.035, playerDeath: 0.12 };
+const HITSTOP = { kill: 0.05, finisher: 0.08, knock: 0.035, doorKnock: 0.07, playerDeath: 0.12 };
 const INTRO_BANNER_TIME = 2.2;
 const FADE_TIME = 0.25;        // segundos de cada mitad del fundido (salida y entrada)
 const RANK_COLORS = { S: COLORS.player, A: COLORS.weapon, B: COLORS.enemy, C: COLORS.blood };
@@ -635,20 +635,39 @@ export class Game {
     this.camera.update(dt, tx, ty);
   }
 
+  // Puertas: primero los enemigos y AL FINAL el jugador, que tiene prioridad absoluta: su empujón
+  // impone el giro (y bloquea la puerta), así que un enemigo nunca le gana ni le empuja.
   updateDoors(dt) {
     for (const door of this.doors) {
       door.update(dt);
-      if (this.player.alive && door.collide(this.player, this.map) === 'push' && door.creakCd <= 0) {
-        this.playAt('creak', door.cx, door.cy);
-        door.creakCd = 0.8;
-      }
       for (const e of this.enemies) {
         if (!e.standing) continue;
-        if (door.collide(e, this.map) === 'knock') {
-          this.knockDown(e, Math.atan2(e.y - door.cy, e.x - door.cx), 'door');
-        }
+        const hit = door.collide(e, this.map, { pushSpeed: ENEMY_PUSH_SPEED, canPush: () => e.doorContact() });
+        if (hit === 'knock') this.doorKnock(door, e);
+      }
+      if (!this.player.alive) continue;
+      const wasClosed = Math.abs(door.offset) < 0.5 && !door.fast;
+      if (door.collide(this.player, this.map, { player: true }) === 'push' && wasClosed && door.creakCd <= 0) {
+        // Empujón del jugador: la puerta se abre de golpe (y derriba a quien esté detrás).
+        this.playAt('kick', door.cx, door.cy, 0.6);
+        this.particles.dust(door.cx, door.cy, 5);
+        this.camera.addShake(1.5);
+        door.creakCd = 0.4;
       }
     }
+  }
+
+  // Puerta estampada contra un enemigo: derribo con más contundencia que un golpe normal.
+  doorKnock(door, e) {
+    const away = Math.atan2(e.y - door.cy, e.x - door.cx);
+    this.knockDown(e, away, 'door');
+    const swing = door.angle + (door.angVel > 0 ? Math.PI / 2 : -Math.PI / 2);
+    this.particles.splinters((door.hx + door.ex) / 2, (door.hy + door.ey) / 2, swing, 12);
+    this.particles.dust(e.x, e.y, 6);
+    this.camera.addShake(5);
+    this.fx.kick(0.35);
+    this.hitstop = Math.max(this.hitstop, HITSTOP.doorKnock);
+    this.playAt('kick', e.x, e.y);
   }
 
   updateBullets(dt) {

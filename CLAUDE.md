@@ -211,9 +211,25 @@ Alcance en unidades del mundo (1 casilla = 32). Cadencia = segundos entre ataque
   en una partida nueva cambia. `loadLevel(index, rng)` acepta cualquier generador 0..1.
 - Hit-stop: durante el congelado `update()` devuelve `false` y el bucle NO limpia las pulsaciones,
   para que un clic justo después de un impacto no se pierda.
-- Puertas (`D` en el mapa): andar contra ellas las abre suave; patada (`E`, o golpe melee
-  sin objetivo delante) las abre de golpe y derriban a quien esté detrás.
-- Hit-stop (`HITSTOP` en `game.js`): muerte 50 ms, remate 80 ms, derribo 35 ms, muerte del jugador 120 ms.
+- **Puertas** (`D` en el mapa, `doors.js`). Reglas de prioridad y física:
+  - **El jugador manda.** `game.updateDoors` resuelve primero a los enemigos y **al final al
+    jugador**, cuyo empujón (`collide(..., { player: true })`) impone el giro: abre a
+    `PLAYER_PUSH_SPEED` (9 rad/s, por encima de `KNOCK_SPEED` 6 → derriba a quien esté detrás) y
+    activa `playerLock` (0,4 s) durante el cual ningún enemigo puede cambiar el giro. El jugador
+    nunca es derribado ni empujado hacia atrás por un enemigo a través de una puerta.
+  - **Patada**: `E`, golpe cuerpo a cuerpo sin enemigo delante o botón ATACAR en táctil
+    (`game.kickDoor`) → `KICK_SPEED` 14 rad/s en sentido contrario al jugador + `playerLock`.
+  - **Golpe de la hoja** (`sweptHits`): con la puerta girando rápido hacia un enemigo, se
+    comprueba todo el arco barrido desde el paso anterior con margen `KNOCK_MARGIN` (7), no solo
+    el contacto instantáneo, para conectar con quien llega corriendo. Al estampar, la hoja conserva
+    al menos `KNOCK_FOLLOW_SPEED` y `game.doorKnock` aplica derribo (causa `door`, +400 PORTAZO),
+    hit-stop `HITSTOP.doorKnock` (70 ms), sacudida, astillas (`particles.splinters`), polvo y sonido.
+  - **Enemigos**: al tocar una puerta se paran `DOOR_PAUSE` (0,45 s; 0,25 s persiguiendo) y luego la
+    empujan despacio a `ENEMY_PUSH_SPEED` (1,8 rad/s, sin fuerza para derribar) durante
+    `DOOR_PUSH_WINDOW`. Mientras están parados solo se giran. Lógica en `Enemy.doorContact()`.
+  - `collide` devuelve `'knock'`, `'push'`, `'blocked'` (la toca pero no puede moverla) o `null`.
+    En F1 la puerta muestra su velocidad angular y "JUGADOR" mientras está bloqueada por él.
+- Hit-stop (`HITSTOP` en `game.js`): muerte 50 ms, remate 80 ms, derribo 35 ms, portazo 70 ms, muerte del jugador 120 ms.
 
 ## Estilo visual: pixel art 16-bit neón / synthwave oscuro
 Diseños propios del juego (no copiar personajes ni arte de otros juegos).

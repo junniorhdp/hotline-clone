@@ -4,13 +4,20 @@ import { drawSprite, pixelRect, WORLD_PX } from './sprites.js';
 import { drawText } from './pixelfont.js';
 
 const MAX_OPEN = Math.PI / 2;
-const OPEN_SPEED = 3.2;          // rad/s al empujarla andando (apertura "normal")
-const KICK_SPEED = 13;           // rad/s tras una patada
-export const KNOCK_SPEED = 6;    // por encima de esto la hoja derriba a quien golpee
+// Prioridad: el jugador manda sobre la puerta. Su empujón abre rápido (derriba a quien esté
+// detrás) y la "bloquea" PLAYER_LOCK_TIME: mientras tanto ningún enemigo puede cambiar su giro.
+// Los enemigos, en cambio, la abren despacio (sin fuerza para derribar).
+export const PLAYER_PUSH_SPEED = 9;  // rad/s al empujarla el jugador (andando o corriendo)
+export const ENEMY_PUSH_SPEED = 1.8; // rad/s al empujarla un enemigo
+const KICK_SPEED = 14;               // rad/s tras una patada
+const PLAYER_LOCK_TIME = 0.4;
+export const KNOCK_SPEED = 6;        // por encima de esto la hoja derriba a quien golpee
+const KNOCK_MARGIN = 7;              // margen extra (mundo) de la hoja al golpear rápido
+const KNOCK_FOLLOW_SPEED = 8;        // la hoja conserva al menos este impulso tras estampar
 const DAMPING = 3.5;
 const THICKNESS = 4;
 const KICK_RANGE = 46;
-const KICK_ARC = 1.1;            // rad a cada lado de la mirada
+const KICK_ARC = 1.1;                // rad a cada lado de la mirada
 
 // Puerta batiente: un segmento que gira sobre una bisagra pegada a la pared.
 export class Door {
@@ -29,9 +36,11 @@ export class Door {
       this.base = Math.PI / 2;
     }
     this.len = TILE;
-    this.offset = 0;   // ángulo respecto a cerrada
+    this.offset = 0;      // ángulo respecto a cerrada
+    this.prevOffset = 0;  // ángulo del paso anterior (para el barrido del golpe)
     this.angVel = 0;
     this.creakCd = 0;
+    this.playerLock = 0;  // s durante los que solo el jugador decide el giro
   }
 
   get angle() { return this.base + this.offset; }
@@ -54,12 +63,30 @@ export class Door {
     return Math.abs(diff) < KICK_ARC;
   }
 
-  // La patada abre la puerta en sentido contrario a quien la da.
+  // La patada abre la puerta en sentido contrario a quien la da y anula cualquier empujón de
+  // un enemigo desde el otro lado.
   kick(fromX, fromY) {
     this.angVel = -this.sideOf(fromX, fromY) * KICK_SPEED;
+    this.playerLock = PLAYER_LOCK_TIME;
+  }
+
+  // ¿La hoja, girando, barre la posición de la entidad en este paso? Se mira todo el arco
+  // recorrido desde el paso anterior (más un margen) y no solo el contacto en este instante,
+  // para que un enemigo que llega corriendo no "atraviese" la hoja entre dos pasos.
+  sweptHits(e) {
+    const dx = e.x - this.hx, dy = e.y - this.hy;
+    const r = Math.hypot(dx, dy);
+    if (r < 4 || r > this.len + e.r + KNOCK_MARGIN) return false;
+    const wrap = (a) => Math.atan2(Math.sin(a), Math.cos(a));
+    const toEntity = wrap(Math.atan2(dy, dx) - this.angle);
+    const swept = wrap(this.prevOffset - this.offset);
+    const margin = (e.r + KNOCK_MARGIN) / r;
+    return toEntity >= Math.min(0, swept) - margin && toEntity <= Math.max(0, swept) + margin;
   }
 
   update(dt) {
+    this.prevOffset = this.offset;
+    this.playerLock = Math.max(0, this.playerLock - dt);
     this.offset += this.angVel * dt;
     if (this.offset > MAX_OPEN) { this.offset = MAX_OPEN; this.angVel = -Math.abs(this.angVel) * 0.25; }
     if (this.offset < -MAX_OPEN) { this.offset = -MAX_OPEN; this.angVel = Math.abs(this.angVel) * 0.25; }
@@ -68,23 +95,36 @@ export class Door {
     this.creakCd = Math.max(0, this.creakCd - dt);
   }
 
-  // Resuelve el choque con una entidad { x, y, r }.
-  // Devuelve 'knock' si la hoja la golpea girando rápido, 'push' si la entidad la empuja, o null.
-  collide(e, map) {
+  // Resuelve el choque con una entidad { x, y, r }. Opciones:
+  //   player     true si es el jugador: siempre impone su empujón (PLAYER_PUSH_SPEED) y bloquea
+  //              la puerta; nunca es derribado por ella.
+  //   pushSpeed  velocidad a la que la abre al empujarla (enemigos: ENEMY_PUSH_SPEED).
+  //   canPush    función que se llama solo si hay contacto: false = no puede empujar todavía
+  //              (el enemigo se para un instante antes de abrir).
+  // Devuelve 'knock' (la hoja la golpea girando rápido), 'push' (la entidad la empuja),
+  // 'blocked' (toca la puerta pero no puede moverla) o null (sin contacto).
+  collide(e, map, { player = false, pushSpeed = ENEMY_PUSH_SPEED, canPush = null } = {}) {
+    const side = this.sideOf(e.x, e.y);
+    if (!player && this.fast && this.angVel * side > 0 && this.sweptHits(e)) {
+      // Estampada: la hoja conserva (y refuerza) su impulso y sigue abriéndose.
+      this.angVel = Math.sign(this.angVel) * Math.max(Math.abs(this.angVel) * 0.85, KNOCK_FOLLOW_SPEED);
+      return 'knock';
+    }
+
     const c = closestOnSegment(e.x, e.y, this.hx, this.hy, this.ex, this.ey);
     const dx = e.x - c.x, dy = e.y - c.y;
     const d = Math.hypot(dx, dy);
     const R = e.r + THICKNESS / 2;
     if (d >= R) return null;
 
-    const side = this.sideOf(e.x, e.y);
     let result = 'push';
-    if (this.angVel * side > 0 && this.fast) {
-      // Pierde fuerza pero sigue abriéndose: el derribado sale despedido y deja de colisionar.
-      result = 'knock';
-      this.angVel *= 0.5;
-    } else if (this.angVel * -side < OPEN_SPEED) {
-      this.angVel = -side * OPEN_SPEED;
+    if (player) {
+      if (this.angVel * -side < PLAYER_PUSH_SPEED) this.angVel = -side * PLAYER_PUSH_SPEED;
+      this.playerLock = PLAYER_LOCK_TIME;
+    } else if (this.playerLock > 0 || (canPush && !canPush())) {
+      result = 'blocked'; // la puerta manda: se le aparta, pero no la mueve
+    } else if (this.angVel * -side < pushSpeed) {
+      this.angVel = -side * pushSpeed;
     }
 
     let nx = dx / d, ny = dy / d;
@@ -114,6 +154,6 @@ export class Door {
     ctx.stroke();
     ctx.setLineDash([]);
     ctx.restore();
-    drawText(ctx, `V ${this.angVel.toFixed(1)}`, this.cx, this.cy - 26, { color: COLORS.debug, scale: WORLD_PX, align: 'center' });
+    drawText(ctx, `V ${this.angVel.toFixed(1)}${this.playerLock > 0 ? " JUGADOR" : ""}`, this.cx, this.cy - 26, { color: COLORS.debug, scale: WORLD_PX, align: 'center' });
   }
 }

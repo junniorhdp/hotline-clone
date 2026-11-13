@@ -19,6 +19,11 @@ const DOWN_TIME = 3.2;       // segundos noqueado antes de levantarse
 const KNOCKBACK = 14;
 const ARRIVE_DIST = 6;
 const REPATH_TIME = 0.4;
+// Puertas: al toparse con una, el enemigo se para un instante antes de empujarla (despacio, ver
+// ENEMY_PUSH_SPEED en doors.js) en vez de abrirla de golpe como si tuviera superfuerza.
+const DOOR_PAUSE = 0.45;        // patrullando / investigando
+const DOOR_PAUSE_CHASE = 0.25;  // persiguiendo
+const DOOR_PUSH_WINDOW = 1.2;   // s durante los que puede empujar tras la pausa
 
 export class Enemy {
   // weapon: null (cuerpo a cuerpo) o { type: 'gun', ammo } para el enemigo armado
@@ -32,6 +37,8 @@ export class Enemy {
     this.gunDef = weapon ? ENEMY_WEAPONS[weapon.type] : null;
     this.burstLeft = 0;     // balas que quedan de la ráfaga en curso
     this.burstTimer = 0;
+    this.doorWait = 0;      // pausa ante una puerta (s)
+    this.doorPushTime = 0;  // ventana en la que ya puede empujarla (s)
     this.wp = 0;
     this.wait = 0.5;
     this.state = 'patrol'; // patrol | alert | chase | investigate | search | down
@@ -73,6 +80,7 @@ export class Enemy {
     this.state = 'down';
     this.timer = DOWN_TIME;
     this.windup = this.aim = this.burstLeft = 0;
+    this.doorWait = this.doorPushTime = 0;
     this.path = null;
     this.angle = angle;
     moveAndSlide(map, this, Math.cos(angle) * KNOCKBACK, Math.sin(angle) * KNOCKBACK);
@@ -100,6 +108,12 @@ export class Enemy {
       }
     }
     this.attackCd = Math.max(0, this.attackCd - dt);
+    if (this.doorWait > 0) {
+      this.doorWait -= dt;
+      if (this.doorWait <= 0) this.doorPushTime = DOOR_PUSH_WINDOW;
+    } else {
+      this.doorPushTime = Math.max(0, this.doorPushTime - dt);
+    }
 
     switch (this.state) {
       case 'patrol': this.updatePatrol(dt, game.map); break;
@@ -141,7 +155,8 @@ export class Enemy {
 
   updateChase(dt, game) {
     const p = game.player;
-    if (!p.alive) { this.startSearch(); return; }
+    // Sin jugador vivo o sin última posición conocida (no debería ocurrir): a buscar.
+    if (!p.alive || !this.target) { this.startSearch(); return; }
 
     // Si te pierde de vista, el wind-up se cancela: por eso cubrirse tras una esquina funciona.
     if (!this.sees) {
@@ -229,9 +244,21 @@ export class Enemy {
     return false;
   }
 
+  // Llamado por la puerta al tocarla: ¿puede empujarla ya? Si no, empieza la pausa.
+  doorContact() {
+    if (this.doorPushTime > 0) return true;
+    if (this.doorWait <= 0) this.doorWait = this.state === 'chase' ? DOOR_PAUSE_CHASE : DOOR_PAUSE;
+    return false;
+  }
+
   moveToward(tx, ty, speed, dt, map) {
     const dx = tx - this.x, dy = ty - this.y;
     const d = Math.hypot(dx, dy);
+    // Parado ante una puerta: solo se gira hacia donde va.
+    if (this.doorWait > 0) {
+      if (d > 0.001) this.turnTowards(Math.atan2(dy, dx), 7, dt);
+      return;
+    }
     if (d < 0.001) return;
     const step = Math.min(speed * dt, d);
     this.turnTowards(Math.atan2(dy, dx), this.state === 'chase' ? 12 : 7, dt);
