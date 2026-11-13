@@ -23,13 +23,15 @@ HTML5 Canvas, JavaScript Vanilla (ES Modules) y Vite. Sin frameworks ni librerí
   - `enemy.js` — IA de enemigos (patrulla, visión, persecución, búsqueda, derribado) y tipo armado.
   - `doors.js` — puertas batientes: física de la hoja, empuje, patada y derribo.
   - `map.js` — tilemap, colisiones AABB con sliding, raycast/línea de visión (paredes + puertas),
-    pathfinding BFS, render estático del nivel.
+    pathfinding BFS, pisos (`LEVELS`), zonas de suelo y muebles sólidos en la cuadrícula.
   - `weapons.js` — definiciones de armas (`WEAPON_DEFS`, `ENEMY_GUN`), `Pickup`, `Bullet`, utilidades de melee.
   - `particles.js` — chispas, polvo, gotas de sangre (se pintan en la capa de sangre al caer) y casquillos persistentes.
   - `audio.js` — SFX y música synthwave procedimentales con Web Audio (osciladores + ruido filtrado).
     Sin archivos de audio. La música usa un planificador con lookahead: **un único** `setInterval`
     (`musicTimer`) para toda la partida que programa notas en el reloj de audio; `setMusic('action'|'clear')`
     solo cambia el patrón. Nunca crear intervalos nuevos por nivel/reinicio. En silencio no se crean nodos.
+  - `decor.js` — arte estático del entorno: texturas de suelo por zona, muebles, decoración de
+    suelo y deterioro de paredes (`renderFloor`, `renderProps`, `renderWalls`).
   - `menu.js` — menú principal arcade (título, selector de pisos, récords) y su fondo synthwave.
   - `masks.js` — máscaras (`MASKS`): nombre, descripción de la pasiva, icono pixel art 12×12 con
     paleta propia y `effects`. `maskEffects(mask)` devuelve los efectos con valores por defecto.
@@ -60,12 +62,44 @@ HTML5 Canvas, JavaScript Vanilla (ES Modules) y Vite. Sin frameworks ni librerí
   sangre, sin recargar la página. Audio, efectos y `Score` persisten entre reinicios.
 
 ## Niveles y flujo
-- Los pisos están en `LEVELS` (`src/map.js`): `{ name, par, rows }`. `par` = tiempo objetivo (s).
+- Los pisos están en `LEVELS` (`src/map.js`): `{ name, floor, par, rows, zones, props, loot, … }`.
+  `par` = tiempo objetivo (s); `zones`/`props`: ver "Diseño de niveles".
   Leyenda del tilemap: `#` pared · `.` suelo · `D` puerta · `P` jugador · `X` salida ·
   `E`/`A` enemigo melee/armado (patrulla en el eje más largo) · `V`/`W` melee/armado con patrulla
   vertical forzada (para cruzar patrullas) · `B` bate · `G` pistola · `S` escopeta ·
   `K` cuchillo · `T` tubo · `M` subfusil · `?` arma aleatoria (ver "Reparto de armas").
-  `loadLevel` valida anchos de fila, `P` y `X`.
+  `loadLevel` valida anchos de fila, `P`, `X` y la colocación de los muebles.
+
+## Diseño de niveles: edificio abandonado tomado por la mafia
+- **Arquitectura**: cada piso es un edificio coherente. Pasillos principales de **2 casillas** de
+  ancho (cemento) que conectan **habitaciones reales cerradas por puertas** (despachos, oficinas,
+  baños, cocinas, almacenes, archivos, salas de servidores, vigilancia, salas de estar, casino…).
+  Algunas salas se comunican entre sí con una segunda puerta para dar rutas de flanqueo.
+- **Zonas de suelo** (`zones` en `LEVELS`: `[tipo, x0, y0, x1, y1]`; el resto usa `floor`, el
+  cemento de los pasillos). Tipos (texturas en `FLOORS` de `decor.js`): `concrete` (cemento
+  agrietado con juntas, grietas y manchas de óxido/humedad), `brokenTiles` (baldosas rotas, algunas
+  faltan), `wood` (tablones gastados), `carpet` (moqueta de oficina), `bathTiles` (azulejos
+  pequeños sucios con verdín) y `metal` (chapa antideslizante con óxido).
+- **Mobiliario** (`props`: `[tipo, x, y, ancho, alto]` en casillas):
+  - Sólidos (`SOLID_PROPS` en `map.js`): `desk`, `deskFlipped`, `counter` (mostrador/barra),
+    `sofa`, `cashTable` (maletín con dinero/paquetes), `shelf`, `tv` (CRT roto), `cabinet`,
+    `crates`, `barrel`, `toilet`, `sink`, `cardTable`, `bed`. Ocupan casillas enteras y se marcan
+    en la cuadrícula como celda `2`: bloquean movimiento, **balas** (son cobertura) y visión, y la
+    IA los rodea con el pathfinding.
+  - Decorativos (`DECOR_PROPS`, se pintan en el suelo): `rug`, `debris`, `trash`, `stain`, `papers`.
+    Además los pasillos generan grietas, manchas y basura en las esquinas automáticamente.
+- **Paredes con deterioro** (`renderWalls` en `decor.js`): ladrillo visto, manchas, cables sueltos
+  y grafitis mínimos, generados con semilla fija (siempre iguales).
+- `isWallTile` = obstáculo (pared **o** mueble sólido); `isStructuralWall` = solo pared del
+  edificio (la que lleva tubo neón, proyecta sombra de muro y orienta las puertas).
+- **Reglas al diseñar o editar un piso** (`loadLevel` lanza error si se incumplen las tres primeras):
+  - Ningún mueble sólido sobre paredes, entidades, `?`, puertas u otro mueble.
+  - Las dos casillas de paso de cada puerta, libres.
+  - Todo (enemigos, `?`, armas, puertas, salida) alcanzable desde `P`.
+  - Las patrullas `E`/`A` no deben cruzar puertas (la patrulla automática sigue el eje más largo
+    hasta 7 casillas y atraviesa puertas): colocar al enemigo donde su eje largo quede dentro de la sala.
+  - Comprobar después que nadie se atasca simulando movimiento real (`moveAndSlide`) y la
+    navegación de los enemigos (`Enemy.goTo`) hacia el jugador, patrullas, armas y salida.
 
 ## Pantallas y estados (`game.state`)
 Correspondencia entre las pantallas conceptuales y los valores reales de `game.state`:
@@ -206,8 +240,8 @@ Diseños propios del juego (no copiar personajes ni arte de otros juegos).
 - Capas estáticas (suelo, paredes, glow) y la capa de sangre van a media resolución del mundo
   (1 píxel = 2 unidades) y se dibujan escaladas ×2. Los cadáveres son sprites estampados en la
   capa de sangre.
-- Suelo por piso (`floor` en `LEVELS`): `checker` (baldosas), `carpet` (moqueta), `wood` (tablones),
-  con desgaste generado con semilla fija. Las paredes proyectan sombra dura abajo-derecha y tienen
+- Suelos por zona y muebles: ver "Diseño de niveles". Todo el entorno lleva desgaste generado
+  con semilla fija. Paredes y muebles sólidos proyectan sombra dura abajo-derecha; las paredes tienen
   tubo neón de 2 px en los bordes que dan al suelo + capa de glow sumada con `lighter`.
 - HUD en píxeles internos con `drawText` (escala 1, 2 o 3). La sombra dura del texto no se usa
   en escalas grandes (rompe la silueta): pasar `shadow: null`.

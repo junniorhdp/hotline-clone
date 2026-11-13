@@ -1,4 +1,4 @@
-import { COLORS, segmentIntersectT, seededRandom } from './utils.js';
+import { segmentIntersectT } from './utils.js';
 
 export const TILE = 32;
 const CORNER_TOLERANCE = 8; // px que se "empuja" al jugador para entrar en huecos
@@ -12,99 +12,178 @@ const PATROL_MAX_TILES = 7;
 //   ? arma aleatoria: primero las de `guaranteed`, el resto sorteadas de `loot`
 // Los enemigos armados llevan subfusil con probabilidad `smgChance` (si no, pistola).
 // `par` = tiempo objetivo en segundos (bonus de tiempo y rango).
+// `floor` = suelo por defecto (pasillos); `zones` = habitaciones [tipo, x0, y0, x1, y1] con su suelo
+// (concrete, brokenTiles, wood, carpet, bathTiles, metal); `props` = muebles [tipo, x, y, ancho, alto]
+// en casillas (sólidos: SOLID_PROPS; decorativos: DECOR_PROPS). Los pisos se diseñan como edificio:
+// pasillos de 2 casillas que conectan salas cerradas por puertas.
 export const LEVELS = [
   {
     name: 'PISO 1 · RECEPCIÓN',
-    floor: 'checker',
+    floor: 'concrete',
     loot: ['bat', 'knife', 'gun', 'pipe'],
     guaranteed: ['pipe', 'smg'],
     smgChance: 0.15,
     par: 50,
     rows: [
       '########################################',
-      '#......#...............#...............#',
-      '#..P...#...............#...............#',
-      '#......#.......E.......#.......?.......#',
-      '#......#...............#...............#',
-      '#..B...D...............D.......A.......#',
-      '#......#...............#...............#',
-      '#......#...............#...............#',
-      '####D#####..#######..#######D###########',
-      '#.........................#............#',
-      '#....?....................#......A.....#',
-      '#.....######....######....#............#',
-      '#.....#..............#....D............#',
-      '#.....#......E.......#....#............#',
-      '#.....#..............#....#............#',
-      '#.....######....######....#............#',
-      '#...E.....................#.....?......#',
-      '#X........................#............#',
+      '#............#...........#......#......#',
+      '#............#...........#......#......#',
+      '#..P.........D...........#....?.#......#',
+      '#............#...........#......#...A..#',
+      '#X..B........#...E....?..#......#......#',
+      '#............#...........#......#......#',
+      '######D############D########D######D####',
+      '#......................................#',
+      '#.....................E................#',
+      '######D############D############D#######',
+      '#............#............#............#',
+      '#............#............#............#',
+      '#............#............#............#',
+      '#............#............D............#',
+      '#.......E....#............#......A.....#',
+      '#............#..?.........#............#',
+      '#............#............#............#',
       '########################################',
+    ],
+    zones: [
+      ['brokenTiles', 1, 1, 12, 6], ['wood', 14, 1, 24, 6], ['bathTiles', 26, 1, 31, 6],
+      ['metal', 33, 1, 38, 6], ['carpet', 1, 11, 12, 17], ['wood', 14, 11, 25, 17],
+      ['metal', 27, 11, 38, 17],
+    ],
+    props: [
+      ['counter', 8, 3, 3, 1], ['sofa', 12, 4, 1, 2], ['rug', 3, 1, 3, 2], ['debris', 10, 6, 1, 1],
+      ['trash', 1, 1, 1, 1], ['desk', 15, 2, 2, 1], ['deskFlipped', 21, 3, 2, 1],
+      ['cabinet', 24, 1, 1, 1], ['cabinet', 23, 1, 1, 1], ['papers', 17, 4, 1, 1],
+      ['papers', 20, 2, 1, 1], ['toilet', 31, 1, 1, 1], ['toilet', 31, 5, 1, 1],
+      ['sink', 26, 1, 1, 1], ['sink', 27, 1, 1, 1], ['stain', 28, 5, 1, 1], ['trash', 26, 6, 1, 1],
+      ['crates', 33, 1, 1, 1], ['crates', 34, 1, 1, 1], ['crates', 33, 2, 1, 1],
+      ['barrel', 38, 1, 1, 1], ['barrel', 38, 2, 1, 1], ['shelf', 38, 4, 1, 2],
+      ['barrel', 12, 8, 1, 1], ['crates', 25, 9, 1, 1], ['debris', 8, 9, 1, 1],
+      ['trash', 38, 9, 1, 1], ['stain', 30, 8, 1, 1], ['sofa', 2, 12, 2, 1], ['sofa', 2, 16, 2, 1],
+      ['cashTable', 3, 14, 1, 1], ['tv', 10, 12, 1, 1], ['rug', 5, 13, 3, 2],
+      ['trash', 12, 17, 1, 1], ['desk', 18, 13, 3, 1], ['cashTable', 23, 12, 2, 1],
+      ['cabinet', 14, 11, 1, 1], ['cabinet', 15, 11, 1, 1], ['shelf', 24, 17, 2, 1],
+      ['rug', 17, 14, 4, 2], ['tv', 34, 11, 1, 1], ['tv', 35, 11, 1, 1], ['tv', 36, 11, 1, 1],
+      ['desk', 34, 12, 3, 1], ['crates', 38, 17, 1, 1], ['crates', 37, 17, 1, 1],
+      ['barrel', 27, 17, 1, 1], ['papers', 30, 13, 1, 1],
     ],
   },
   {
     name: 'PISO 2 · OFICINAS',
-    floor: 'carpet',
+    floor: 'concrete',
     loot: ['pipe', 'knife', 'gun', 'smg', 'shotgun'],
     guaranteed: ['pipe', 'smg'],
     smgChance: 0.35,
     par: 75,
     rows: [
       '############################################',
-      '#P....#..............#.......#.............#',
-      '#.....#..............#.......#......A......#',
-      '#.....D.....E........D...?...D.............#',
-      '#.....#..............#.......#.............#',
-      '#..B..#..............#.......#.............#',
-      '###D###########D######.......####D##########',
-      '#..........V...............E...............#',
+      '#X........#.........#..#........#..........#',
+      '#.........#.........#..#........#..........#',
+      '#..P......#.........#..#....?...#.....A....#',
+      '#.........D.........D..D........#..........#',
+      '#.........#..E......#V.#........#..........#',
+      '#......B..#.........#..#........#.?........#',
+      '#.........#.........#..#........#..........#',
+      '#####D#########D#####..####D#########D######',
       '#..........................................#',
-      '#....................A.............?.......#',
-      '#..........................................#',
-      '#######D########..#########D######..########',
-      '#..............#..#..............#..#......#',
-      '#....?.........#..#......W.......#..#......#',
-      '#..............D..D..............D..D..?...#',
-      '#......E.......#..#..............#..#......#',
-      '#..............#..#.......E......#..#......#',
-      '#..............#..#..............#..#......#',
-      '#X.............#..#..............#..#......#',
-      '#..............#..#..............#..#......#',
+      '#.........................E................#',
+      '#####D#########D#####..####D#########D######',
+      '#.........#.........#..#........#..........#',
+      '#.........#.......?.#..#........#..........#',
+      '#.........#.........#..#........#.......W..#',
+      '#.........#.........D..#........D..........#',
+      '#.........#.........#..D........#..........#',
+      '#..E......#..E......#..#.....A..#..........#',
+      '#.........#.........#..#........#..?.......#',
+      '#.........#.........#..#........#..........#',
       '############################################',
+    ],
+    zones: [
+      ['wood', 1, 1, 9, 7], ['carpet', 11, 1, 19, 7], ['bathTiles', 24, 1, 31, 7],
+      ['wood', 33, 1, 42, 7], ['metal', 1, 12, 9, 19], ['carpet', 11, 12, 19, 19],
+      ['metal', 24, 12, 31, 19], ['brokenTiles', 33, 12, 42, 19],
+    ],
+    props: [
+      ['desk', 6, 2, 2, 1], ['cabinet', 9, 1, 1, 1], ['shelf', 1, 5, 1, 2], ['rug', 3, 5, 3, 2],
+      ['desk', 12, 2, 2, 1], ['desk', 16, 2, 2, 1], ['deskFlipped', 12, 7, 2, 1],
+      ['desk', 17, 7, 2, 1], ['papers', 15, 3, 1, 1], ['papers', 18, 5, 1, 1],
+      ['counter', 25, 1, 4, 1], ['sink', 30, 1, 1, 1], ['cashTable', 25, 5, 1, 1],
+      ['trash', 31, 7, 1, 1], ['stain', 29, 5, 1, 1], ['desk', 37, 5, 3, 1],
+      ['cashTable', 40, 1, 2, 1], ['sofa', 42, 4, 1, 2], ['shelf', 33, 1, 2, 1],
+      ['rug', 36, 4, 5, 3], ['shelf', 5, 13, 3, 1], ['shelf', 5, 15, 3, 1], ['cabinet', 1, 12, 1, 1],
+      ['cabinet', 2, 12, 1, 1], ['crates', 9, 19, 1, 1], ['crates', 8, 19, 1, 1],
+      ['papers', 7, 18, 1, 1], ['desk', 13, 14, 4, 1], ['tv', 19, 19, 1, 1], ['rug', 12, 13, 6, 3],
+      ['shelf', 25, 13, 1, 2], ['shelf', 28, 13, 1, 2], ['shelf', 31, 12, 1, 2],
+      ['barrel', 31, 19, 1, 1], ['sofa', 34, 13, 2, 1], ['sofa', 42, 16, 1, 2],
+      ['cashTable', 36, 15, 1, 1], ['tv', 38, 12, 1, 1], ['debris', 39, 18, 1, 1],
+      ['trash', 33, 19, 1, 1], ['barrel', 1, 9, 1, 1], ['crates', 42, 10, 1, 1],
+      ['debris', 12, 10, 1, 1], ['stain', 33, 9, 1, 1], ['trash', 22, 19, 1, 1],
+      ['debris', 21, 2, 1, 1],
     ],
   },
   {
     name: 'PISO 3 · ÁTICO',
-    floor: 'wood',
+    floor: 'concrete',
     loot: ['smg', 'shotgun', 'gun', 'pipe', 'knife'],
     guaranteed: ['pipe', 'smg'],
     smgChance: 0.6,
     par: 100,
     rows: [
       '################################################',
-      '#P...#...........#..........#...........#......#',
-      '#....D.....A.....D....?.....D.....W.....D......#',
-      '#....#...........#..........#...........#......#',
-      '#.B..#.....E.....#..........#...........#......#',
-      '###D######D########D#####D##########D#######D###',
-      '#..............................................#',
-      '#....##......##......##......##......##........#',
-      '#.........................E......V......A......#',
-      '#..............................................#',
-      '#....##......##......##......##......##........#',
-      '#........W..........?..........................#',
-      '#..............................................#',
-      '#..............................................#',
-      '######D#######D#########D########D########D#####',
-      '#..........#........#.........#........#.......#',
-      '#....E.....#...A....#....?....#...A....#...E...#',
-      '#..........D........#.........D........#.......#',
-      '#..........#........#.........#........#...?...#',
-      '#X.........#........#.........#........#.......#',
+      '#..........#..#..................#..#..........#',
+      '#........?.#..#..................#..#..........#',
+      '#..........D..#..................#..D..........#',
+      '#..........#..#.....A............#..#..........#',
+      '#...A......#..D..................D..#.....A....#',
+      '#..........#..#..................#.V#..........#',
+      '############..#..................#..############',
+      '#..........#V.#...............?..#..#..........#',
+      '#...E......#..#..................#..#.....E....#',
+      '#..........D..#.........W........#..D..........#',
+      '#..........#..#..................#..#........?.#',
+      '#........?.#..#..................#..#..........#',
+      '############..#..................#..############',
+      '#..........#..#..................#..#..........#',
+      '#..........#..D..................D..#..........#',
+      '#..P.......D..#...A..............#..D..........#',
+      '#..........#..#............E.....#..#.....A....#',
+      '#.......B..#..#..................#..#..........#',
+      '#X.........#..#..................#..#..........#',
       '################################################',
+    ],
+    zones: [
+      ['metal', 1, 1, 10, 6], ['bathTiles', 1, 8, 10, 12], ['wood', 1, 14, 10, 19],
+      ['carpet', 15, 1, 32, 19], ['metal', 37, 1, 46, 6], ['bathTiles', 37, 8, 46, 12],
+      ['brokenTiles', 37, 14, 46, 19],
+    ],
+    props: [
+      ['cashTable', 6, 1, 2, 1], ['crates', 1, 1, 1, 1], ['crates', 2, 1, 1, 1],
+      ['shelf', 1, 3, 1, 2], ['toilet', 1, 8, 1, 1], ['toilet', 1, 11, 1, 1], ['sink', 6, 12, 1, 1],
+      ['sink', 7, 12, 1, 1], ['stain', 3, 11, 1, 1], ['bed', 5, 14, 2, 2], ['tv', 1, 14, 1, 1],
+      ['rug', 2, 17, 3, 2], ['trash', 10, 19, 1, 1], ['counter', 22, 1, 6, 1],
+      ['cardTable', 18, 8, 2, 2], ['cardTable', 27, 4, 2, 2], ['cardTable', 28, 12, 2, 2],
+      ['sofa', 16, 12, 2, 1], ['sofa', 30, 17, 2, 1], ['cashTable', 20, 18, 2, 1],
+      ['tv', 32, 1, 1, 1], ['rug', 21, 6, 6, 3], ['papers', 26, 15, 1, 1], ['tv', 40, 1, 1, 1],
+      ['tv', 41, 1, 1, 1], ['tv', 42, 1, 1, 1], ['desk', 40, 2, 3, 1], ['cabinet', 46, 1, 1, 1],
+      ['counter', 40, 12, 4, 1], ['sink', 46, 8, 1, 1], ['trash', 37, 12, 1, 1],
+      ['crates', 37, 19, 1, 1], ['crates', 38, 19, 1, 1], ['crates', 46, 14, 1, 1],
+      ['crates', 46, 15, 1, 1], ['barrel', 44, 19, 1, 1], ['barrel', 45, 19, 1, 1],
+      ['shelf', 39, 14, 3, 1], ['debris', 40, 17, 1, 1], ['crates', 13, 19, 1, 1],
+      ['barrel', 34, 19, 1, 1], ['debris', 13, 1, 1, 1], ['stain', 35, 12, 1, 1],
+      ['trash', 12, 19, 1, 1],
     ],
   },
 ];
+
+// Muebles sólidos: bloquean movimiento, balas y visión como una pared (sirven de cobertura) y la
+// IA los rodea con el pathfinding. El resto de tipos de `props` son decoración de suelo.
+// El arte de cada tipo está en decor.js.
+export const SOLID_PROPS = new Set(['desk', 'deskFlipped', 'counter', 'sofa', 'cashTable', 'shelf', 'tv',
+  'cabinet', 'crates', 'barrel', 'toilet', 'sink', 'cardTable', 'bed']);
+export const DECOR_PROPS = new Set(['rug', 'debris', 'trash', 'stain', 'papers']);
+// Celdas de la cuadrícula: 0 suelo · 1 pared estructural · 2 mueble sólido.
+const CELL_WALL = 1;
+const CELL_PROP = 2;
 
 const PICKUP_CHARS = { B: 'bat', G: 'gun', S: 'shotgun', K: 'knife', T: 'pipe', M: 'smg' };
 const ENEMY_CHARS = {
@@ -134,7 +213,7 @@ export function loadLevel(index = 0, rng = Math.random) {
     if (row.length !== w) throw new Error(`${def.name}: la fila ${ty} mide ${row.length}, se esperaba ${w}`);
     for (let tx = 0; tx < w; tx++) {
       const ch = row[tx];
-      grid[ty * w + tx] = ch === '#' ? 1 : 0;
+      grid[ty * w + tx] = ch === '#' ? CELL_WALL : 0;
       const x = tx * TILE + TILE / 2;
       const y = ty * TILE + TILE / 2;
       if (ch === 'P') player = { x, y };
@@ -148,8 +227,32 @@ export function loadLevel(index = 0, rng = Math.random) {
   if (!player) throw new Error(`${def.name}: falta la posición del jugador (P)`);
   if (!exit) throw new Error(`${def.name}: falta la salida (X)`);
 
+  // Zonas de suelo (habitaciones): rectángulos [tipo, x0, y0, x1, y1]; el resto usa `floor`.
+  map.floor = def.floor;
+  map.zone = new Array(w * h).fill(def.floor);
+  for (const [type, x0, y0, x1, y1] of def.zones || []) {
+    for (let ty = y0; ty <= y1; ty++) for (let tx = x0; tx <= x1; tx++) map.zone[ty * w + tx] = type;
+  }
+  // Muebles [tipo, x, y, ancho, alto] en casillas. Los sólidos se marcan en la cuadrícula; se
+  // valida que no pisen paredes, entidades, puertas ni otros muebles (error de diseño = excepción).
+  const occupied = new Set(rows.flatMap((row, ty) => [...row].map((ch, tx) => (ch !== '.' ? ty * w + tx : -1))).filter((i) => i >= 0));
+  map.props = (def.props || []).map(([type, x, y, pw = 1, ph = 1]) => {
+    const solid = SOLID_PROPS.has(type);
+    if (!solid && !DECOR_PROPS.has(type)) throw new Error(`${def.name}: mueble desconocido '${type}'`);
+    for (let ty = y; ty < y + ph; ty++) {
+      for (let tx = x; tx < x + pw; tx++) {
+        const i = ty * w + tx;
+        if (tx < 0 || ty < 0 || tx >= w || ty >= h || grid[i] === CELL_WALL) throw new Error(`${def.name}: '${type}' (${x},${y}) sobre una pared`);
+        if (!solid) continue;
+        if (occupied.has(i) || grid[i] === CELL_PROP) throw new Error(`${def.name}: '${type}' (${x},${y}) tapa algo en (${tx},${ty})`);
+        grid[i] = CELL_PROP;
+      }
+    }
+    return { type, x, y, w: pw, h: ph, solid };
+  });
+
   // Puerta horizontal si tiene paredes a izquierda y derecha; si no, vertical.
-  for (const d of doors) d.horizontal = isWallTile(map, d.tx - 1, d.ty) && isWallTile(map, d.tx + 1, d.ty);
+  for (const d of doors) d.horizontal = isStructuralWall(map, d.tx - 1, d.ty) && isStructuralWall(map, d.tx + 1, d.ty);
   for (const e of enemies) {
     e.patrol = autoPatrol(map, e.tx, e.ty, e.axis);
     e.weapon = e.armed ? (rng() < def.smgChance ? 'smg' : 'gun') : null;
@@ -163,7 +266,6 @@ export function loadLevel(index = 0, rng = Math.random) {
     const type = i < def.guaranteed.length ? def.guaranteed[i] : def.loot[Math.floor(rng() * def.loot.length)];
     weapons.push({ type, x: slot.x, y: slot.y });
   });
-  map.floor = def.floor;
   return { name: def.name, par: def.par, map, player, exit, enemies, weapons, doors };
 }
 
@@ -181,9 +283,16 @@ function autoPatrol(map, tx, ty, axis) {
   return horizontal ? [c(tx - l, ty), c(tx + r, ty)] : [c(tx, ty - u), c(tx, ty + d)];
 }
 
+// Obstáculo: pared estructural o mueble sólido (colisiones, balas, visión, pathfinding).
 export function isWallTile(map, tx, ty) {
   if (tx < 0 || ty < 0 || tx >= map.w || ty >= map.h) return true;
-  return map.grid[ty * map.w + tx] === 1;
+  return map.grid[ty * map.w + tx] !== 0;
+}
+
+// Solo las paredes del edificio (las que llevan tubo neón y proyectan sombra de muro).
+export function isStructuralWall(map, tx, ty) {
+  if (tx < 0 || ty < 0 || tx >= map.w || ty >= map.h) return true;
+  return map.grid[ty * map.w + tx] === CELL_WALL;
 }
 
 export function isSolidAt(map, x, y) {
@@ -319,144 +428,4 @@ export function findPath(map, sx, sy, tx, ty) {
   path.reverse();
   path[path.length - 1] = { x: tx, y: ty };
   return path;
-}
-// --- Render estático del nivel en pixel art -------------------------------------------
-// Las capas se pintan a media resolución (1 píxel = 2 unidades del mundo, una casilla = 16 px)
-// y se dibujan escaladas ×2 sin suavizado: cada píxel cae en un píxel interno de pantalla.
-const PX = TILE / 2;
-
-
-function makeLayer(map) {
-  const c = document.createElement('canvas');
-  c.width = map.w * PX;
-  c.height = map.h * PX;
-  return c;
-}
-
-const FLOORS = {
-  // Baldosas a cuadros con juntas, manchas y grietas.
-  checker(ctx, tx, ty, rnd) {
-    const x0 = tx * PX, y0 = ty * PX;
-    for (let cy = 0; cy < 2; cy++) {
-      for (let cx = 0; cx < 2; cx++) {
-        ctx.fillStyle = (cx + cy) % 2 ? '#271246' : '#1c0c33';
-        ctx.fillRect(x0 + cx * 8, y0 + cy * 8, 8, 8);
-      }
-    }
-    ctx.fillStyle = '#12071f';
-    ctx.fillRect(x0, y0, PX, 1);
-    ctx.fillRect(x0, y0, 1, PX);
-    if (rnd() < 0.25) {
-      // grieta diagonal
-      let x = x0 + 2 + Math.floor(rnd() * 10), y = y0 + 2 + Math.floor(rnd() * 10);
-      for (let i = 0; i < 5; i++) { ctx.fillRect(x, y, 1, 1); x += rnd() < 0.5 ? 1 : 0; y += 1; }
-    }
-  },
-  // Moqueta de oficina con ruido de trama y rayas diagonales.
-  carpet(ctx, tx, ty, rnd) {
-    const x0 = tx * PX, y0 = ty * PX;
-    ctx.fillStyle = '#151233';
-    ctx.fillRect(x0, y0, PX, PX);
-    for (let y = 0; y < PX; y++) {
-      for (let x = 0; x < PX; x++) {
-        const gx = x0 + x, gy = y0 + y;
-        if ((gx + gy) % 8 === 0) { ctx.fillStyle = '#1e1947'; ctx.fillRect(gx, gy, 1, 1); continue; }
-        const r = rnd();
-        if (r < 0.12) { ctx.fillStyle = '#1b1740'; ctx.fillRect(gx, gy, 1, 1); }
-        else if (r < 0.2) { ctx.fillStyle = '#0f0c26'; ctx.fillRect(gx, gy, 1, 1); }
-      }
-    }
-  },
-  // Tablones de madera horizontales con vetas y juntas desplazadas.
-  wood(ctx, tx, ty, rnd) {
-    const x0 = tx * PX, y0 = ty * PX;
-    for (let p = 0; p < 4; p++) {
-      const y = y0 + p * 4;
-      const row = ty * 4 + p;
-      ctx.fillStyle = row % 2 ? '#321836' : '#2b1430';
-      ctx.fillRect(x0, y, PX, 4);
-      ctx.fillStyle = '#1a0b1f';
-      ctx.fillRect(x0, y + 3, PX, 1);
-      const seam = (row * 7 + 3) % 16;
-      if (tx % 2 === row % 2) ctx.fillRect(x0 + seam, y, 1, 3);
-      ctx.fillStyle = '#3d1f42';
-      for (let i = 0; i < 3; i++) if (rnd() < 0.5) ctx.fillRect(x0 + Math.floor(rnd() * PX), y + 1, 2, 1);
-    }
-  },
-};
-
-export function renderFloor(map) {
-  const c = makeLayer(map);
-  const ctx = c.getContext('2d');
-  const rnd = seededRandom(map.w * 977 + map.h * 131); // desgaste siempre igual
-  const paint = FLOORS[map.floor] || FLOORS.checker;
-  for (let ty = 0; ty < map.h; ty++) {
-    for (let tx = 0; tx < map.w; tx++) {
-      if (isWallTile(map, tx, ty)) continue;
-      paint(ctx, tx, ty, rnd);
-      // Suciedad: píxeles sueltos más oscuros.
-      ctx.fillStyle = 'rgba(5, 0, 15, 0.35)';
-      for (let i = 0; i < 4; i++) if (rnd() < 0.6) ctx.fillRect(tx * PX + Math.floor(rnd() * PX), ty * PX + Math.floor(rnd() * PX), 1, 1);
-    }
-  }
-  // Sombras duras: cada pared proyecta su forma desplazada abajo-derecha sobre el suelo.
-  ctx.fillStyle = 'rgba(5, 0, 15, 0.6)';
-  for (let ty = 0; ty < map.h; ty++) {
-    for (let tx = 0; tx < map.w; tx++) {
-      if (isWallTile(map, tx, ty)) ctx.fillRect(tx * PX + 3, ty * PX + 3, PX, PX);
-    }
-  }
-  return c;
-}
-
-// Las paredes se dibujan encima de entidades y sangre, así la sangre nunca "mancha" muros.
-// Devuelve { walls, glow }: la capa de glow se suma ('lighter') antes de las paredes.
-export function renderWalls(map) {
-  const walls = makeLayer(map);
-  const glow = makeLayer(map);
-  const ctx = walls.getContext('2d');
-  const g = glow.getContext('2d');
-  const edges = [];
-
-  for (let ty = 0; ty < map.h; ty++) {
-    for (let tx = 0; tx < map.w; tx++) {
-      if (!isWallTile(map, tx, ty)) continue;
-      const x0 = tx * PX, y0 = ty * PX;
-      // Cara superior: ladrillo oscuro con juntas y brillo arriba-izquierda.
-      ctx.fillStyle = '#2a0d3a';
-      ctx.fillRect(x0, y0, PX, PX);
-      ctx.fillStyle = '#1d0829';
-      for (let r = 0; r < 4; r++) {
-        ctx.fillRect(x0, y0 + r * 4 + 3, PX, 1);
-        const off = (r + ty) % 2 ? 4 : 12;
-        ctx.fillRect(x0 + off, y0 + r * 4, 1, 3);
-      }
-      ctx.fillStyle = '#3c1450';
-      for (let r = 0; r < 4; r++) ctx.fillRect(x0, y0 + r * 4, PX, 1);
-
-      // Bordes que dan al suelo: tubo neón de 2 px (brillante + medio).
-      const open = {
-        top: !isWallTile(map, tx, ty - 1), bottom: !isWallTile(map, tx, ty + 1),
-        left: !isWallTile(map, tx - 1, ty), right: !isWallTile(map, tx + 1, ty),
-      };
-      const neon = (x, y, w, h, ix, iy) => {
-        ctx.fillStyle = '#ff2a85';
-        ctx.fillRect(x, y, w, h);
-        ctx.fillStyle = '#9c1a5a';
-        ctx.fillRect(x + ix, y + iy, w, h);
-        edges.push([x, y, w, h]);
-      };
-      if (open.top) neon(x0, y0, PX, 1, 0, 1);
-      if (open.bottom) neon(x0, y0 + PX - 1, PX, 1, 0, -1);
-      if (open.left) neon(x0, y0, 1, PX, 1, 0);
-      if (open.right) neon(x0 + PX - 1, y0, 1, PX, -1, 0);
-    }
-  }
-
-  // Glow: los mismos bordes con desenfoque; al escalar sin suavizado queda un halo "en bloques".
-  g.shadowColor = COLORS.wall;
-  g.shadowBlur = 6;
-  g.fillStyle = COLORS.wall;
-  for (let pass = 0; pass < 2; pass++) for (const [x, y, w, h] of edges) g.fillRect(x, y, w, h);
-  return { walls, glow };
 }

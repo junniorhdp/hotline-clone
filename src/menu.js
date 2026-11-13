@@ -1,4 +1,4 @@
-import { LEVELS, loadLevel, isWallTile } from './map.js';
+import { LEVELS, loadLevel, isWallTile, isStructuralWall } from './map.js';
 import { drawText, measureText, CELL_H } from './pixelfont.js';
 import { pixelLine } from './sprites.js';
 import { drawTouchButton } from './touch.js';
@@ -34,7 +34,8 @@ function floorThumb(index) {
   const ctx = c.getContext('2d');
   for (let ty = 0; ty < map.h; ty++) {
     for (let tx = 0; tx < map.w; tx++) {
-      ctx.fillStyle = isWallTile(map, tx, ty) ? COLORS.wall : '#1c0c33';
+      // Paredes en neón; muebles sólidos en tono apagado.
+      ctx.fillStyle = isStructuralWall(map, tx, ty) ? COLORS.wall : isWallTile(map, tx, ty) ? '#4a3a66' : '#1c0c33';
       ctx.fillRect(tx, ty, 1, 1);
     }
   }

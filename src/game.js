@@ -1,5 +1,6 @@
 import { Input } from './input.js';
-import { LEVELS, TILE, loadLevel, renderFloor, renderWalls, isSolidAt, doorHitT } from './map.js';
+import { LEVELS, TILE, loadLevel, isSolidAt, doorHitT } from './map.js';
+import { renderFloor, renderWalls, renderProps } from './decor.js';
 import { Score, COMBO_WINDOW } from './score.js';
 import { MASKS, maskEffects, maskIcon } from './masks.js';
 import { ScoreHistory, FloorStats, MAX_ENTRIES, newRunId, formatDate } from './scores-history.js';
@@ -528,6 +529,7 @@ export class Game {
       const { walls, glow } = renderWalls(this.map);
       this.wallLayer = walls;
       this.glowLayer = glow;
+      this.propsLayer = renderProps(this.map); // muebles sólidos
       // Sangre a media resolución: 1 píxel de la capa = 1 píxel interno en pantalla.
       this.bloodLayer = document.createElement('canvas');
       this.bloodLayer.width = this.map.pixelW / WORLD_PX;
@@ -888,6 +890,8 @@ export class Game {
     ctx.drawImage(this.bloodLayer, 0, 0, pixelW, pixelH);
     if (this.state === 'cleared') this.drawExit(ctx);
     this.particles.drawGround(ctx);
+    // Muebles sobre la sangre (lo que cae debajo queda oculto) y bajo los personajes.
+    ctx.drawImage(this.propsLayer, 0, 0, pixelW, pixelH);
     for (const e of this.enemies) if (e.alive && e.state === 'down') e.draw(ctx, this.time, this);
     for (const p of this.pickups) p.draw(ctx, this.time);
     for (const b of this.bullets) b.draw(ctx);
