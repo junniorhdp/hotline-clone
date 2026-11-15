@@ -6,14 +6,14 @@ import { MASKS, maskEffects, maskIcon } from './masks.js';
 import { ScoreHistory, FloorStats, MAX_ENTRIES, newRunId, formatDate } from './scores-history.js';
 import { Menu } from './menu.js';
 import { TouchControls } from './touch.js';
-import { Player } from './player.js';
+import { Player, bloodLevelFor } from './player.js';
 import { Enemy } from './enemy.js';
 import { Door, ENEMY_PUSH_SPEED } from './doors.js';
 import { Pickup, Bullet, ENEMY_WEAPONS, segmentPointDistance } from './weapons.js';
 import { Particles, GIB_COLORS } from './particles.js';
 import { Sfx } from './audio.js';
 import { ScreenFx } from './effects.js';
-import { drawSprite, pixelDisc, WORLD_PX } from './sprites.js';
+import { drawSprite, pixelDisc, BLOOD_LEVELS, WORLD_PX } from './sprites.js';
 import { drawText, measureText, CELL_H } from './pixelfont.js';
 import { COLORS, TAU, rand, clamp, closestOnSegment, seededRandom, hashString } from './utils.js';
 
@@ -138,6 +138,10 @@ export class Game {
     this.fx = new ScreenFx();
     this.history = new ScoreHistory();
     this.score = new Score(this.history.best());
+    // Sangre del personaje: se acumula con las bajas de toda la partida (como la puntuación). Al
+    // reintentar un piso vuelve a lo que había al entrar y una partida nueva empieza limpia.
+    this.gore = 0;
+    this.goreAtEntry = 0;
     this.runId = newRunId();
     this.showRecords = false;
     this.levelIndex = 0;
@@ -262,6 +266,7 @@ export class Game {
   goToLevel(index) {
     this.levelIndex = index;
     this.score.startLevel();
+    this.goreAtEntry = this.gore;
     this.reset();
     this.openMaskSelect();
   }
@@ -402,6 +407,7 @@ export class Game {
   // Reintenta el piso actual (R): los puntos vuelven a los que había al entrar.
   restartLevel() {
     this.score.restartLevel();
+    this.gore = this.goreAtEntry;
     this.reset();
   }
 
@@ -456,6 +462,7 @@ export class Game {
   startRunAt(index) {
     this.runId = newRunId();
     this.score.newRun(this.history.best());
+    this.gore = this.goreAtEntry = 0;
     this.levelIndex = index;
     this.reset();
     this.openMaskSelect();
@@ -517,6 +524,7 @@ export class Game {
     this.exit = level.exit;
     this.map = level.map;
     this.player = new Player(level.player.x, level.player.y, maskEffects(this.mask), this.mask.id);
+    this.player.bloodLevel = bloodLevelFor(this.gore);
     this.enemies = level.enemies.map((e) => new Enemy(e.x, e.y, e.patrol,
       e.weapon ? { type: e.weapon, ammo: ENEMY_WEAPONS[e.weapon].dropAmmo } : null));
     this.pickups = level.weapons.map((w) => new Pickup(w.type, w.x, w.y));
@@ -782,11 +790,22 @@ export class Game {
     this.addScore(cause, e);
     this.dropWeapon(e);
     this.bleed(e.x, e.y, angle, feel.power, feel.wide);
+    this.stainPlayer(feel.power, angle);
     this.drawCorpse(e.x, e.y, angle, e.armed ? 'armedCorpse' : 'enemyCorpse');
     this.camera.addShake(feel.shake);
     this.fx.kick(feel.fx);
     this.hitstop = Math.max(this.hitstop, feel.stop);
     this.sfx.play('hit', cause === 'finisher' ? 1 : 0.85);
+  }
+
+  // Cada baja salpica al jugador: la sangre acumulada sube con la fuerza del golpe (más en melé y
+  // remate) y, al pasar al siguiente nivel, unas gotas caen sobre él para que se note el cambio.
+  stainPlayer(power, angle) {
+    this.gore += power;
+    const level = bloodLevelFor(this.gore);
+    if (level === this.player.bloodLevel) return;
+    this.player.bloodLevel = level;
+    this.particles.blood(this.player.x, this.player.y, angle + Math.PI, 5, 1.2);
   }
 
   // Todo el desangrado de una baja: partículas (sangre, restos, chispas de neón), charco y
@@ -1221,7 +1240,7 @@ export class Game {
       const color = mine ? COLORS.player : COLORS.text;
       const floor = e.completed ? 'FIN' : e.floor ? `${e.floor}/${LEVELS.length}` : '-';
       const values = [`${i + 1}.`, e.score.toLocaleString('es'), floor, e.date ? `X${e.combo}` : '-',
-        e.maskName || '-', formatDate(e.date)];
+        MASKS.find((m) => m.id === e.mask)?.name || e.maskName || '-', formatDate(e.date)];
       cols.forEach((c, k) => drawText(ctx, values[k], x0 + c.x, rowY, { color, align: c.align || 'left' }));
     }
   }
@@ -1394,6 +1413,11 @@ export class Game {
     ctx.fillRect(L - 1, 24 + T, 26, 26);
     ctx.drawImage(maskIcon(this.mask), L, 25 + T, 24, 24);
     drawText(ctx, this.mask.name, L + 28, 25 + T, { color: '#9d8fb8' });
+    // Brutalidad: una gota por nivel de sangre que lleva el personaje.
+    for (let i = 0; i < BLOOD_LEVELS; i++) {
+      ctx.fillStyle = i < p.bloodLevel ? COLORS.blood : '#3a1a3a';
+      ctx.fillRect(L + 28 + i * 6, 34 + T, 4, 3);
+    }
     if (p.noAmmoFlash > 0) drawText(ctx, 'SIN MUNICIÓN', L + 28, 37 + T, { color: COLORS.blood });
 
     const alive = this.enemies.filter((e) => e.alive).length;
@@ -1415,7 +1439,7 @@ export class Game {
 
     if (this.debug) {
       drawText(ctx, `DEBUG · ${this.fps} FPS · BALAS ${this.bullets.length} · PART ${this.particles.list.length} · CASQ ${this.particles.shells.length}`, L, 54 + T, { color: COLORS.debug });
-      drawText(ctx, `ESCENA ${w}X${h} · ESCALA ${this.view.scale} · MÁSCARA ${this.mask.id} · MANCHAS ${this.stains}`, L, 65 + T, { color: COLORS.debug });
+      drawText(ctx, `ESCENA ${w}X${h} · ESCALA ${this.view.scale} · MÁSCARA ${this.mask.id} · MANCHAS ${this.stains} · SANGRE ${this.player.bloodLevel} (${this.gore.toFixed(1)})`, L, 65 + T, { color: COLORS.debug });
     }
 
     const cx = Math.round(w / 2);

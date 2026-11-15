@@ -14,7 +14,7 @@ export const DEFAULT_EFFECTS = { meleeLethal: false, speedMul: 1, startWeapon: n
 export const MASKS = [
   {
     id: 'neon',
-    name: 'NEÓN',
+    name: 'NEON',
     passive: ['SIN PASIVA.', 'LA EXPERIENCIA CLÁSICA.'],
     effects: {},
     // Gallo: cresta roja de neón, plumas claras, pico ámbar afilado y barbillas bajo el pico.
@@ -36,7 +36,7 @@ export const MASKS = [
   },
   {
     id: 'oso',
-    name: 'OSO',
+    name: 'BRUTE',
     passive: ['PUÑETAZOS MORTALES:', 'MATAN AL INSTANTE, SIN DERRIBAR.'],
     effects: { meleeLethal: true },
     palette: { b: '#7a4a2a', B: '#5a3418', n: '#c89060' },
@@ -57,7 +57,7 @@ export const MASKS = [
   },
   {
     id: 'guepardo',
-    name: 'GUEPARDO',
+    name: 'STRIKE',
     passive: ['VELOCIDAD DE MOVIMIENTO', '+30%.'],
     effects: { speedMul: 1.3 },
     palette: { o: '#ffb23f', O: '#c47a1a', w: '#fff1d0' },
@@ -78,7 +78,7 @@ export const MASKS = [
   },
   {
     id: 'tiburon',
-    name: 'TIBURÓN',
+    name: 'BLADE',
     passive: ['EMPIEZAS CADA PISO', 'CON UN CUCHILLO.'],
     effects: { startWeapon: 'knife' },
     palette: { g: '#6c7fa8', G: '#45557a', w: '#f5f3ff' },
@@ -99,7 +99,7 @@ export const MASKS = [
   },
   {
     id: 'buho',
-    name: 'BÚHO',
+    name: 'GHOST',
     passive: ['TUS BALAS: +20% VELOCIDAD', 'Y MÁS PRECISIÓN.'],
     effects: { bulletSpeedMul: 1.2, spreadMul: 0.5 },
     palette: { u: '#6b4a8a', U: '#4a3066', e: '#ffd166', y: '#ff8a3d' },

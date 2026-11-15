@@ -1,6 +1,8 @@
 // Sprites pixel art definidos como cuadrículas de texto y convertidos a bitmaps una sola vez.
 // Todos miran hacia +X (derecha); se rotan al dibujar. 1 carácter = 1 píxel interno.
 // En el mundo 1 píxel interno = 2 unidades (WORLD_PX), así que un sprite de 16×16 ocupa una casilla.
+import { COLORS, seededRandom, hashString } from './utils.js';
+
 export const WORLD_PX = 2;
 
 // Paleta de los sprites (coherente con COLORS de utils.js).
@@ -18,28 +20,30 @@ const PALETTE = {
   b: '#ffbe0b', B: '#b38600',               // cuerpo genérico (plantilla tumbado)
 };
 
+// Cuerpo del jugador (plantilla): vista cenital, hombros perpendiculares a la mirada, mangas
+// hacia delante hasta los puños y el hueco de la cabeza en el centro. La cabeza NO va aquí: la
+// pinta encima `drawMaskHead`. La ropa se completa por máscara con `OUTFITS`:
+//   h/H capucha de la sudadera, junto a la nuca (clara / en sombra) · x puños de las mangas.
+const PLAYER_BODY = [
+  '................',
+  '................',
+  '.....kkkk.......',
+  '....kLjjjkkk....',
+  '....kLjjjjjxk...',
+  '...kLjjkkkkxk...',
+  '...khHkkkkkkk...',
+  '...khHkkkkkkk...',
+  '...khHkkkkkkk...',
+  '...khHkkkkkkk...',
+  '...kjjjkkkkxk...',
+  '....kjjjjjjxk...',
+  '....kJjjjkkk....',
+  '.....kkkk.......',
+  '................',
+  '................',
+];
+
 const DEFS = {
-  // Vista cenital: hombros perpendiculares a la mirada, mangas hacia delante hasta los puños
-  // y el hueco de la cabeza en el centro. La cabeza NO va aquí: la pinta encima `drawMaskHead`
-  // con la máscara equipada (el hueco queda en el tono del contorno por si asoma una esquina).
-  player: [
-    '................',
-    '................',
-    '.....kkkk.......',
-    '....kLjjjkkk....',
-    '....kLjjjjjJk...',
-    '...kLjjkkkkJk...',
-    '...kjjkkkkkkk...',
-    '...kjjkkkkkkk...',
-    '...kjjkkkkkkk...',
-    '...kjjkkkkkkk...',
-    '...kjjjkkkkJk...',
-    '....kjjjjjjJk...',
-    '....kJjjjkkk....',
-    '.....kkkk.......',
-    '................',
-    '................',
-  ],
   // Patrulla: camisa amarilla y gorra con visera hacia delante.
   enemy: [
     '................',
@@ -184,21 +188,127 @@ const MASK_SKINS = {
   buho:     { K: '#0a0a0f', R: '#9b74c4', M: '#7a53a0', N: '#4a3066', O: '#ff8a3d', Q: '#ffd166' },
 };
 
+// Ropa de cada máscara. La cazadora cian es la identidad del protagonista y el contraste contra
+// el suelo oscuro, así que se mantiene; lo que cambia es la sudadera que asoma tras la nuca
+// (capucha h/H) y los puños (x), con el color de la máscara. NEÓN es el atuendo clásico, todo cian.
+const HOOD = { h: '#5a5a72', H: '#3a3a4e' };
+const OUTFITS = {
+  neon:     { h: '#05d9e8', H: '#05d9e8', x: '#037f8c' },
+  oso:      { ...HOOD, x: '#a0693f' },
+  guepardo: { ...HOOD, x: '#ff9d2e' },
+  tiburon:  { ...HOOD, x: '#9fb0d6' },
+  buho:     { ...HOOD, x: '#9b74c4' },
+};
+
 // La cabeza va delante del centro del cuerpo (como se ve desde arriba) y el morro sobresale un
 // par de píxeles. Con 6 filas × 8 columnas a WORLD_PX cubre las columnas 6..13 y las filas 5..10
 // del sprite del cuerpo: más estrecha que los hombros, así la cazadora sigue a la vista.
 const HEAD_X = 2, HEAD_OX = 3, HEAD_OY = 3;
 
-// Nombre del bitmap de la cabeza (las máscaras desconocidas usan la de NEÓN).
-export function maskHead(maskId) {
-  return MASK_HEADS[maskId] ? `head_${maskId}` : 'head_neon';
+// Nombre del bitmap de la cabeza (las máscaras desconocidas usan la de NEÓN). `level` = nivel de
+// sangre (0 = limpia; ver BLOOD_LEVELS).
+export function maskHead(maskId, level = 0) {
+  return `head_${MASK_HEADS[maskId] ? maskId : 'neon'}${bloodSuffix(level)}`;
 }
 
 // Dibuja la cabeza de la máscara equipada sobre el cuerpo del jugador. Se llama con el contexto
 // ya trasladado al jugador y girado a su ángulo de apuntado, así que la cabeza se pinta en
 // coordenadas locales (mirando a +X) y gira con él.
-export function drawMaskHead(ctx, maskId) {
-  drawSprite(ctx, maskHead(maskId), HEAD_X, 0, 0, { ox: HEAD_OX, oy: HEAD_OY });
+export function drawMaskHead(ctx, maskId, level = 0) {
+  drawSprite(ctx, maskHead(maskId, level), HEAD_X, 0, 0, { ox: HEAD_OX, oy: HEAD_OY });
+}
+
+// --- Sangre sobre el personaje -----------------------------------------------------------------
+// Con las bajas, el jugador se va manchando: hay BLOOD_LEVELS niveles de sangre y para cada uno
+// (y cada máscara) se hornea una variante del cuerpo y de la cabeza con manchas encima. Al dibujar
+// solo se elige el bitmap, así que no cuesta nada por fotograma.
+//   - Cada nivel cubre una fracción exacta de la ropa o el pelaje (`fractions`), con un tope: el
+//     cuerpo llega a la mitad y la cabeza a ~40 %, así la silueta y los rasgos siguen a la vista
+//     aunque vayas empapado.
+//   - Las manchas son racimos alrededor de `k` centros repartidos (los más antiguos se llenan
+//     primero, con borde irregular) más unas pocas gotas sueltas, y cada nivel contiene al
+//     anterior: la sangre solo se acumula.
+//   - Solo caen sobre píxeles de ropa o pelaje (`BODY_STAINABLE`, `HEAD_STAINABLE`): nunca sobre
+//     contornos, ojos, hocico, pico ni cresta.
+//   - Son deterministas (semilla por máscara): siempre salen las mismas manchas en el mismo orden.
+export const BLOOD_LEVELS = 5;
+const BODY_STAINABLE = 'jJLhHx';
+const HEAD_STAINABLE = 'MRN';
+const BODY_BLOOD = { k: 5, fractions: [0.08, 0.16, 0.26, 0.37, 0.5], drops: 0.6 };
+const HEAD_BLOOD = { k: 3, fractions: [0.1, 0.18, 0.27, 0.35, 0.42], drops: 0.4 };
+
+// Ruido fijo por celda y centro (borde irregular, brillos): mismo valor siempre.
+function cellNoise(x, y, i) {
+  return (((x * 73856093) ^ (y * 19349663) ^ (i * 83492791)) >>> 0) % 1000 / 1000;
+}
+
+// Dónde pueden ir las manchas de una cuadrícula y en qué orden se llenan: `k` centros bien
+// repartidos (cada uno, el más lejano de 8 candidatos a los ya elegidos); cada celda se ordena por
+// lo cerca que está de algún centro (los primeros centros cuentan antes) y las gotas sueltas
+// siguen un orden fijo.
+function planBlood(rows, stainable, seedText, k) {
+  const cells = [];
+  rows.forEach((row, y) => { for (let x = 0; x < row.length; x++) if (stainable.includes(row[x])) cells.push({ x, y }); });
+  const rng = seededRandom(hashString(seedText));
+  const centers = [];
+  for (let i = 0; i < k; i++) {
+    let best = null, bestDist = -1;
+    for (let t = 0; t < 8; t++) {
+      const c = cells[Math.floor(rng() * cells.length)];
+      const d = centers.length ? Math.min(...centers.map((p) => Math.hypot(p.x - c.x, p.y - c.y))) : 0;
+      if (d > bestDist) { best = c; bestDist = d; }
+    }
+    centers.push(best);
+  }
+  const scored = cells.map((c) => ({
+    c,
+    score: Math.min(...centers.map((p, i) => Math.hypot(p.x - c.x, p.y - c.y) + i * 0.55 + (cellNoise(c.x, c.y, i) - 0.5) * 1.2)),
+    drop: rng(),
+  }));
+  return {
+    n: cells.length,
+    order: [...scored].sort((a, b) => a.score - b.score).map((o) => o.c),
+    drops: [...scored].sort((a, b) => a.drop - b.drop).map((o) => o.c),
+  };
+}
+
+// Píxeles manchados a un nivel (1..BLOOD_LEVELS): Map 'x,y' → color. Núcleo vivo, borde más
+// oscuro y algún brillo húmedo; el resto de la fracción son gotas sueltas.
+function bloodAtLevel(plan, level, { fractions, drops }) {
+  const out = new Map();
+  const total = Math.max(level, Math.round(fractions[level - 1] * plan.n));
+  const dropCount = Math.min(Math.floor(level * drops), total - 1);
+  const main = total - dropCount;
+  plan.order.slice(0, main).forEach((p, rank) => {
+    const core = rank < main * 0.6;
+    out.set(`${p.x},${p.y}`, core ? (cellNoise(p.y, p.x, 7) < 0.14 ? COLORS.bloodWet : COLORS.blood) : COLORS.bloodMid);
+  });
+  for (const p of plan.drops) {
+    if (out.size >= total) break;
+    if (!out.has(`${p.x},${p.y}`)) out.set(`${p.x},${p.y}`, COLORS.blood);
+  }
+  return out;
+}
+
+// Copia de un bitmap con la sangre encima.
+function withBlood(base, pixels) {
+  const c = document.createElement('canvas');
+  c.width = base.width;
+  c.height = base.height;
+  const ctx = c.getContext('2d');
+  ctx.drawImage(base, 0, 0);
+  for (const [key, color] of pixels) {
+    const [x, y] = key.split(',').map(Number);
+    ctx.fillStyle = color;
+    ctx.fillRect(x, y, 1, 1);
+  }
+  return c;
+}
+
+// Nombre del bitmap del cuerpo / la cabeza con el nivel de sangre dado (0 = limpio).
+const bloodSuffix = (level) => (level > 0 ? `_b${Math.min(BLOOD_LEVELS, level | 0)}` : '');
+export function playerBody(maskId, level = 0) {
+  return `body_${MASK_HEADS[maskId] ? maskId : 'neon'}${bloodSuffix(level)}`;
 }
 
 // Variantes recoloreadas de la plantilla "tumbado".
@@ -232,7 +342,17 @@ export function sprites() {
     cache = {};
     for (const [name, rows] of Object.entries(DEFS)) cache[name] = buildSprite(rows);
     for (const [name, [base, colors]] of Object.entries(RECOLORS)) cache[name] = buildSprite(DEFS[base], colors);
-    for (const [id, rows] of Object.entries(MASK_HEADS)) cache[`head_${id}`] = buildSprite(rows, MASK_SKINS[id]);
+    for (const [id, rows] of Object.entries(MASK_HEADS)) {
+      cache[`head_${id}`] = buildSprite(rows, MASK_SKINS[id]);
+      cache[`body_${id}`] = buildSprite(PLAYER_BODY, OUTFITS[id]);
+      // Todas las variantes con sangre se hornean ahora, una vez: dibujar no cuesta más por ello.
+      const headPlan = planBlood(rows, HEAD_STAINABLE, `head:${id}`, HEAD_BLOOD.k);
+      const bodyPlan = planBlood(PLAYER_BODY, BODY_STAINABLE, `body:${id}`, BODY_BLOOD.k);
+      for (let level = 1; level <= BLOOD_LEVELS; level++) {
+        cache[`head_${id}_b${level}`] = withBlood(cache[`head_${id}`], bloodAtLevel(headPlan, level, HEAD_BLOOD));
+        cache[`body_${id}_b${level}`] = withBlood(cache[`body_${id}`], bloodAtLevel(bodyPlan, level, BODY_BLOOD));
+      }
+    }
   }
   return cache;
 }

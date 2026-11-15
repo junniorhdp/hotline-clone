@@ -47,8 +47,9 @@ HTML5 Canvas, JavaScript Vanilla (ES Modules) y Vite. Sin frameworks ni librerí
   - `effects.js` — escala la escena de baja resolución a la pantalla (sin suavizado) y aplica el
     post-proceso CRT/VHS: aberración cromática, banda VHS, scanlines por fila de píxel y viñeta.
   - `sprites.js` — sprites pixel art como cuadrículas de texto + paleta, horneados a bitmaps una vez;
-    incluye las cabezas cenitales de las máscaras (`MASK_HEADS`/`MASK_SKINS`, ver "Máscaras");
-    helpers `drawSprite`, `drawMaskHead`, `pixelRect`, `pixelDisc`, `snap`.
+    incluye el cuerpo y las cabezas cenitales de las máscaras, con sus variantes de sangre
+    (`MASK_HEADS`/`MASK_SKINS`/`OUTFITS`, ver "Máscaras"); helpers `drawSprite`, `drawMaskHead`,
+    `playerBody`, `pixelRect`, `pixelDisc`, `snap`.
   - `pixelfont.js` — fuente bitmap 5×7 propia (con tildes y Ñ) y `drawText`; cachea cada texto renderizado.
   - `input.js` — teclado, ratón y dedos (Pointer Events); distingue "mantenido" de "pulsado este paso".
   - `touch.js` — controles táctiles: joysticks flotantes y botones; traduce dedos a la entrada del juego.
@@ -160,11 +161,22 @@ siguiente piso (`goToLevel`) … tras el último → `gameover` → `menu` o par
 - Rango = puntos del piso (incluido bonus de tiempo) / (enemigos × 600): S ≥ 4, A ≥ 2,5, B ≥ 1,2.
 
 ## Máscaras (pasivas)
-- Diseños propios (no usar personajes/nombres de otros juegos). Todas son máscaras de animal.
-  Actuales: NEÓN (gallo; sin pasiva, la experiencia clásica — el nombre se queda aunque el dibujo
-  sea un gallo, es la máscara "de serie" del juego), OSO (puñetazos mortales),
-  GUEPARDO (+30% velocidad), TIBURÓN (empieza con cuchillo),
-  BÚHO (balas +20% velocidad y mitad de dispersión).
+- Diseños propios (no usar personajes/nombres de otros juegos). Todas son máscaras de animal con
+  un nombre conceptual corto y en mayúsculas (no el del animal) que describe su pasiva:
+
+| Nombre | `id` | Animal | Pasiva |
+|---|---|---|---|
+| **NEON** | `neon` | gallo | ninguna: la experiencia clásica, la máscara "de serie" |
+| **BRUTE** | `oso` | oso | puñetazos mortales (matan al instante, sin derribar) |
+| **STRIKE** | `guepardo` | guepardo | +30 % de velocidad de movimiento |
+| **BLADE** | `tiburon` | tiburón | empiezas cada piso con un cuchillo |
+| **GHOST** | `buho` | búho | tus balas van +20 % más rápidas y con la mitad de dispersión |
+
+- **El `id` no se cambia nunca**, solo el `name`: lo usan los sprites (`head_<id>`, `body_<id>`) y
+  los récords guardados (`mask`). La tabla de récords muestra el nombre **actual** buscando por
+  `id` (`MASKS.find`), así las partidas guardadas con un nombre antiguo (OSO, GUEPARDO…) salen
+  con el nuevo; `maskName` solo es el respaldo si el `id` ya no existe. Este juego es de un solo
+  golpe y no tiene vida, por eso ninguna máscara da "resistencia".
 - Flujo: estado `masks` antes de cada piso (al arrancar, tras los resultados con Espacio/Enter
   y al empezar partida nueva). Flechas/A-D o pasar el ratón eligen (el ratón solo cuenta si se
   mueve); Espacio/Enter o clic en la tarjeta confirman. `R` NO abre la selección: reintenta el
@@ -178,10 +190,16 @@ siguiente piso (`goToLevel`) … tras el último → `gameover` → `menu` o par
     orejas, ojos, hocico y dientes. Es lo que sale en las tarjetas de la selección y en la
     miniatura del HUD. **No tocar estos retratos al cambiar la vista cenital**: son el dibujo
     reconocible de cada máscara.
-  - **Cabeza cenital** (`MASK_HEADS` en `sprites.js`): lo que se ve en el piso. El cuerpo es el
-    mismo sprite `player` para todas (cazadora cian, mangas y hombros, con el hueco de la cabeza
-    en el centro) y encima se pinta la cabeza con `drawMaskHead(ctx, maskId)`, que se llama desde
-    `player.draw` con el contexto ya girado al ángulo de apuntado.
+  - **Cuerpo y cabeza cenitales** (`PLAYER_BODY`/`OUTFITS` y `MASK_HEADS` en `sprites.js`): lo que
+    se ve en el piso. El cuerpo (`playerBody(maskId, nivel)`: cazadora cian, mangas y hombros, con
+    el hueco de la cabeza en el centro) y encima la cabeza con `drawMaskHead(ctx, maskId, nivel)`,
+    que `player.draw` llama con el contexto ya girado al ángulo de apuntado.
+  - **Ropa por máscara** (`OUTFITS`): la cazadora cian es la identidad del protagonista y el
+    contraste de la cabeza contra el suelo oscuro, así que no se cambia. Lo que varía es la
+    **capucha** de la sudadera que asoma tras la nuca (`h`/`H`, gris oscuro) y los **puños** (`x`,
+    con el color de la máscara: marrón, naranja, acero, violeta). NEON mantiene el atuendo clásico
+    todo cian. No se pasa la cazadora entera a gris: el cuerpo es lo que recorta la cabeza contra
+    el suelo oscuro y la identidad cian del jugador (HUD, mira) no debe perderse.
 - Reglas de las cabezas cenitales (cuadrículas de 6 filas × 8 columnas, bitmaps `head_<id>`):
   - mirando a +X, la columna 0 es la nuca y la 7 el morro, que sobresale un par de píxeles por
     delante del cuerpo; cubren las columnas 6..13 y las filas 5..10 del sprite del cuerpo
@@ -195,14 +213,40 @@ siguiente piso (`goToLevel`) … tras el último → `gameover` → `menu` o par
     `Q` acento (ojos, nariz, rayas, cresta). El color lo pone `MASK_SKINS`, con los tonos del
     retrato pero un punto más claros y con contraste **contra la cazadora cian** (nada de acentos
     cian: se funden con el cuerpo);
-  - cada máscara tiene que leerse por color + un rasgo grande: NEÓN (gallo) plumas claras con la
+  - cada máscara tiene que leerse por color + un rasgo grande: NEON (gallo) plumas claras con la
     cresta roja recorriendo el centro de la cabeza de atrás a delante y el pico ámbar en el morro
-    (de frente, la cresta va arriba y las barbillas bajo el pico) · OSO orejas redondas, ojos
-    negros y hocico claro con nariz · GUEPARDO orejas en punta, manchas, rayas de lágrima y
-    hocico crema · TIBURÓN cabeza en cuña y morro blanco · BÚHO ojos ámbar enormes y pico naranja.
+    (de frente, la cresta va arriba y las barbillas bajo el pico) · BRUTE (oso) orejas redondas,
+    ojos negros y hocico claro con nariz · STRIKE (guepardo) orejas en punta, manchas, rayas de
+    lágrima y hocico crema · BLADE (tiburón) cabeza en cuña y morro blanco · GHOST (búho) ojos
+    ámbar enormes y pico naranja.
   - Para añadir una máscara: entrada en `MASKS` (con su retrato) + cuadrícula en `MASK_HEADS` +
-    colores en `MASK_SKINS` (si falta la cabeza se usa la de NEÓN).
-- HUD: miniatura del retrato (12×12 a ×2) bajo el arma; los resultados muestran la máscara usada.
+    colores en `MASK_SKINS` + ropa en `OUTFITS` (si falta la cabeza o el cuerpo se usa el de NEON).
+- HUD: miniatura del retrato (12×12 a ×2) bajo el arma y, debajo del nombre, el contador de
+  brutalidad (ver abajo); los resultados muestran la máscara usada.
+
+### Sangre en el personaje
+El jugador se va manchando con las bajas de la partida y la máscara también.
+- **Acumulación** (`game.gore`, `game.stainPlayer`): cada baja suma la `power` de su `KILL_FEEL`
+  (disparo 1, melé 1,35, remate 1,7), así que lo cuerpo a cuerpo mancha más. `bloodLevelFor(gore)`
+  (`player.js`) lo traduce en nivel 0..`BLOOD_LEVELS` (5) con `BLOOD_STEPS` = 1, 3, 6, 10, 15: un
+  piso tiene 5, 8 y 11 enemigos, así que el primero llega al nivel 2-3, el segundo al 4 y el
+  máximo, bien entrado el tercero. Al subir de nivel caen unas gotas sobre el jugador para que se
+  note. `player.bloodLevel` es lo que se dibuja.
+- **Alcance, igual que la puntuación**: se mantiene al pasar de piso (`goreAtEntry` se actualiza
+  en `goToLevel`), al reintentar con `R` vuelve a lo que había al entrar al piso (esas bajas se
+  deshacen con su puntuación) y una partida nueva empieza limpia (`startRunAt`).
+- **Dibujo** (`sprites.js`): para cada máscara y nivel se hornean, una sola vez, una variante del
+  cuerpo (`body_<id>_b<n>`) y otra de la cabeza (`head_<id>_b<n>`) con las manchas encima. Dibujar
+  solo elige el bitmap: cuesta lo mismo con sangre que sin ella (medido: 7 ms para hornear los 77
+  bitmaps y ~35 µs por jugador dibujado, igual limpio que en el nivel 5).
+- **Reglas para que la máscara siga reconociéndose**: cada nivel cubre una fracción exacta y
+  creciente de la ropa/pelaje (`BODY_BLOOD`/`HEAD_BLOOD.fractions`; el cuerpo llega al 50 % y la
+  cabeza al 42 %); las manchas solo caen sobre píxeles de ropa o pelaje (`BODY_STAINABLE` `jJLhHx`,
+  `HEAD_STAINABLE` `MRN`), nunca sobre contornos, ojos, hocico, pico ni cresta; cada nivel contiene
+  al anterior (la sangre solo se acumula) y son deterministas por máscara. Con radios en vez de
+  fracciones el nivel 5 lo cubría todo y el gallo dejaba de verse (su cresta ya es roja).
+- **HUD**: una gota roja por nivel (`BLOOD_LEVELS` huecos) bajo el nombre de la máscara; F1 muestra
+  el nivel y la sangre acumulada.
 
 ## Música y ambiente (`audio.js`)
 - Todo procedimental con Web Audio: ni un archivo de audio. Un planificador con lookahead y
@@ -244,7 +288,7 @@ Todo está ajustado para que el combate sea frenético (entre paréntesis, el va
   inercia), así que la "aceleración" es un **empujón**: al arrancar desde parado o girar en seco
   (más de ~70° respecto al rumbo anterior) la velocidad sube un `DODGE_BOOST` (+30 %) y cae con
   constante `DODGE_DECAY` (0,13 s). No se acumula (renueva, no suma) y un giro suave (45°) no lo da.
-  Se aplica también con joystick y se suma a la pasiva GUEPARDO (pico ≈ 385 u/s, crucero 296).
+  Se aplica también con joystick y se suma a la pasiva de STRIKE (pico ≈ 385 u/s, crucero 296).
 - **Enemigos** (`enemy.js`): patrulla a 84 u/s (70) con un barrido de mirada más amplio y 0,7 s de
   pausa por punto (1 s); investigan a 144 (120) y te persiguen a 192 (172) —el jugador sigue siendo
   más rápido, pero por poco—; `REACTION_TIME` 0,18 s (0,3), golpe cuerpo a cuerpo con `WINDUP`
@@ -260,10 +304,10 @@ Alcance en unidades del mundo (1 casilla = 32). Cadencia = segundos entre ataque
 
 | Arma | Clave | Efecto | Alcance | Cadencia | Munición | Notas |
 |---|---|---|---|---|---|---|
-| Puños | `fists` | derriba | 24 (arco 99°) | 0,32 s | — | con máscara OSO matan |
+| Puños | `fists` | derriba | 24 (arco 99°) | 0,32 s | — | con la máscara BRUTE matan |
 | Bate | `bat` | mata | 40 (arco 153°) | 0,42 s | — | el melee de más alcance |
 | Tubo de hierro | `pipe` | mata | 36 (arco 135°) | 0,30 s | — | más rápido que el bate |
-| Cuchillo | `knife` | mata | 30 (arco 108°) | 0,25 s | — | arma inicial de TIBURÓN |
+| Cuchillo | `knife` | mata | 30 (arco 108°) | 0,25 s | — | arma inicial de BLADE |
 | Pistola | `gun` | mata | ilimitado | 0,20 s, semiautomática | 6 | dispersión ±0,02 rad |
 | Escopeta | `shotgun` | mata | 270 | 0,65 s | 4 | 6 perdigones, dispersión ±0,3 rad |
 | Subfusil | `smg` | mata | ilimitado | 0,075 s (≈12 disparos/s), **automático** | 30 | dispersión ±0,12 rad |
@@ -325,7 +369,7 @@ Cada baja pasa por `killEnemy(e, ángulo, causa)` (y la del jugador por `killPla
 | Causa | Sangre/restos (`power`) | Salpicado (`wide`) | Sacudida | Hit-stop |
 |---|---|---|---|---|
 | `bullet` | 1 | cono estrecho (±0,55 rad) | 7 | 50 ms |
-| `melee` (tubo, bate, cuchillo, puños OSO) | 1,35 | arco abierto (±0,9) | 10 | 55 ms |
+| `melee` (tubo, bate, cuchillo, puños de BRUTE) | 1,35 | arco abierto (±0,9) | 10 | 55 ms |
 | `finisher` (remate) | 1,7 | en todas direcciones (±π) | 12 | 60 ms |
 
 - `bleed()` = `particles.gore()` (partículas) + `splatBlood()` (suelo) + `splatWalls()` (paredes).
@@ -372,8 +416,9 @@ Diseños propios del juego (no copiar personajes ni arte de otros juegos).
 - Sprites: definidos en `DEFS` de `sprites.js`, 1 carácter = 1 píxel, contorno `k` oscuro, sombreado
   de 1 px (tono claro arriba-izquierda, oscuro abajo-derecha). Personajes de 16×16 mirando a +X;
   se rotan al dibujar (vecino más cercano). Variantes de color con `RECOLORS`.
-  Jugador: cazadora cian con el hueco de la cabeza, que pinta encima la máscara elegida
-  (ver "Máscaras"). Patrulla: camisa amarilla + gorra. Armado: chaleco oscuro.
+  Jugador: cazadora cian con capucha gris y puños de color según la máscara, y el hueco de la
+  cabeza, que pinta encima la máscara elegida; se mancha de sangre con las bajas (ver "Máscaras").
+  Patrulla: camisa amarilla + gorra. Armado: chaleco oscuro.
 - Capas estáticas (suelo, paredes, glow) y las capas de sangre (suelo y paredes) van a media
   resolución del mundo (1 píxel = 2 unidades) y se dibujan escaladas ×2. Los cadáveres son sprites
   estampados en la capa de sangre del suelo; la de las paredes se pinta sobre ellas.
@@ -444,7 +489,7 @@ Colores centralizados en `COLORS` (`src/utils.js`) y `PALETTE` (`src/sprites.js`
 ## Debug
 - `F1` activa/desactiva el modo debug: hitboxes, conos de visión (cortados por puertas),
   líneas de visión, rutas BFS, estados de la IA (incluido aim/windup y temporizador de
-  derribo), velocidad angular de puertas, contadores de partículas, de manchas permanentes y FPS. Mantener siempre
+  derribo), velocidad angular de puertas, contadores de partículas, de manchas permanentes, nivel de sangre del personaje y FPS. Mantener siempre
   esta tecla funcionando al añadir sistemas nuevos (cada entidad nueva debería tener su `drawDebug`).
 - Cuidado: los `drawDebug` que cambian `textAlign` sin `save/restore` afectan al HUD;
   `renderHud` lo reinicia al empezar.

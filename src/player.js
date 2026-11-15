@@ -1,7 +1,7 @@
 import { moveAndSlide, lineOfSight, isSolidAt, castRay } from './map.js';
 import { WEAPON_DEFS, Bullet, Pickup, inMeleeArc, drawWeaponShape } from './weapons.js';
 import { COLORS, TAU } from './utils.js';
-import { drawSprite, sprites, pixelRect, drawMaskHead, WORLD_PX } from './sprites.js';
+import { drawSprite, sprites, pixelRect, drawMaskHead, playerBody, BLOOD_LEVELS, WORLD_PX } from './sprites.js';
 import { DEFAULT_EFFECTS } from './masks.js';
 
 const SPEED = 228;           // antes 210: un ~9% más rápido
@@ -21,6 +21,17 @@ const AIM_MAX_DIST = 360;    // largo máximo del indicador de apuntado (armas d
 const AIM_START = 18;        // el indicador empieza en la boca del arma
 const AIM_DOT_SPACING = 10;
 
+// Sangre acumulada (`gore`: suma de la `power` de cada baja, ver KILL_FEEL en game.js) que hace
+// falta para cada nivel visible de sangre en el personaje. Hay BLOOD_LEVELS niveles. Un piso
+// tiene 5-11 enemigos: el nivel 2-3 llega acabando el primero y el máximo bien entrado el tercero.
+const BLOOD_STEPS = [1, 3, 6, 10, 15];
+
+export function bloodLevelFor(gore) {
+  let level = 0;
+  while (level < BLOOD_LEVELS && gore >= BLOOD_STEPS[level]) level++;
+  return level;
+}
+
 export class Player {
   // `perks` = efectos de la máscara elegida y `maskId` su aspecto (ver masks.js): la cabeza que
   // se pinta sobre el cuerpo es la de esa máscara, así que en el piso se ve la que se eligió.
@@ -31,6 +42,7 @@ export class Player {
     this.angle = 0;
     this.perks = perks;
     this.maskId = maskId;
+    this.bloodLevel = 0;  // 0..BLOOD_LEVELS: cuánta sangre lleva encima (lo fija Game)
     // null = puños, o { type, ammo }
     const start = perks.startWeapon;
     this.weapon = start ? { type: start, ammo: WEAPON_DEFS[start].maxAmmo || 0 } : null;
@@ -249,9 +261,10 @@ export class Player {
       }
     }
 
-    // Cuerpo común y encima la cabeza de la máscara, ya en el eje de apuntado.
-    drawSprite(ctx, 'player', 0, 0);
-    drawMaskHead(ctx, this.maskId);
+    // Cuerpo (con la ropa y la sangre que toquen) y encima la cabeza de la máscara, ya en el eje
+    // de apuntado.
+    drawSprite(ctx, playerBody(this.maskId, this.bloodLevel), 0, 0);
+    drawMaskHead(ctx, this.maskId, this.bloodLevel);
     ctx.restore();
   }
 
