@@ -24,7 +24,8 @@ HTML5 Canvas, JavaScript Vanilla (ES Modules) y Vite. Sin frameworks ni librerí
   - `game.js` — game loop, cámara, hit-stop, estado global, colisiones entre entidades
     (balas, armas lanzadas, puertas), muertes/derribos (`killEnemy` → `bleed`: sangre permanente en
     suelo y paredes), render de la escena y HUD.
-  - `player.js` — movimiento, apuntado, ataque, remate, patada, recoger/lanzar armas.
+  - `player.js` — movimiento, apuntado, ataque, remate, patada, recoger/lanzar armas, nivel de
+    sangre del personaje y suelas manchadas (huellas).
   - `enemy.js` — IA de enemigos (patrulla, visión, persecución, búsqueda, derribado) y tipo armado.
   - `doors.js` — puertas batientes: física de la hoja, empuje, patada y derribo.
   - `map.js` — tilemap, colisiones AABB con sliding, raycast/línea de visión (paredes + puertas),
@@ -32,7 +33,8 @@ HTML5 Canvas, JavaScript Vanilla (ES Modules) y Vite. Sin frameworks ni librerí
   - `weapons.js` — definiciones de armas (`WEAPON_DEFS`, `ENEMY_GUN`), `Pickup`, `Bullet`, utilidades de melee.
   - `particles.js` — chispas, polvo, sangre, restos (`gibs`), chispas de neón (`neon`) y casquillos
     persistentes; `gore()` lanza todo lo de una baja. Las gotas y los restos, al caer, se hornean
-    en la capa de sangre (ver "Sangre y ejecuciones").
+    en la capa de sangre (ver "Sangre y ejecuciones"). `Footprints`: las huellas de sangre del
+    jugador, que se desvanecen solas (ver "Huellas de sangre").
   - `audio.js` — SFX, música y ambiente procedimentales con Web Audio (osciladores + ruido
     filtrado). Sin archivos de audio. Ver "Música y ambiente".
   - `decor.js` — arte estático del entorno: texturas de suelo por zona, muebles, decoración de
@@ -239,14 +241,49 @@ El jugador se va manchando con las bajas de la partida y la máscara también.
   cuerpo (`body_<id>_b<n>`) y otra de la cabeza (`head_<id>_b<n>`) con las manchas encima. Dibujar
   solo elige el bitmap: cuesta lo mismo con sangre que sin ella (medido: 7 ms para hornear los 77
   bitmaps y ~35 µs por jugador dibujado, igual limpio que en el nivel 5).
-- **Reglas para que la máscara siga reconociéndose**: cada nivel cubre una fracción exacta y
-  creciente de la ropa/pelaje (`BODY_BLOOD`/`HEAD_BLOOD.fractions`; el cuerpo llega al 50 % y la
-  cabeza al 42 %); las manchas solo caen sobre píxeles de ropa o pelaje (`BODY_STAINABLE` `jJLhHx`,
-  `HEAD_STAINABLE` `MRN`), nunca sobre contornos, ojos, hocico, pico ni cresta; cada nivel contiene
-  al anterior (la sangre solo se acumula) y son deterministas por máscara. Con radios en vez de
-  fracciones el nivel 5 lo cubría todo y el gallo dejaba de verse (su cresta ya es roja).
+- **Densidad** (`BODY_BLOOD`/`HEAD_BLOOD`): cada nivel cubre una fracción exacta y creciente de la
+  ropa/pelaje (`fractions`): en el nivel 5 el cuerpo va empapado (75 %) y la cabeza muy manchada
+  (60 %). Hay tres tipos de mancha: **racimos** (alrededor de `k` centros), **goterones** (`clots`:
+  bloques de hasta 2×2, oscuros, que aparecen a ciertos niveles) y **gotas sueltas** (`drops`).
+- **La sangre envejece** (`bloodTimeline`/`bloodAtLevel`): cada mancha recuerda el nivel en que
+  nació; la recién salpicada es rojo vivo (`blood`, con algún brillo `bloodWet`), una generación
+  después `bloodMid` y luego `bloodDark`; los goterones son `bloodDark` → `gore`. Así el nivel 5 es
+  sobre todo sangre oscura con lo último brillando, y la cresta roja del gallo (`#ff2e55`) sigue
+  destacando sobre la coagulada.
+- **Reglas para que la máscara siga reconociéndose**: las manchas solo caen sobre píxeles de ropa
+  o pelaje (`BODY_STAINABLE` `jJLhHx`, `HEAD_STAINABLE` `MRN`), nunca sobre contornos, ojos,
+  hocico, pico ni cresta; cada nivel contiene al anterior (la sangre solo se acumula) y son
+  deterministas por máscara. Se dimensiona con **fracciones, no con radios**: con radios el nivel
+  alto lo cubría todo y el gallo dejaba de verse. Al subir el tope, comprobar las 5 máscaras × 6
+  niveles a varios ángulos y que se siguen distinguiendo (en el nivel 5 la máscara BRUTE es la
+  que más cerca está del límite: casi todo su pelaje es sangre, pero el hocico y los ojos aguantan).
 - **HUD**: una gota roja por nivel (`BLOOD_LEVELS` huecos) bajo el nombre de la máscara; F1 muestra
   el nivel y la sangre acumulada.
+
+### Huellas de sangre
+Pisar sangre fresca mancha las suelas y al andar se dejan huellas rojas que se van apagando.
+- **Qué mancha las suelas** (`game.bloodUnderfoot(x, y)`): el **cadáver** de un enemigo muerto
+  (`e.corpse`, el centro donde se estampa, a `CORPSE_STEP_RADIUS` 14 u) o un **charco de baja**
+  (`game.pools`: `splatBlood` anota `{ x, y, r }` con el radio del charco, tope `MAX_POOLS` 60).
+  Los derribados no cuentan: no sangran.
+- **Carga** (`Player.updateSoles`, `SOLE_MIN`/`SOLE_MAX` = 8..14 pisadas al azar): mientras sigues
+  sobre la sangre las suelas se mantienen empapadas y **no se imprime nada** (no se vería); la
+  secuencia empieza al salir, con el primer paso a media zancada. Volver a pisar sangre recarga.
+- **Zancada**: una huella cada `STEP_DIST` (24 u) de camino **real** (se mide lo que se movió de
+  verdad, así empujar una pared no deja huellas), alternando pie (±`FOOT_SPREAD` 5 u de desvío
+  lateral respecto al rumbo) y orientada según el rumbo del movimiento, también con joystick.
+- **Intensidad en la secuencia**: de 1 (primera, rojo vivo) a 0,12 (última, un rastro apenas
+  visible), con `SOLE_FADE` y una curva ^0,85. Elige el tono (`foot` / `footMid` / `footDark`).
+- **Con el tiempo** (`Footprints`, `particles.js`): cada huella dura de 6 a 14 s según su
+  intensidad, aguanta el 40 % y luego se desvanece (alfa) hasta desaparecer; las más intensas
+  duran más. Tope `MAX_PRINTS` 90 (se descartan las más viejas).
+- **Capa**: lista corta que se dibuja cada fotograma (`game.prints.draw`) justo después de la capa
+  de sangre del suelo: encima de las baldosas, bajo los muebles, los personajes y las partículas.
+  No va a la capa de sangre porque esa es permanente y las huellas deben borrarse solas. Se limpia
+  en `reset()` (`R` y cambio de piso). Coste medido: 0,6 ms por fotograma con 90 huellas en Edge
+  sin GPU (lo normal son menos de 15); actualizar recompacta la lista en el sitio, sin crear
+  arrays.
+- F1 muestra el nº de huellas vivas (`PISADAS`) y las pisadas de carga que le quedan (`SUELAS`).
 
 ## Música y ambiente (`audio.js`)
 - Todo procedimental con Web Audio: ni un archivo de audio. Un planificador con lookahead y
@@ -489,7 +526,7 @@ Colores centralizados en `COLORS` (`src/utils.js`) y `PALETTE` (`src/sprites.js`
 ## Debug
 - `F1` activa/desactiva el modo debug: hitboxes, conos de visión (cortados por puertas),
   líneas de visión, rutas BFS, estados de la IA (incluido aim/windup y temporizador de
-  derribo), velocidad angular de puertas, contadores de partículas, de manchas permanentes, nivel de sangre del personaje y FPS. Mantener siempre
+  derribo), velocidad angular de puertas, contadores de partículas, de manchas permanentes, nivel de sangre del personaje, huellas vivas y FPS. Mantener siempre
   esta tecla funcionando al añadir sistemas nuevos (cada entidad nueva debería tener su `drawDebug`).
 - Cuidado: los `drawDebug` que cambian `textAlign` sin `save/restore` afectan al HUD;
   `renderHud` lo reinicia al empezar.

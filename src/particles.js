@@ -1,6 +1,6 @@
 import { isSolidAt } from './map.js';
 import { COLORS, TAU, rand } from './utils.js';
-import { pixelRect } from './sprites.js';
+import { pixelRect, drawSprite } from './sprites.js';
 
 const MAX_PARTICLES = 900;
 const MAX_SHELLS = 150;
@@ -192,5 +192,49 @@ export class Particles {
       if (p.type === 'neon') pixelRect(ctx, p.x - p.vx * 0.024, p.y - p.vy * 0.024); // estela más larga
     }
     ctx.restore();
+  }
+}
+
+const MAX_PRINTS = 90;
+
+// Huellas de sangre en el suelo (decals que se desvanecen). No van a la capa de sangre porque esa
+// es permanente y las huellas tienen que borrarse solas: son una lista corta que se dibuja cada
+// fotograma, justo encima de las baldosas y la sangre y debajo de los personajes.
+//   - `intensity` (0..1) es la posición en la secuencia: la primera pisada tras manchar las
+//     suelas es 1 (rojo vivo) y la última casi 0 (un rastro apenas visible). También elige el
+//     tono (vivo / medio / coagulado) y cuánto dura.
+//   - Con los segundos cada huella se aclara: aguanta el 40 % de su vida y luego se desvanece
+//     hasta desaparecer (las más intensas duran más: de 6 a 14 s).
+export class Footprints {
+  constructor() {
+    this.list = [];
+  }
+
+  clear() {
+    this.list.length = 0;
+  }
+
+  add(x, y, angle, intensity) {
+    if (this.list.length >= MAX_PRINTS) this.list.shift();
+    this.list.push({ x, y, angle, intensity, age: 0, life: 6 + 8 * intensity });
+  }
+
+  // Compacta en el sitio (sin crear un array nuevo cada fotograma).
+  update(dt) {
+    let n = 0;
+    for (const p of this.list) {
+      p.age += dt;
+      if (p.age < p.life) this.list[n++] = p;
+    }
+    this.list.length = n;
+  }
+
+  draw(ctx) {
+    for (const p of this.list) {
+      const alpha = p.intensity * Math.min(1, (1 - p.age / p.life) / 0.6);
+      if (alpha < 0.03) continue;
+      const sprite = p.intensity > 0.66 ? 'foot' : p.intensity > 0.33 ? 'footMid' : 'footDark';
+      drawSprite(ctx, sprite, p.x, p.y, p.angle, { alpha });
+    }
   }
 }

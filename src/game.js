@@ -10,7 +10,7 @@ import { Player, bloodLevelFor } from './player.js';
 import { Enemy } from './enemy.js';
 import { Door, ENEMY_PUSH_SPEED } from './doors.js';
 import { Pickup, Bullet, ENEMY_WEAPONS, segmentPointDistance } from './weapons.js';
-import { Particles, GIB_COLORS } from './particles.js';
+import { Particles, Footprints, GIB_COLORS } from './particles.js';
 import { Sfx } from './audio.js';
 import { ScreenFx } from './effects.js';
 import { drawSprite, pixelDisc, BLOOD_LEVELS, WORLD_PX } from './sprites.js';
@@ -50,6 +50,8 @@ const KILL_FEEL = {
   melee: { power: 1.35, wide: 0.9, shake: 10, stop: HITSTOP.melee, fx: 0.65 },
   finisher: { power: 1.7, wide: Math.PI, shake: 12, stop: HITSTOP.finisher, fx: 0.8 },
 };
+const CORPSE_STEP_RADIUS = 14;  // a esta distancia del centro de un cadáver ya lo pisas
+const MAX_POOLS = 60;           // charcos de baja que se recuerdan para las suelas
 const INTRO_BANNER_TIME = 2.2;
 const FADE_TIME = 0.25;        // segundos de cada mitad del fundido (salida y entrada)
 const RANK_COLORS = { S: COLORS.player, A: COLORS.weapon, B: COLORS.enemy, C: COLORS.blood };
@@ -134,6 +136,8 @@ export class Game {
     this.input = new Input(canvas);
     this.camera = new Camera();
     this.particles = new Particles();
+    this.prints = new Footprints(); // huellas de sangre (se desvanecen; ver Footprints)
+    this.pools = [];                // charcos de baja: { x, y, r } en unidades del mundo
     this.sfx = new Sfx();
     this.fx = new ScreenFx();
     this.history = new ScoreHistory();
@@ -532,6 +536,8 @@ export class Game {
     this.map.doors = this.doors;
     this.bullets = [];
     this.particles.clear();
+    this.prints.clear();
+    this.pools = [];
     this.state = 'playing'; // masks (selección) | playing | dead | cleared (ve a la salida) | results
     this.time = 0;
     this.hitstop = 0;
@@ -627,6 +633,7 @@ export class Game {
     this.updateBullets(dt);
     this.updatePickups(dt);
     this.particles.update(dt, this.map, (kind, p) => this.bake(kind, p));
+    this.prints.update(dt);
 
     this.bullets = this.bullets.filter((b) => b.alive);
     this.pickups = this.pickups.filter((p) => p.alive);
@@ -789,6 +796,7 @@ export class Game {
     e.alive = false;
     this.addScore(cause, e);
     this.dropWeapon(e);
+    e.corpse = { x: e.x + Math.cos(angle) * 8, y: e.y + Math.sin(angle) * 8 }; // donde se estampa el cadáver
     this.bleed(e.x, e.y, angle, feel.power, feel.wide);
     this.stainPlayer(feel.power, angle);
     this.drawCorpse(e.x, e.y, angle, e.armed ? 'armedCorpse' : 'enemyCorpse');
@@ -806,6 +814,15 @@ export class Game {
     if (level === this.player.bloodLevel) return;
     this.player.bloodLevel = level;
     this.particles.blood(this.player.x, this.player.y, angle + Math.PI, 5, 1.2);
+  }
+
+  // ¿Pisa (x, y) sangre fresca? Un cadáver o un charco de baja: empapa las suelas del jugador.
+  bloodUnderfoot(x, y) {
+    for (const e of this.enemies) {
+      if (!e.alive && e.corpse && Math.hypot(e.corpse.x - x, e.corpse.y - y) < CORPSE_STEP_RADIUS) return true;
+    }
+    for (const p of this.pools) if (Math.hypot(p.x - x, p.y - y) < p.r) return true;
+    return false;
   }
 
   // Todo el desangrado de una baja: partículas (sangre, restos, chispas de neón), charco y
@@ -924,7 +941,10 @@ export class Game {
     this.stains++;
     ctx.save();
     ctx.fillStyle = COLORS.bloodDark;
-    pixelDisc(ctx, px + cos * 3, py + sin * 3, rand(5, 7) * power);
+    const poolR = rand(5, 7) * power;
+    pixelDisc(ctx, px + cos * 3, py + sin * 3, poolR);
+    this.pools.push({ x: x + cos * 6, y: y + sin * 6, r: poolR * WORLD_PX * 0.9 });
+    if (this.pools.length > MAX_POOLS) this.pools.shift();
     ctx.fillStyle = COLORS.blood;
     pixelDisc(ctx, px + cos * 3 - 1, py + sin * 3 - 1, rand(3.5, 5) * power);
     // Charcos satélite: salpicaduras gordas que han caído más lejos.
@@ -1059,6 +1079,7 @@ export class Game {
     this.camera.apply(ctx);
     ctx.drawImage(this.floorLayer, 0, 0, pixelW, pixelH);
     ctx.drawImage(this.bloodLayer, 0, 0, pixelW, pixelH);
+    this.prints.draw(ctx); // sobre baldosas y sangre, bajo todo lo demás
     if (this.state === 'cleared') this.drawExit(ctx);
     this.particles.drawGround(ctx);
     // Muebles sobre la sangre (lo que cae debajo queda oculto) y bajo los personajes.
@@ -1439,7 +1460,7 @@ export class Game {
 
     if (this.debug) {
       drawText(ctx, `DEBUG · ${this.fps} FPS · BALAS ${this.bullets.length} · PART ${this.particles.list.length} · CASQ ${this.particles.shells.length}`, L, 54 + T, { color: COLORS.debug });
-      drawText(ctx, `ESCENA ${w}X${h} · ESCALA ${this.view.scale} · MÁSCARA ${this.mask.id} · MANCHAS ${this.stains} · SANGRE ${this.player.bloodLevel} (${this.gore.toFixed(1)})`, L, 65 + T, { color: COLORS.debug });
+      drawText(ctx, `ESCENA ${w}X${h} · ESCALA ${this.view.scale} · MÁSCARA ${this.mask.id} · MANCHAS ${this.stains} · SANGRE ${this.player.bloodLevel} (${this.gore.toFixed(1)}) · PISADAS ${this.prints.list.length} · SUELAS ${this.player.soles}`, L, 65 + T, { color: COLORS.debug });
     }
 
     const cx = Math.round(w / 2);

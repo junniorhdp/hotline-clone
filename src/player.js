@@ -26,6 +26,15 @@ const AIM_DOT_SPACING = 10;
 // tiene 5-11 enemigos: el nivel 2-3 llega acabando el primero y el máximo bien entrado el tercero.
 const BLOOD_STEPS = [1, 3, 6, 10, 15];
 
+// Suelas manchadas: pisar sangre fresca (un cadáver o un charco de baja) las empapa y al andar
+// dejan huellas rojas que alternan pie y se van apagando. Una carga da entre SOLE_MIN y SOLE_MAX
+// pisadas.
+const SOLE_MIN = 8;
+const SOLE_MAX = 14;
+const STEP_DIST = 24;       // unidades entre pisadas (alternando pie izquierdo y derecho)
+const FOOT_SPREAD = 5;      // cuánto se separa cada pie del eje de la marcha
+const SOLE_FADE = 0.88;     // cuánto baja la intensidad entre la primera huella y la última
+
 export function bloodLevelFor(gore) {
   let level = 0;
   while (level < BLOOD_LEVELS && gore >= BLOOD_STEPS[level]) level++;
@@ -43,6 +52,10 @@ export class Player {
     this.perks = perks;
     this.maskId = maskId;
     this.bloodLevel = 0;  // 0..BLOOD_LEVELS: cuánta sangre lleva encima (lo fija Game)
+    this.soles = 0;       // pisadas manchadas que le quedan
+    this.solesMax = 0;    // las de la carga actual (para saber en qué punto de la secuencia va)
+    this.stride = 0;      // distancia recorrida desde la última huella
+    this.foot = 1;        // 1 / -1: pie que toca
     // null = puños, o { type, ammo }
     const start = perks.startWeapon;
     this.weapon = start ? { type: start, ammo: WEAPON_DEFS[start].maxAmmo || 0 } : null;
@@ -87,6 +100,7 @@ export class Player {
 
     this.bumpCd = Math.max(0, this.bumpCd - dt);
     this.boost *= Math.exp(-dt / DODGE_DECAY);
+    const startX = this.x, startY = this.y;
     if (mx || my) {
       // Arrancar desde parado o girar en seco renueva el empujón (no se acumula).
       if (!this.moving || mx * this.hx + my * this.hy < DODGE_TURN_COS) this.boost = DODGE_BOOST;
@@ -108,6 +122,7 @@ export class Player {
       this.stepTimer = 0.05;
       this.moving = false;
     }
+    this.updateSoles(game, Math.hypot(this.x - startX, this.y - startY));
 
     if (input.touchMode) {
       // Táctil: mira con el joystick derecho; si no se usa, mira hacia donde camina.
@@ -135,6 +150,29 @@ export class Player {
     }
     if (input.mousePressed.right) this.throwOrPickup(game);
     if (input.wasPressed('KeyE') && this.cooldown <= 0) this.kick(game);
+  }
+
+  // Mientras pisa sangre las suelas se mantienen empapadas (y no se imprime nada, no se vería);
+  // al salir empieza la secuencia: una huella cada STEP_DIST de camino real (si choca con una
+  // pared no avanza y no pisa), alternando pie, orientada según el rumbo. La intensidad baja de
+  // 1 en la primera a 1 - SOLE_FADE en la última.
+  updateSoles(game, moved) {
+    if (game.bloodUnderfoot(this.x, this.y)) {
+      this.soles = this.solesMax = SOLE_MIN + Math.floor(Math.random() * (SOLE_MAX - SOLE_MIN + 1));
+      this.stride = STEP_DIST / 2; // el primer paso al salir llega pronto
+      return;
+    }
+    if (this.soles <= 0 || moved <= 0) return;
+    this.stride += moved;
+    while (this.stride >= STEP_DIST && this.soles > 0) {
+      this.stride -= STEP_DIST;
+      const k = this.solesMax - this.soles;
+      this.soles--;
+      this.foot = -this.foot;
+      const intensity = 1 - SOLE_FADE * Math.pow(k / Math.max(1, this.solesMax - 1), 0.85);
+      game.prints.add(this.x - this.hy * this.foot * FOOT_SPREAD, this.y + this.hx * this.foot * FOOT_SPREAD,
+        Math.atan2(this.hy, this.hx), intensity);
+    }
   }
 
   startSwing(def) {

@@ -18,6 +18,7 @@ const PALETTE = {
   w: '#fff6d6', o: '#ffd166',               // fogonazo / latón
   z: '#c9c3e6', Z: '#7a7499',               // metal (tubo)
   b: '#ffbe0b', B: '#b38600',               // cuerpo genérico (plantilla tumbado)
+  r: COLORS.blood,                           // huella de sangre (footMid y footDark la recolorean)
 };
 
 // Cuerpo del jugador (plantilla): vista cenital, hombros perpendiculares a la mirada, mangas
@@ -102,6 +103,8 @@ const DEFS = {
     '................',
   ],
   fist: ['.kk.', 'kssk', 'kSSk', '.kk.'],
+  // Huella de suela, mirando a +X: talón (2 píxeles) y planta (3×3). 6×3 píxeles = 12×6 unidades.
+  foot: ['...rr.', 'rr.rrr', '...rr.'],
   bat: ['.......PPPPP.', 'PPPPPPPpqqqpP', '.......PPPPP.'],
   gun: ['PPPPPPPP', 'PqqqqqqP', 'PpPPPPPP', 'PP......'],
   shotgun: ['PPPP..........', 'PpqpPPPPPPPPPP', 'PPPPPPP.......'],
@@ -222,20 +225,24 @@ export function drawMaskHead(ctx, maskId, level = 0) {
 // Con las bajas, el jugador se va manchando: hay BLOOD_LEVELS niveles de sangre y para cada uno
 // (y cada máscara) se hornea una variante del cuerpo y de la cabeza con manchas encima. Al dibujar
 // solo se elige el bitmap, así que no cuesta nada por fotograma.
-//   - Cada nivel cubre una fracción exacta de la ropa o el pelaje (`fractions`), con un tope: el
-//     cuerpo llega a la mitad y la cabeza a ~40 %, así la silueta y los rasgos siguen a la vista
-//     aunque vayas empapado.
-//   - Las manchas son racimos alrededor de `k` centros repartidos (los más antiguos se llenan
-//     primero, con borde irregular) más unas pocas gotas sueltas, y cada nivel contiene al
-//     anterior: la sangre solo se acumula.
+//   - Cada nivel cubre una fracción exacta de la ropa o el pelaje (`fractions`): en el nivel
+//     máximo el cuerpo va empapado (75 %) y la cabeza muy manchada (60 %).
+//   - Hay tres tipos de mancha: racimos alrededor de `k` centros repartidos (los más antiguos se
+//     llenan primero, con borde irregular), goterones (`clots`: bloques de hasta 2×2 que aparecen
+//     a ciertos niveles) y gotas sueltas (`drops`).
+//   - **La sangre envejece**: cada mancha recuerda en qué nivel nació; la recién salpicada es
+//     rojo vivo, al nivel siguiente se oscurece y después se coagula. Así el nivel máximo es sobre
+//     todo oscuro, con lo último brillando, y los rasgos rojos de la máscara (la cresta del
+//     gallo) siguen destacando sobre la sangre vieja.
 //   - Solo caen sobre píxeles de ropa o pelaje (`BODY_STAINABLE`, `HEAD_STAINABLE`): nunca sobre
-//     contornos, ojos, hocico, pico ni cresta.
-//   - Son deterministas (semilla por máscara): siempre salen las mismas manchas en el mismo orden.
+//     contornos, ojos, hocico, pico ni cresta, así la máscara sigue siendo reconocible.
+//   - Cada nivel contiene al anterior (la sangre solo se acumula) y son deterministas: semilla
+//     por máscara, siempre las mismas manchas en el mismo orden.
 export const BLOOD_LEVELS = 5;
 const BODY_STAINABLE = 'jJLhHx';
 const HEAD_STAINABLE = 'MRN';
-const BODY_BLOOD = { k: 5, fractions: [0.08, 0.16, 0.26, 0.37, 0.5], drops: 0.6 };
-const HEAD_BLOOD = { k: 3, fractions: [0.1, 0.18, 0.27, 0.35, 0.42], drops: 0.4 };
+const BODY_BLOOD = { k: 5, fractions: [0.1, 0.22, 0.38, 0.55, 0.75], clots: [0, 1, 1, 2, 3], drops: 0.8 };
+const HEAD_BLOOD = { k: 3, fractions: [0.12, 0.25, 0.38, 0.5, 0.6], clots: [0, 0, 1, 1, 1], drops: 0.4 };
 
 // Ruido fijo por celda y centro (borde irregular, brillos): mismo valor siempre.
 function cellNoise(x, y, i) {
@@ -244,8 +251,8 @@ function cellNoise(x, y, i) {
 
 // Dónde pueden ir las manchas de una cuadrícula y en qué orden se llenan: `k` centros bien
 // repartidos (cada uno, el más lejano de 8 candidatos a los ya elegidos); cada celda se ordena por
-// lo cerca que está de algún centro (los primeros centros cuentan antes) y las gotas sueltas
-// siguen un orden fijo.
+// lo cerca que está de algún centro (los primeros centros cuentan antes) y los goterones y las
+// gotas sueltas siguen otro orden fijo.
 function planBlood(rows, stainable, seedText, k) {
   const cells = [];
   rows.forEach((row, y) => { for (let x = 0; x < row.length; x++) if (stainable.includes(row[x])) cells.push({ x, y }); });
@@ -267,25 +274,62 @@ function planBlood(rows, stainable, seedText, k) {
   }));
   return {
     n: cells.length,
+    keys: new Set(cells.map((c) => `${c.x},${c.y}`)),
     order: [...scored].sort((a, b) => a.score - b.score).map((o) => o.c),
     drops: [...scored].sort((a, b) => a.drop - b.drop).map((o) => o.c),
   };
 }
 
-// Píxeles manchados a un nivel (1..BLOOD_LEVELS): Map 'x,y' → color. Núcleo vivo, borde más
-// oscuro y algún brillo húmedo; el resto de la fracción son gotas sueltas.
-function bloodAtLevel(plan, level, { fractions, drops }) {
+// En qué nivel nace cada mancha: Map 'x,y' → { level, kind } con kind 'main' | 'clot' | 'single'.
+// Se construye nivel a nivel sobre lo ya manchado, así que la sangre solo se acumula.
+function bloodTimeline(plan, { fractions, clots, drops }) {
+  const born = new Map();
+  let nextOrder = 0, nextDrop = 0, clotsDone = 0, singlesDone = 0;
+  const free = (c) => !born.has(`${c.x},${c.y}`);
+  const nextFreeDrop = () => {
+    while (nextDrop < plan.drops.length && !free(plan.drops[nextDrop])) nextDrop++;
+    return plan.drops[nextDrop++];
+  };
+  for (let level = 1; level <= BLOOD_LEVELS; level++) {
+    while (clotsDone < clots[level - 1]) {          // goterones: bloque de hasta 2×2
+      const c = nextFreeDrop();
+      if (!c) break;
+      for (const [dx, dy] of [[0, 0], [1, 0], [0, 1], [1, 1]]) {
+        const key = `${c.x + dx},${c.y + dy}`;
+        if (plan.keys.has(key) && !born.has(key)) born.set(key, { level, kind: 'clot' });
+      }
+      clotsDone++;
+    }
+    while (singlesDone < Math.floor(level * drops)) { // gotas sueltas
+      const c = nextFreeDrop();
+      if (!c) break;
+      born.set(`${c.x},${c.y}`, { level, kind: 'single' });
+      singlesDone++;
+    }
+    const target = Math.max(level, Math.round(fractions[level - 1] * plan.n));
+    while (born.size < target && nextOrder < plan.order.length) { // racimos
+      const c = plan.order[nextOrder++];
+      if (free(c)) born.set(`${c.x},${c.y}`, { level, kind: 'main' });
+    }
+  }
+  return born;
+}
+
+// Píxeles manchados a un nivel: Map 'x,y' → color. Lo recién nacido es rojo vivo (con algún brillo
+// húmedo), una generación después se oscurece y luego se coagula; los goterones son oscuros.
+function bloodAtLevel(timeline, level) {
   const out = new Map();
-  const total = Math.max(level, Math.round(fractions[level - 1] * plan.n));
-  const dropCount = Math.min(Math.floor(level * drops), total - 1);
-  const main = total - dropCount;
-  plan.order.slice(0, main).forEach((p, rank) => {
-    const core = rank < main * 0.6;
-    out.set(`${p.x},${p.y}`, core ? (cellNoise(p.y, p.x, 7) < 0.14 ? COLORS.bloodWet : COLORS.blood) : COLORS.bloodMid);
-  });
-  for (const p of plan.drops) {
-    if (out.size >= total) break;
-    if (!out.has(`${p.x},${p.y}`)) out.set(`${p.x},${p.y}`, COLORS.blood);
+  for (const [key, { level: born, kind }] of timeline) {
+    if (born > level) continue;
+    const age = level - born;
+    let color;
+    if (kind === 'clot') color = age === 0 ? COLORS.bloodDark : COLORS.gore;
+    else if (kind === 'single') color = age === 0 ? COLORS.blood : COLORS.bloodDark;
+    else if (age === 0) {
+      const [x, y] = key.split(',').map(Number);
+      color = cellNoise(y, x, 7) < 0.14 ? COLORS.bloodWet : COLORS.blood;
+    } else color = age === 1 ? COLORS.bloodMid : COLORS.bloodDark;
+    out.set(key, color);
   }
   return out;
 }
@@ -317,6 +361,9 @@ const RECOLORS = {
   enemyCorpse: ['lying', { b: '#8c6a00', B: '#5c4500', s: '#9a5a40', S: '#6e3c2a' }],
   armedCorpse: ['lying', { b: '#3a2f1a', B: '#241d10', s: '#9a5a40', S: '#6e3c2a' }],
   playerCorpse: ['lying', { b: '#037f8c', B: '#025a63', s: '#9a5a40', S: '#6e3c2a' }],
+  // La huella se oscurece al enfriarse: rojo vivo, medio y coagulado.
+  footMid: ['foot', { r: COLORS.bloodMid }],
+  footDark: ['foot', { r: COLORS.bloodDark }],
 };
 
 // Crea un bitmap a partir de filas de texto; `overrides` sustituye colores de la paleta base.
@@ -346,11 +393,11 @@ export function sprites() {
       cache[`head_${id}`] = buildSprite(rows, MASK_SKINS[id]);
       cache[`body_${id}`] = buildSprite(PLAYER_BODY, OUTFITS[id]);
       // Todas las variantes con sangre se hornean ahora, una vez: dibujar no cuesta más por ello.
-      const headPlan = planBlood(rows, HEAD_STAINABLE, `head:${id}`, HEAD_BLOOD.k);
-      const bodyPlan = planBlood(PLAYER_BODY, BODY_STAINABLE, `body:${id}`, BODY_BLOOD.k);
+      const headBlood = bloodTimeline(planBlood(rows, HEAD_STAINABLE, `head:${id}`, HEAD_BLOOD.k), HEAD_BLOOD);
+      const bodyBlood = bloodTimeline(planBlood(PLAYER_BODY, BODY_STAINABLE, `body:${id}`, BODY_BLOOD.k), BODY_BLOOD);
       for (let level = 1; level <= BLOOD_LEVELS; level++) {
-        cache[`head_${id}_b${level}`] = withBlood(cache[`head_${id}`], bloodAtLevel(headPlan, level, HEAD_BLOOD));
-        cache[`body_${id}_b${level}`] = withBlood(cache[`body_${id}`], bloodAtLevel(bodyPlan, level, BODY_BLOOD));
+        cache[`head_${id}_b${level}`] = withBlood(cache[`head_${id}`], bloodAtLevel(headBlood, level));
+        cache[`body_${id}_b${level}`] = withBlood(cache[`body_${id}`], bloodAtLevel(bodyBlood, level));
       }
     }
   }
