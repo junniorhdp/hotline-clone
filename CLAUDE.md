@@ -37,17 +37,17 @@ HTML5 Canvas, JavaScript Vanilla (ES Modules) y Vite. Sin frameworks ni librerí
   - `decor.js` — arte estático del entorno: texturas de suelo por zona, muebles, decoración de
     suelo y deterioro de paredes (`renderFloor`, `renderProps`, `renderWalls`).
   - `menu.js` — menú principal arcade (título, selector de pisos, récords) y su fondo synthwave.
-  - `masks.js` — máscaras (`MASKS`): nombre, descripción de la pasiva y `effects`.
-    `maskEffects(mask)` devuelve los efectos con valores por defecto; `maskIcon(mask)` devuelve el
-    sprite de partida de esa máscara girado hacia arriba (el aspecto vive en `sprites.js`).
+  - `masks.js` — máscaras (`MASKS`): nombre, descripción de la pasiva, retrato pixel art 12×12
+    (de frente, para menú y HUD) con paleta propia y `effects`. `maskEffects(mask)` devuelve los
+    efectos con valores por defecto. La cabeza cenital de partida vive en `sprites.js`.
   - `score.js` — combos (ventana `COMBO_WINDOW` = 3,5 s), puntos por estilo (`STYLE`), popups,
     rango S/A/B/C por piso, combo máximo de la partida. No toca `localStorage`.
   - `scores-history.js` — Top 5 histórico de partidas en `localStorage` (ver "Guardado de récords").
   - `effects.js` — escala la escena de baja resolución a la pantalla (sin suavizado) y aplica el
     post-proceso CRT/VHS: aberración cromática, banda VHS, scanlines por fila de píxel y viñeta.
   - `sprites.js` — sprites pixel art como cuadrículas de texto + paleta, horneados a bitmaps una vez;
-    incluye un sprite del jugador por máscara (`MASK_DEFS`/`MASK_SKINS`, ver "Máscaras");
-    helpers `drawSprite`, `playerSprite`, `uprightSprite`, `pixelRect`, `pixelDisc`, `snap`.
+    incluye las cabezas cenitales de las máscaras (`MASK_HEADS`/`MASK_SKINS`, ver "Máscaras");
+    helpers `drawSprite`, `drawMaskHead`, `pixelRect`, `pixelDisc`, `snap`.
   - `pixelfont.js` — fuente bitmap 5×7 propia (con tildes y Ñ) y `drawText`; cachea cada texto renderizado.
   - `input.js` — teclado, ratón y dedos (Pointer Events); distingue "mantenido" de "pulsado este paso".
   - `touch.js` — controles táctiles: joysticks flotantes y botones; traduce dedos a la entrada del juego.
@@ -167,26 +167,38 @@ siguiente piso (`goToLevel`) … tras el último → `gameover` → `menu` o par
   mueve); Espacio/Enter o clic en la tarjeta confirman. `R` NO abre la selección: reintenta el
   piso con la misma máscara. Durante `masks` la simulación está parada y `R` se ignora.
 - Los efectos se aplican creando el `Player` con `maskEffects(game.mask)` (`player.perks`) y su
-  aspecto con `game.mask.id` (`player.sprite`). Para añadir una pasiva: nuevo campo en
+  aspecto con `game.mask.id` (`player.maskId`). Para añadir una pasiva: nuevo campo en
   `DEFAULT_EFFECTS` + leerlo en `player.js` (o donde toque) vía `this.perks`. Nada de comprobar
-  `mask.id` por el código salvo para elegir el sprite.
-- **Aspecto**: cada máscara tiene su propio sprite 16×16 del jugador en `MASK_DEFS` (`sprites.js`),
-  nombrado `player_<id>` y elegido con `playerSprite(maskId)`. El cuerpo (cazadora cian, mangas y
-  hombros) es idéntico en todas para que la silueta siga siendo la del protagonista; **solo cambia
-  la cabeza**, que es lo único que se ve desde la vista cenital. Las cuadrículas definen la forma
-  con letras genéricas —`R` luz (arriba-izquierda), `M` base, `N` sombra (abajo-derecha), `O` claro,
-  `Q` acento— y el color lo pone `MASK_SKINS` por máscara, con contraste alto contra el fondo
-  oscuro **y contra la cazadora cian** (por eso el visor de NEÓN es magenta, no cian). Mirando
-  a +X, el frente de la cabeza es la columna 12: ahí van visores, hocicos y picos.
-  Diseños: NEÓN casco oscuro con visor magenta · OSO cabezón pardo con hocico claro y nariz negra ·
-  GUEPARDO naranja con orejas oscuras y rayas de lágrima junto al hocico crema · TIBURÓN cuña gris
-  azulada con morro blanco y aleta dorsal · BÚHO cabeza morada con ojos ámbar y pico naranja.
-  Para añadir una máscara: entrada en `MASKS` + cuadrícula en `MASK_DEFS` + colores en `MASK_SKINS`
-  (si falta el sprite se usa el de NEÓN).
-- Una sola fuente de verdad para el arte: el icono del menú y el del HUD son **ese mismo bitmap**
-  girado hacia arriba (`uprightSprite`, horneado una vez), así que no pueden desincronizarse de lo
-  que se ve en el piso. Tarjetas de la selección: el sprite a escala entera (`maskLayout`).
-  HUD: miniatura de 16×16 a ×2 bajo el arma; los resultados muestran la máscara usada.
+  `mask.id` por el código salvo para elegir la cabeza.
+- **Dos vistas de la misma máscara, cada una donde se lee mejor**:
+  - **Retrato de frente** (`rows` + `palette` en `MASKS`, 12×12, `maskIcon`): cara completa con
+    orejas, ojos, hocico y dientes. Es lo que sale en las tarjetas de la selección y en la
+    miniatura del HUD. **No tocar estos retratos al cambiar la vista cenital**: son el dibujo
+    reconocible de cada máscara.
+  - **Cabeza cenital** (`MASK_HEADS` en `sprites.js`): lo que se ve en el piso. El cuerpo es el
+    mismo sprite `player` para todas (cazadora cian, mangas y hombros, con el hueco de la cabeza
+    en el centro) y encima se pinta la cabeza con `drawMaskHead(ctx, maskId)`, que se llama desde
+    `player.draw` con el contexto ya girado al ángulo de apuntado.
+- Reglas de las cabezas cenitales (cuadrículas de 6 filas × 8 columnas, bitmaps `head_<id>`):
+  - mirando a +X, la columna 0 es la nuca y la 7 el morro, que sobresale un par de píxeles por
+    delante del cuerpo; cubren las columnas 6..13 y las filas 5..10 del sprite del cuerpo
+    (constantes `HEAD_X`/`HEAD_OX`/`HEAD_OY`), más estrechas que los hombros para que la cazadora
+    siga a la vista;
+  - **simétricas respecto al eje de apuntado** (fila 0↔5, 1↔4, 2↔3): la cabeza gira con el
+    jugador, así que no vale el sombreado "arriba-izquierda / abajo-derecha" de los demás sprites;
+    el volumen se hace con la nuca en sombra (`N`) y las orejas claras (`R`);
+  - letras: `K` contorno (#0a0a0f, en el morro y las puntas, que es por donde la cabeza sobresale
+    y toca el suelo) · `M` base · `R` luz · `N` sombra · `O` claro (hocico, dientes, pico) ·
+    `Q` acento (ojos, nariz, rayas, visor). El color lo pone `MASK_SKINS`, con los tonos del
+    retrato pero un punto más claros y con contraste **contra la cazadora cian** (por eso el visor
+    de NEÓN es magenta, no cian);
+  - cada máscara tiene que leerse por color + un rasgo grande al frente: NEÓN visor magenta de
+    lado a lado · OSO orejas redondas, ojos negros y hocico claro con nariz · GUEPARDO orejas en
+    punta, manchas, rayas de lágrima y hocico crema · TIBURÓN cabeza en cuña y morro blanco ·
+    BÚHO ojos ámbar enormes y pico naranja.
+  - Para añadir una máscara: entrada en `MASKS` (con su retrato) + cuadrícula en `MASK_HEADS` +
+    colores en `MASK_SKINS` (si falta la cabeza se usa la de NEÓN).
+- HUD: miniatura del retrato (12×12 a ×2) bajo el arma; los resultados muestran la máscara usada.
 
 ## Mecánicas de combate
 - Daño: todo es de un golpe. Lo que cambia es el efecto: **matar** o **derribar** (estado `down`
@@ -275,8 +287,8 @@ Diseños propios del juego (no copiar personajes ni arte de otros juegos).
 - Sprites: definidos en `DEFS` de `sprites.js`, 1 carácter = 1 píxel, contorno `k` oscuro, sombreado
   de 1 px (tono claro arriba-izquierda, oscuro abajo-derecha). Personajes de 16×16 mirando a +X;
   se rotan al dibujar (vecino más cercano). Variantes de color con `RECOLORS`.
-  Jugador: cazadora cian + la cabeza de la máscara elegida (ver "Máscaras"). Patrulla: camisa
-  amarilla + gorra. Armado: chaleco oscuro.
+  Jugador: cazadora cian con el hueco de la cabeza, que pinta encima la máscara elegida
+  (ver "Máscaras"). Patrulla: camisa amarilla + gorra. Armado: chaleco oscuro.
 - Capas estáticas (suelo, paredes, glow) y la capa de sangre van a media resolución del mundo
   (1 píxel = 2 unidades) y se dibujan escaladas ×2. Los cadáveres son sprites estampados en la
   capa de sangre.

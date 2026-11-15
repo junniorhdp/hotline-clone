@@ -1,7 +1,7 @@
 import { moveAndSlide, lineOfSight, isSolidAt, castRay } from './map.js';
 import { WEAPON_DEFS, Bullet, Pickup, inMeleeArc, drawWeaponShape } from './weapons.js';
 import { COLORS, TAU } from './utils.js';
-import { drawSprite, sprites, pixelRect, playerSprite, WORLD_PX } from './sprites.js';
+import { drawSprite, sprites, pixelRect, drawMaskHead, WORLD_PX } from './sprites.js';
 import { DEFAULT_EFFECTS } from './masks.js';
 
 const SPEED = 210;
@@ -16,15 +16,15 @@ const AIM_START = 18;        // el indicador empieza en la boca del arma
 const AIM_DOT_SPACING = 10;
 
 export class Player {
-  // `perks` = efectos de la máscara elegida y `maskId` su aspecto (ver masks.js): el sprite
-  // que se dibuja es el de esa máscara, así que lo que se ve en el piso es lo que se eligió.
+  // `perks` = efectos de la máscara elegida y `maskId` su aspecto (ver masks.js): la cabeza que
+  // se pinta sobre el cuerpo es la de esa máscara, así que en el piso se ve la que se eligió.
   constructor(x, y, perks = DEFAULT_EFFECTS, maskId = 'neon') {
     this.x = x;
     this.y = y;
     this.r = 10;
     this.angle = 0;
     this.perks = perks;
-    this.sprite = playerSprite(maskId);
+    this.maskId = maskId;
     // null = puños, o { type, ammo }
     const start = perks.startWeapon;
     this.weapon = start ? { type: start, ammo: WEAPON_DEFS[start].maxAmmo || 0 } : null;
@@ -232,7 +232,9 @@ export class Player {
       }
     }
 
-    drawSprite(ctx, this.sprite, 0, 0);
+    // Cuerpo común y encima la cabeza de la máscara, ya en el eje de apuntado.
+    drawSprite(ctx, 'player', 0, 0);
+    drawMaskHead(ctx, this.maskId);
     ctx.restore();
   }
 
