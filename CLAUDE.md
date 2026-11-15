@@ -6,10 +6,14 @@ HTML5 Canvas, JavaScript Vanilla (ES Modules) y Vite. Sin frameworks ni librerí
 ## Comandos
 - `npm run dev` — servidor de desarrollo (http://localhost:5173). En dev el juego está en `window.game`.
 - `npm run dev -- --host` — igual, pero accesible desde el móvil en la misma red (usa la URL "Network").
-- `npm run build` — build de producción en `dist/` (rutas relativas: `base: './'` en `vite.config.js`)
-- Despliegue: cada push a `main` compila y publica en GitHub Pages (`.github/workflows/deploy.yml`)
-  → https://junniorhdp.github.io/hotline-clone/ . En Settings → Pages la fuente debe ser "GitHub Actions".
-- `npm run preview` — sirve el build
+- `npm run build` — build de producción en `dist/`. `vite.config.js` fija `base: '/hotline-clone/'`
+  (la subcarpeta de GitHub Pages), así que los assets se piden con ese prefijo absoluto: el build
+  solo funciona servido desde esa ruta, no abriendo `dist/index.html` como archivo local.
+- Despliegue: cada push a `main` compila y publica en GitHub Pages (`.github/workflows/deploy.yml`:
+  `npm ci` → `npm run build` → `upload-pages-artifact` con `dist` → `deploy-pages`)
+  → https://junniorhdp.github.io/hotline-clone/ . En Settings → Pages la fuente debe ser
+  "GitHub Actions". El workflow también se puede lanzar a mano (`workflow_dispatch`).
+- `npm run preview` — sirve el build en http://localhost:4173/hotline-clone/
 - Versión: `vite.config.js` define `__APP_VERSION__` (commit de GitHub Actions o "dev") y el título
   la muestra arriba a la izquierda, para comprobar que el navegador no sirve una copia guardada
   (GitHub Pages permite cachear la página ~10 min).
