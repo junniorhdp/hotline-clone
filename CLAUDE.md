@@ -159,8 +159,10 @@ siguiente piso (`goToLevel`) … tras el último → `gameover` → `menu` o par
 - Rango = puntos del piso (incluido bonus de tiempo) / (enemigos × 600): S ≥ 4, A ≥ 2,5, B ≥ 1,2.
 
 ## Máscaras (pasivas)
-- Diseños propios (no usar personajes/nombres de otros juegos). Actuales: NEÓN (sin pasiva),
-  OSO (puñetazos mortales), GUEPARDO (+30% velocidad), TIBURÓN (empieza con cuchillo),
+- Diseños propios (no usar personajes/nombres de otros juegos). Todas son máscaras de animal.
+  Actuales: NEÓN (gallo; sin pasiva, la experiencia clásica — el nombre se queda aunque el dibujo
+  sea un gallo, es la máscara "de serie" del juego), OSO (puñetazos mortales),
+  GUEPARDO (+30% velocidad), TIBURÓN (empieza con cuchillo),
   BÚHO (balas +20% velocidad y mitad de dispersión).
 - Flujo: estado `masks` antes de cada piso (al arrancar, tras los resultados con Espacio/Enter
   y al empezar partida nueva). Flechas/A-D o pasar el ratón eligen (el ratón solo cuenta si se
@@ -189,13 +191,14 @@ siguiente piso (`goToLevel`) … tras el último → `gameover` → `menu` o par
     el volumen se hace con la nuca en sombra (`N`) y las orejas claras (`R`);
   - letras: `K` contorno (#0a0a0f, en el morro y las puntas, que es por donde la cabeza sobresale
     y toca el suelo) · `M` base · `R` luz · `N` sombra · `O` claro (hocico, dientes, pico) ·
-    `Q` acento (ojos, nariz, rayas, visor). El color lo pone `MASK_SKINS`, con los tonos del
-    retrato pero un punto más claros y con contraste **contra la cazadora cian** (por eso el visor
-    de NEÓN es magenta, no cian);
-  - cada máscara tiene que leerse por color + un rasgo grande al frente: NEÓN visor magenta de
-    lado a lado · OSO orejas redondas, ojos negros y hocico claro con nariz · GUEPARDO orejas en
-    punta, manchas, rayas de lágrima y hocico crema · TIBURÓN cabeza en cuña y morro blanco ·
-    BÚHO ojos ámbar enormes y pico naranja.
+    `Q` acento (ojos, nariz, rayas, cresta). El color lo pone `MASK_SKINS`, con los tonos del
+    retrato pero un punto más claros y con contraste **contra la cazadora cian** (nada de acentos
+    cian: se funden con el cuerpo);
+  - cada máscara tiene que leerse por color + un rasgo grande: NEÓN (gallo) plumas claras con la
+    cresta roja recorriendo el centro de la cabeza de atrás a delante y el pico ámbar en el morro
+    (de frente, la cresta va arriba y las barbillas bajo el pico) · OSO orejas redondas, ojos
+    negros y hocico claro con nariz · GUEPARDO orejas en punta, manchas, rayas de lágrima y
+    hocico crema · TIBURÓN cabeza en cuña y morro blanco · BÚHO ojos ámbar enormes y pico naranja.
   - Para añadir una máscara: entrada en `MASKS` (con su retrato) + cuadrícula en `MASK_HEADS` +
     colores en `MASK_SKINS` (si falta la cabeza se usa la de NEÓN).
 - HUD: miniatura del retrato (12×12 a ×2) bajo el arma; los resultados muestran la máscara usada.

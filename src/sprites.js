@@ -124,14 +124,15 @@ const DEFS = {
 // (ojos, nariz, rayas, visor). El color lo pone MASK_SKINS, con los mismos tonos que el retrato
 // del menú (`MASKS` en masks.js) para que se reconozca la misma máscara.
 const MASK_HEADS = {
-  // NEÓN: casco liso, sin orejas, con el visor magenta cruzando todo el frente.
+  // NEÓN: gallo. Desde arriba la cresta roja recorre el centro de la cabeza de atrás a delante
+  // y el pico ámbar sale en punta por el morro; las plumas claras quedan a los lados.
   neon: [
-    '.MRMK...',
-    'NMMMQQK.',
-    'NMMMQQOK',
-    'NMMMQQOK',
-    'NMMMQQK.',
-    '.MRMK...',
+    '.MMMK...',
+    'NMMMKMK.',
+    'NQQQQOOK',
+    'NQQQQOOK',
+    'NMMMKMK.',
+    '.MMMK...',
   ],
   // OSO: orejas redondas a los lados, ojos negros y hocico claro con la nariz al frente.
   oso: [
@@ -176,7 +177,7 @@ const MASK_HEADS = {
 // (desde arriba la cabeza está iluminada) y con contraste alto contra el suelo oscuro y contra
 // la cazadora cian (por eso el visor de NEÓN es magenta y no cian).
 const MASK_SKINS = {
-  neon:     { K: '#0a0a0f', R: '#6a6a9e', M: '#4e4e78', N: '#2a2a40', O: '#ff9ed4', Q: '#ff2a85' },
+  neon:     { K: '#0a0a0f', R: '#ffffff', M: '#ece8ff', N: '#b3abd6', O: '#ffbe0b', Q: '#ff2e55' },
   oso:      { K: '#0a0a0f', R: '#b07545', M: '#8a5530', N: '#5a3418', O: '#d9a878', Q: '#120c06' },
   guepardo: { K: '#0a0a0f', R: '#ffd089', M: '#ffb23f', N: '#c47a1a', O: '#fff1d0', Q: '#3a2006' },
   tiburon:  { K: '#0a0a0f', R: '#9fb0d6', M: '#7b8fb8', N: '#45557a', O: '#f5f3ff', Q: '#141a2c' },
