@@ -1,31 +1,44 @@
 // Audio 100% procedimental con Web Audio (sin archivos): efectos de sonido + música synthwave.
 // El AudioContext solo puede arrancar tras un gesto del usuario, así que se crea en el primer clic/tecla.
 const MASTER_VOLUME = 0.4;
-const MUSIC_VOLUME = 0.55;   // relativo al master; M silencia ambos
+const MUSIC_VOLUME = 0.5;    // relativo al master; M silencia ambos
+const AMBIENT_VOLUME = 0.7;  // ambiente de "piso limpio" (ver setMusic)
 
 // --- Música -----------------------------------------------------------------
-const BPM = 104;
+// Tres modos, un único planificador: 'action' (combate), 'empty' (piso limpio) y 'menu'.
+const BPM = 150;                  // darksynth acelerado: el combate tiene que ir sobrado de pulso
 const STEP_TIME = 60 / BPM / 4;   // duración de una semicorchea
 const STEPS = 64;                 // 4 compases de 16 semicorcheas
 const LOOKAHEAD = 0.15;           // s de música que se programan por adelantado
 const TICK_MS = 25;               // cada cuánto revisa el planificador
+const CUT_TIME = 0.09;            // corte seco de la música al limpiar el piso
+const AMBIENT_FADE = 0.9;         // lo que tarda en abrirse el ambiente vacío
 
-// Modo acción: Am - F - C - G
-const ACTION_ROOTS = [55.0, 43.65, 65.41, 49.0];
+// Modo acción: Am - F - G - Em (menor, más oscuro que el I-IV-V clásico)
+const ACTION_ROOTS = [55.0, 43.65, 49.0, 41.2];
 const ACTION_CHORDS = [
   [220.0, 261.63, 329.63],
   [174.61, 220.0, 261.63],
-  [261.63, 329.63, 392.0],
   [196.0, 246.94, 293.66],
+  [164.81, 196.0, 246.94],
 ];
-const BASS_PATTERN = [1, 0, 1, 2, 1, 0, 2, 1, 1, 0, 1, 2, 1, 2, 1, 2]; // 0 silencio · 1 raíz · 2 octava
-// Modo "Stage Clear": Fmaj7 - Em7 - Dm7 - Cmaj7, pads lentos y campanas
-const CLEAR_CHORDS = [
+// Bajo a semicorcheas (0 silencio · 1 raíz · 2 octava): sin huecos, es el motor del tema.
+const BASS_PATTERN = [1, 1, 2, 1, 1, 0, 1, 2, 1, 1, 2, 1, 2, 1, 1, 2];
+// Arpegio a semicorcheas: índices del acorde, con saltos de octava marcados aparte.
+const ARP_PATTERN = [0, 2, 1, 2, 0, 1, 2, 1, 0, 2, 1, 2, 2, 1, 2, 0];
+const ARP_OCTAVE = [0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0, 1, 0];
+// Bombo: a negras + dos síncopas que empujan el compás.
+const KICK_STEPS = [0, 4, 7, 8, 10, 12];
+// Modo menú: Fmaj7 - Em7 - Dm7 - Cmaj7, pads lentos y campanas
+const MENU_CHORDS = [
   [174.61, 220.0, 261.63, 329.63],
   [164.81, 196.0, 246.94, 293.66],
   [146.83, 174.61, 220.0, 261.63],
   [130.81, 164.81, 196.0, 246.94],
 ];
+// Modo vacío: sub-drone en La, una quinta por encima y un armónico lejano.
+const DRONE_FREQS = [41.2, 61.74, 164.81];
+const DRONE_TIME = 7;             // cada cuánto se renueva el zumbido (con solapamiento)
 
 // --- Efectos ----------------------------------------------------------------
 const SOUNDS = {
@@ -96,7 +109,16 @@ const SOUNDS = {
     const f = 520 * Math.pow(2, Math.min(level - 1, 12) / 12);
     s.tone({ type: 'square', from: f, to: f * 1.5, dur: 0.08, gain: 0.08 * v });
   },
-  // Fanfarria corta al despejar el piso.
+  // Corte estilo cinta/VHS al caer el último enemigo: la música se desploma de tono y la
+  // cinta se para con un chasquido. Suena por el master, no por el bus de música, para que
+  // el corte de la música no se lo lleve por delante.
+  tapeStop(s, v) {
+    s.tone({ type: 'sawtooth', from: 330, to: 24, dur: 0.5, gain: 0.2 * v });
+    s.tone({ type: 'square', from: 165, to: 18, dur: 0.55, gain: 0.1 * v });
+    s.noise({ dur: 0.5, gain: 0.22 * v, filter: 'lowpass', freq: 4200, freqTo: 120, q: 0.6 });
+    s.noise({ dur: 0.07, gain: 0.14 * v, filter: 'highpass', freq: 1800, delay: 0.5 });
+  },
+  // Fanfarria corta (fin de partida con récord).
   clear(s, v) {
     [523.25, 659.25, 783.99, 1046.5].forEach((f, i) => {
       s.tone({ type: 'triangle', from: f, dur: 0.35, gain: 0.18 * v, delay: i * 0.09 });
@@ -108,8 +130,11 @@ export class Sfx {
   constructor() {
     this.ctx = null;
     this.muted = false;
-    this.musicMode = 'action';  // 'action' | 'clear'
+    this.musicMode = 'action';  // 'action' | 'empty' | 'menu'
     this.musicTimer = null;
+    this.droneUntil = 0;
+    this.staticUntil = 0;
+    this.echoAt = 0;
     const unlock = () => this.init();
     // En táctil el navegador solo permite arrancar el audio al levantar el dedo (pointerup /
     // touchend), no al tocar; con ratón y teclado basta con pulsar.
@@ -130,6 +155,12 @@ export class Sfx {
       this.musicBus = this.ctx.createGain();
       this.musicBus.gain.value = MUSIC_VOLUME;
       this.musicBus.connect(this.master);
+      // El ambiente vacío va por su propio bus: así la música se corta en seco sin tocarlo y
+      // el ambiente se abre y se cierra con sus propios tiempos.
+      this.ambientBus = this.ctx.createGain();
+      this.ambientBus.gain.value = 0.0001;
+      this.ambientBus.connect(this.master);
+      this.applyMusicMode(true);
       const len = this.ctx.sampleRate;
       this.noiseBuffer = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
       const data = this.noiseBuffer.getChannelData(0);
@@ -151,8 +182,42 @@ export class Sfx {
 
   // --- Música ---------------------------------------------------------------
 
+  // 'action' (combate) · 'empty' (piso limpio: música cortada y ambiente vacío) · 'menu'.
+  // Pasar a 'empty' corta la música en seco con el frenazo de cinta; salir de ahí (piso nuevo
+  // o reinicio tras morir) devuelve la música y cierra el ambiente.
   setMusic(mode) {
+    if (mode === this.musicMode) return;
+    const wasPlaying = this.musicMode !== 'empty';
     this.musicMode = mode;
+    if (!this.ctx) return;              // aún no hay gesto del usuario: se aplicará en init()
+    if (mode === 'empty') this.resetAmbient();
+    this.applyMusicMode(false);
+    if (mode === 'empty' && wasPlaying) this.play('tapeStop', 1);
+  }
+
+  // Temporizadores del ambiente: a 0 para que el zumbido, el aire y el eco entren enseguida.
+  resetAmbient() {
+    this.droneUntil = 0;
+    this.staticUntil = 0;
+    this.echoAt = (this.ctx ? this.ctx.currentTime : 0) + 2.5;
+  }
+
+  // Pone los dos buses donde toca según el modo. `instant` = sin rampas (al crear el contexto).
+  applyMusicMode(instant) {
+    const empty = this.musicMode === 'empty';
+    this.ramp(this.musicBus.gain, empty ? 0.0001 : MUSIC_VOLUME, instant ? 0 : (empty ? CUT_TIME : 0.12));
+    this.ramp(this.ambientBus.gain, empty ? AMBIENT_VOLUME : 0.0001,
+      instant ? 0 : (empty ? AMBIENT_FADE : 0.3), empty && !instant ? CUT_TIME * 2 : 0);
+  }
+
+  // Rampa de ganancia a prueba de cambios rápidos: cancela lo pendiente y arranca del valor
+  // real actual, así reiniciar o cambiar de piso a toda prisa no deja automatizaciones cruzadas.
+  ramp(param, value, time, delay = 0) {
+    const t = this.ctx.currentTime + delay;
+    param.cancelScheduledValues(this.ctx.currentTime);
+    param.setValueAtTime(Math.max(param.value, 0.0001), this.ctx.currentTime);
+    if (time <= 0) param.setValueAtTime(Math.max(value, 0.0001), t);
+    else param.exponentialRampToValueAtTime(Math.max(value, 0.0001), t + time);
   }
 
   // Un único intervalo para toda la partida: llamarlo varias veces no crea duplicados.
@@ -177,7 +242,8 @@ export class Sfx {
     while (this.nextNote < c.currentTime + LOOKAHEAD) {
       // En silencio no se crean nodos: el tiempo avanza pero no se programa nada.
       if (!this.muted && c.state === 'running') {
-        if (this.musicMode === 'clear') this.clearStep(this.step, this.nextNote);
+        if (this.musicMode === 'empty') this.emptyStep(this.step, this.nextNote);
+        else if (this.musicMode === 'menu') this.menuStep(this.step, this.nextNote);
         else this.actionStep(this.step, this.nextNote);
       }
       this.nextNote += STEP_TIME;
@@ -185,47 +251,134 @@ export class Sfx {
     }
   }
 
+  // Combate: cuatro por el suelo con síncopas, charles a semicorcheas, bajo pulsante sin
+  // huecos y arpegio rápido. Todo por `musicBus`, que es lo que se corta al limpiar el piso.
   actionStep(step, t) {
     const bar = step >> 4, s = step & 15;
     const out = this.musicBus;
-    if (s % 4 === 0) this.tone({ type: 'sine', from: 150, to: 42, dur: 0.28, gain: 0.9, at: t, dest: out });           // bombo
-    if (s === 4 || s === 12) this.noise({ dur: 0.16, gain: 0.4, filter: 'bandpass', freq: 1500, q: 0.7, at: t, dest: out }); // palmada
-    if (s % 2 === 1) this.noise({ dur: s === 15 ? 0.12 : 0.035, gain: 0.1, filter: 'highpass', freq: 8000, at: t, dest: out }); // charles
+    if (KICK_STEPS.includes(s)) this.kickDrum(t, s % 4 === 0 ? 1 : 0.65);
+    if (s === 4 || s === 12) {                                                      // caja/palmada
+      this.noise({ dur: 0.18, gain: 0.45, filter: 'bandpass', freq: 1700, freqTo: 900, q: 0.7, at: t, dest: out });
+      this.tone({ type: 'triangle', from: 320, to: 180, dur: 0.1, gain: 0.25, at: t, dest: out });
+    }
+    // Charles a semicorcheas con acento en los contratiempos; abierto al final del compás.
+    this.noise({ dur: s === 14 ? 0.14 : 0.03, gain: s % 2 ? 0.11 : 0.055, filter: 'highpass', freq: 8200, at: t, dest: out });
+    if (s === 0 && bar % 2 === 0) this.noise({ dur: 0.5, gain: 0.1, filter: 'highpass', freq: 5200, at: t, dest: out }); // crash
     const pat = BASS_PATTERN[s];
     if (pat) this.bass(ACTION_ROOTS[bar] * pat, t);
-    if (s % 2 === 0) {
-      const chord = ACTION_CHORDS[bar];
-      this.tone({ type: 'triangle', from: chord[(s / 2) % 3] * 2, dur: 0.14, gain: 0.05, at: t, dest: out }); // arpegio
-    }
-    if (s === 0) this.pad(ACTION_CHORDS[bar], t, STEP_TIME * 16, 0.025, 1400);
+    const chord = ACTION_CHORDS[bar];
+    this.tone({ type: 'sawtooth', from: chord[ARP_PATTERN[s]] * (ARP_OCTAVE[s] ? 4 : 2),
+      dur: 0.08, gain: 0.04, at: t, dest: out });                                   // arpegio
+    if (s === 0) this.pad(chord, t, STEP_TIME * 16, 0.03, 1800);
   }
 
-  clearStep(step, t) {
+  // Piso limpio: ni percusión ni armonía, solo el edificio. Sub-drone que apenas se mueve,
+  // estática y aire, y algún eco metálico lejano. Todo por `ambientBus`.
+  emptyStep(step, t) {
+    const out = this.ambientBus;
+    // Por tiempo, no por compás: el piso puede quedar limpio en cualquier semicorchea y el
+    // zumbido tiene que entrar en ese mismo instante, no al principio del siguiente ciclo.
+    if (t >= this.droneUntil) {
+      this.drone(t, DRONE_TIME);
+      this.droneUntil = t + DRONE_TIME;                                     // zumbido sub-grave
+    }
+    if (t >= this.staticUntil) {
+      this.noise({ dur: 2.2, gain: 0.02, filter: 'highpass', freq: 3200, at: t, dest: out });        // estática
+      this.noise({ dur: 2.2, gain: 0.035, filter: 'lowpass', freq: 240, freqTo: 130, at: t, dest: out }); // aire
+      this.staticUntil = t + 2;
+    }
+    if (t >= this.echoAt) {
+      this.coldEcho(t);
+      this.echoAt = t + 4 + Math.random() * 7;
+    }
+  }
+
+  // Menús y fin de partida: pads lentos y campanas (el tema tranquilo de siempre).
+  menuStep(step, t) {
     const bar = step >> 4, s = step & 15;
-    const chord = CLEAR_CHORDS[bar];
-    if (s === 0) this.pad(chord, t, STEP_TIME * 16 * 1.25, 0.05, 900);
+    const chord = MENU_CHORDS[bar];
+    if (s === 0) this.pad(chord, t, STEP_TIME * 16 * 1.8, 0.05, 900);
     if (s % 4 === 0) {
-      this.tone({ type: 'sine', from: chord[(s / 4) % chord.length] * 2, dur: 1.2, gain: 0.06, at: t, dest: this.musicBus }); // campana
+      this.tone({ type: 'sine', from: chord[(s / 4) % chord.length] * 2, dur: 1.2, gain: 0.06, at: t, dest: this.musicBus });
     }
   }
 
-  // Bajo de sierra con filtro que se cierra: el "pulso" típico del synthwave.
+  // Bombo con pegada: chasquido, cuerpo que cae rápido de tono y cola de sub.
+  kickDrum(t, v) {
+    const out = this.musicBus;
+    this.noise({ dur: 0.02, gain: 0.3 * v, filter: 'highpass', freq: 2600, at: t, dest: out });
+    this.tone({ type: 'sine', from: 190, to: 38, dur: 0.3, gain: 0.95 * v, at: t, dest: out });
+    this.tone({ type: 'sine', from: 62, to: 30, dur: 0.22, gain: 0.45 * v, at: t, dest: out });
+  }
+
+  // Zumbido sub-grave del edificio vacío: tres capas casi inmóviles que entran y salen muy
+  // despacio. Se renueva cada ciclo con solapamiento para que no se oiga la costura.
+  drone(t, dur) {
+    const c = this.ctx;
+    for (let i = 0; i < DRONE_FREQS.length; i++) {
+      const freq = DRONE_FREQS[i];
+      const g = c.createGain();
+      const peak = [0.3, 0.12, 0.025][i];
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(peak, t + dur * 0.35);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + dur + 0.6);
+      const f = c.createBiquadFilter();
+      f.type = 'lowpass';
+      f.frequency.value = i === 2 ? 700 : 200;
+      f.connect(g).connect(this.ambientBus);
+      // Dos osciladores con una desafinación mínima: laten muy despacio, suena "frío".
+      for (const detune of [-4, 5]) {
+        const osc = c.createOscillator();
+        osc.type = i === 2 ? 'triangle' : 'sine';
+        osc.frequency.value = freq;
+        osc.detune.value = detune;
+        osc.connect(f);
+        osc.start(t);
+        osc.stop(t + dur + 0.7);
+      }
+    }
+  }
+
+  // Eco frío: un golpe metálico lejano que rebota por el piso vacío y se apaga.
+  coldEcho(t) {
+    const base = 760 + Math.random() * 900;
+    for (let i = 0; i < 4; i++) {
+      this.tone({ type: 'triangle', from: base, to: base * 0.92, dur: 0.5,
+        gain: 0.035 * Math.pow(0.55, i), at: t + i * 0.26, dest: this.ambientBus });
+    }
+  }
+
+  // Bajo grueso y pulsante: dos sierras desafinadas + un sub de seno una octava por debajo,
+  // todo por un paso-bajo resonante que se cierra de golpe. Es lo que empuja el combate.
   bass(freq, t) {
     const c = this.ctx;
-    const osc = c.createOscillator();
     const f = c.createBiquadFilter();
     const g = c.createGain();
-    osc.type = 'sawtooth';
-    osc.frequency.setValueAtTime(freq, t);
     f.type = 'lowpass';
-    f.Q.value = 6;
-    f.frequency.setValueAtTime(1400, t);
-    f.frequency.exponentialRampToValueAtTime(180, t + 0.18);
-    g.gain.setValueAtTime(0.32, t);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.2);
-    osc.connect(f).connect(g).connect(this.musicBus);
-    osc.start(t);
-    osc.stop(t + 0.22);
+    f.Q.value = 9;
+    f.frequency.setValueAtTime(2600, t);
+    f.frequency.exponentialRampToValueAtTime(220, t + 0.14);
+    g.gain.setValueAtTime(0.3, t);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.17);
+    f.connect(g).connect(this.musicBus);
+    for (const detune of [-11, 12]) {
+      const osc = c.createOscillator();
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(freq, t);
+      osc.detune.value = detune;
+      osc.connect(f);
+      osc.start(t);
+      osc.stop(t + 0.19);
+    }
+    const sub = c.createOscillator();
+    const sg = c.createGain();
+    sub.type = 'sine';
+    sub.frequency.setValueAtTime(freq / 2, t);
+    sg.gain.setValueAtTime(0.22, t);
+    sg.gain.exponentialRampToValueAtTime(0.0001, t + 0.15);
+    sub.connect(sg).connect(this.musicBus);
+    sub.start(t);
+    sub.stop(t + 0.17);
   }
 
   // Acorde sostenido: dos sierras ligeramente desafinadas por nota, filtradas.

@@ -30,10 +30,8 @@ HTML5 Canvas, JavaScript Vanilla (ES Modules) y Vite. Sin frameworks ni librerí
     pathfinding BFS, pisos (`LEVELS`), zonas de suelo y muebles sólidos en la cuadrícula.
   - `weapons.js` — definiciones de armas (`WEAPON_DEFS`, `ENEMY_GUN`), `Pickup`, `Bullet`, utilidades de melee.
   - `particles.js` — chispas, polvo, gotas de sangre (se pintan en la capa de sangre al caer) y casquillos persistentes.
-  - `audio.js` — SFX y música synthwave procedimentales con Web Audio (osciladores + ruido filtrado).
-    Sin archivos de audio. La música usa un planificador con lookahead: **un único** `setInterval`
-    (`musicTimer`) para toda la partida que programa notas en el reloj de audio; `setMusic('action'|'clear')`
-    solo cambia el patrón. Nunca crear intervalos nuevos por nivel/reinicio. En silencio no se crean nodos.
+  - `audio.js` — SFX, música y ambiente procedimentales con Web Audio (osciladores + ruido
+    filtrado). Sin archivos de audio. Ver "Música y ambiente".
   - `decor.js` — arte estático del entorno: texturas de suelo por zona, muebles, decoración de
     suelo y deterioro de paredes (`renderFloor`, `renderProps`, `renderWalls`).
   - `menu.js` — menú principal arcade (título, selector de pisos, récords) y su fondo synthwave.
@@ -202,6 +200,35 @@ siguiente piso (`goToLevel`) … tras el último → `gameover` → `menu` o par
   - Para añadir una máscara: entrada en `MASKS` (con su retrato) + cuadrícula en `MASK_HEADS` +
     colores en `MASK_SKINS` (si falta la cabeza se usa la de NEÓN).
 - HUD: miniatura del retrato (12×12 a ×2) bajo el arma; los resultados muestran la máscara usada.
+
+## Música y ambiente (`audio.js`)
+- Todo procedimental con Web Audio: ni un archivo de audio. Un planificador con lookahead y
+  **un único** `setInterval` (`musicTimer`) para toda la partida programa las notas en el reloj
+  de audio; `setMusic(modo)` solo cambia el patrón. Nunca crear intervalos nuevos por
+  nivel/reinicio. En silencio (`M`) no se crean nodos: el tiempo avanza pero no suena nada.
+- **Dos buses** bajo el master (que es lo que silencia `M`): `musicBus` (percusión, bajo, arpegio
+  y pads) y `ambientBus` (el ambiente de piso limpio). Separados a propósito: así la música se
+  corta en seco sin tocar el ambiente y cada uno tiene sus propios tiempos de entrada y salida.
+- **Tres modos** (`setMusic`), uno por momento del juego:
+
+| Modo | Cuándo | Qué suena |
+|---|---|---|
+| `action` | `reset()`: cada piso y cada reinicio con `R` | darksynth a 150 BPM: bombo a negras con dos síncopas, charles a semicorcheas, bajo pulsante y arpegio rápido |
+| `empty` | al caer el último enemigo (`update`, paso a `cleared`) | nada de música: zumbido sub-grave, estática/aire y ecos metálicos lejanos |
+| `menu` | menús y fin de partida | pads lentos y campanas |
+
+- **El corte a vacío** es el momento clave: `setMusic('empty')` baja `musicBus` a cero en
+  `CUT_TIME` (0,09 s), lanza el SFX `tapeStop` (frenazo de cinta/VHS: la música se desploma de
+  tono y la cinta chasca) por el **master** —para que el corte de la música no se lo lleve— y
+  abre `ambientBus` en `AMBIENT_FADE`. El ambiente acompaña hasta la salida y la pantalla de
+  resultados; el siguiente piso o `R` vuelven a `action`.
+- El ambiente **no va en la rejilla de compases** (`emptyStep` usa marcas de tiempo:
+  `droneUntil`, `staticUntil`, `echoAt`): el último enemigo puede caer en cualquier semicorchea y
+  el zumbido tiene que entrar en ese instante, no al principio del siguiente ciclo.
+- Reglas al tocar el audio: las rampas de ganancia van por `ramp()`, que cancela lo pendiente y
+  arranca del valor real (cambiar de piso o reiniciar a toda prisa no debe cruzar
+  automatizaciones); nunca una rampa exponencial a 0 (mínimo 0,0001); y `setMusic` antes del
+  primer gesto del usuario solo guarda el modo, que `init()` aplica al crear el contexto.
 
 ## Mecánicas de combate
 - Daño: todo es de un golpe. Lo que cambia es el efecto: **matar** o **derribar** (estado `down`

@@ -424,7 +424,7 @@ export class Game {
     this.runSummary = { completed, score: this.score.total, position, newRecord: this.score.isRecord };
     this.state = 'gameover';
     this.showRecords = false;
-    this.sfx.setMusic('clear');
+    this.sfx.setMusic('menu');
     if (position) this.sfx.play('clear');
   }
 
@@ -455,7 +455,7 @@ export class Game {
     this.state = 'menu';
     this.showRecords = false;
     this.menu.open(screen);
-    this.sfx.setMusic('clear');
+    this.sfx.setMusic('menu');
   }
 
   // --- Transiciones (fundido a negro con barrido neón) --------------------------------------
@@ -605,8 +605,9 @@ export class Game {
 
     if (this.state === 'playing' && this.enemies.every((e) => !e.alive)) {
       this.state = 'cleared';
-      this.sfx.setMusic('clear');
-      this.sfx.play('clear');
+      // Se acabó la adrenalina: `setMusic('empty')` corta la música con el frenazo de cinta y
+      // abre el ambiente del edificio vacío, que acompaña hasta la salida.
+      this.sfx.setMusic('empty');
     }
     if (this.state === 'cleared' && this.player.alive
       && Math.floor(this.player.x / TILE) === this.exit.tx && Math.floor(this.player.y / TILE) === this.exit.ty) {
