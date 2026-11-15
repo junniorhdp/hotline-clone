@@ -285,16 +285,24 @@ siguiente piso (`goToLevel`) … tras el último → `gameover` → `menu` o par
   brutalidad (ver abajo); los resultados muestran la máscara usada.
 
 ### Sangre en el personaje
-El jugador se va manchando con las bajas de la partida y la máscara también.
+El jugador se va manchando con las bajas **del piso** y la máscara también.
 - **Acumulación** (`game.gore`, `game.stainPlayer`): cada baja suma la `power` de su `KILL_FEEL`
   (disparo 1, melé 1,35, ejecución 2,2), así que lo cuerpo a cuerpo mancha más. `bloodLevelFor(gore)`
-  (`player.js`) lo traduce en nivel 0..`BLOOD_LEVELS` (5) con `BLOOD_STEPS` = 1, 3, 6, 10, 15: un
-  piso tiene 5, 8 y 11 enemigos, así que el primero llega al nivel 2-3, el segundo al 4 y el
-  máximo, bien entrado el tercero. Al subir de nivel caen unas gotas sobre el jugador para que se
-  note. `player.bloodLevel` es lo que se dibuja.
-- **Alcance, igual que la puntuación**: se mantiene al pasar de piso (`goreAtEntry` se actualiza
-  en `goToLevel`), al reintentar con `R` vuelve a lo que había al entrar al piso (esas bajas se
-  deshacen con su puntuación) y una partida nueva empieza limpia (`startRunAt`).
+  (`player.js`) lo traduce en nivel 0..`BLOOD_LEVELS` (5) con `BLOOD_STEPS` = 1, 3, 6, 10, 15. Como
+  cada piso empieza limpio y tiene 5, 8 y 11 enemigos, en el piso 1 se llega al nivel 2-3 (4 con
+  muchas ejecuciones), en el 2 al 3-4 y el máximo (15 de `gore`) solo en el 3 y con mucho cuerpo a
+  cuerpo. Al subir de nivel caen unas gotas sobre el jugador para que se note. `player.bloodLevel`
+  es lo que se dibuja.
+- **Alcance: por piso, y R lo conserva** (`game.gore`):
+  - **Piso nuevo** (`goToLevel`) y **partida nueva** (`startRunAt`): `gore = 0`. Tras subirse a la moto
+    el jugador llega al siguiente piso con ropa y máscara limpias (`bloodLevelFor(0)` = 0 → variantes
+    sin sufijo `_b`).
+  - **Reintento con `R`** (`restartLevel`): **no toca `gore`**: reaparece con la sangre con la que
+    murió, aunque esas bajas se deshagan (los enemigos reviven y la puntuación vuelve a la de la
+    entrada). Consecuencia: reintentar varias veces **sigue acumulando** sobre lo ya conservado,
+    así que un piso difícil se afronta cada vez más manchado (hasta el nivel 5). Si se prefiere
+    que R devuelva la sangre a la de la entrada, bastaría guardar `gore` al empezar el piso y
+    restaurarlo en `restartLevel`.
 - **Dibujo** (`sprites.js`): para cada máscara y nivel se hornean, una sola vez, una variante del
   cuerpo (`body_<id>_b<n>`) y otra de la cabeza (`head_<id>_b<n>`) con las manchas encima. Dibujar
   solo elige el bitmap: cuesta lo mismo con sangre que sin ella (medido: 7 ms para hornear los 77

@@ -153,10 +153,9 @@ export class Game {
     this.fx = new ScreenFx();
     this.history = new ScoreHistory();
     this.score = new Score(this.history.best());
-    // Sangre del personaje: se acumula con las bajas de toda la partida (como la puntuación). Al
-    // reintentar un piso vuelve a lo que había al entrar y una partida nueva empieza limpia.
+    // Sangre del personaje: se acumula con las bajas DEL PISO. Al reintentar con R se conserva (el
+    // jugador reaparece como murió); al pasar de piso (`goToLevel`) y al empezar partida empieza limpia.
     this.gore = 0;
-    this.goreAtEntry = 0;
     // Edificio: el piso empieza en la calle. Al cruzar el umbral (`inside`) se bloquea la puerta
     // principal hasta despejarlo; `entered` y `entryWeapon` recuerdan ese momento para que R
     // reaparezca dentro, sin repetir la llegada.
@@ -289,7 +288,7 @@ export class Game {
   goToLevel(index) {
     this.levelIndex = index;
     this.score.startLevel();
-    this.goreAtEntry = this.gore;
+    this.gore = 0; // el siguiente piso se empieza limpio: ropa y máscara sin sangre
     this.entered = false;
     this.entryWeapon = null;
     this.reset({ arrival: true });
@@ -433,7 +432,6 @@ export class Game {
   // Reintenta el piso actual (R): los puntos vuelven a los que había al entrar.
   restartLevel() {
     this.score.restartLevel();
-    this.gore = this.goreAtEntry;
     this.reset();
   }
 
@@ -488,7 +486,7 @@ export class Game {
   startRunAt(index) {
     this.runId = newRunId();
     this.score.newRun(this.history.best());
-    this.gore = this.goreAtEntry = 0;
+    this.gore = 0;
     this.levelIndex = index;
     this.entered = false;
     this.entryWeapon = null;
