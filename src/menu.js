@@ -43,7 +43,7 @@ function floorThumb(index) {
   for (const d of L.doors) { ctx.fillStyle = COLORS.door; ctx.fillRect(d.tx, d.ty, 1, 1); }
   for (const e of L.enemies) dot(e.x, e.y, COLORS.enemy);
   dot(L.player.x, L.player.y, COLORS.player);
-  dot(L.exit.x, L.exit.y, COLORS.debug);
+  dot(L.bike.x, L.bike.y, COLORS.debug);
   const info = { canvas: c, enemies: L.enemies.length, armed: L.enemies.filter((e) => e.armed).length };
   thumbs.set(index, info);
   return info;

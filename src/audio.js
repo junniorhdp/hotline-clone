@@ -109,6 +109,39 @@ const SOUNDS = {
     const f = 520 * Math.pow(2, Math.min(level - 1, 12) / 12);
     s.tone({ type: 'square', from: f, to: f * 1.5, dur: 0.08, gain: 0.08 * v });
   },
+  // Motor de la moto. 'arrive': llega, frena y queda al ralentí; 'leave': acelera y se aleja.
+  engine(s, v, mode = 'arrive') {
+    if (mode === 'arrive') {
+      s.tone({ type: 'sawtooth', from: 48, to: 120, dur: 1.1, gain: 0.16 * v });
+      s.tone({ type: 'sawtooth', from: 120, to: 52, dur: 0.9, gain: 0.14 * v, delay: 1.1 });
+      s.noise({ dur: 1, gain: 0.12 * v, filter: 'lowpass', freq: 500, freqTo: 300, q: 0.8 });
+      s.noise({ dur: 1, gain: 0.1 * v, filter: 'lowpass', freq: 300, freqTo: 200, q: 0.8, delay: 0.9 });
+    } else {
+      s.tone({ type: 'sawtooth', from: 55, to: 240, dur: 1.4, gain: 0.2 * v });
+      s.tone({ type: 'square', from: 110, to: 480, dur: 1.4, gain: 0.05 * v });
+      s.noise({ dur: 1, gain: 0.18 * v, filter: 'lowpass', freq: 300, freqTo: 1800, q: 0.9 });
+      s.noise({ dur: 0.6, gain: 0.16 * v, filter: 'lowpass', freq: 1800, freqTo: 2400, q: 0.9, delay: 0.9 });
+    }
+  },
+  // Portazo del bloqueo del edificio: golpe grave y metálico, y tres tonos de alarma.
+  lockdown(s, v) {
+    s.tone({ type: 'sine', from: 70, to: 28, dur: 0.5, gain: 1 * v });
+    s.noise({ dur: 0.22, gain: 0.6 * v, filter: 'lowpass', freq: 2200, freqTo: 180, q: 0.9 });
+    s.noise({ dur: 0.06, gain: 0.35 * v, filter: 'highpass', freq: 2500, delay: 0.02 });
+    for (let i = 0; i < 3; i++) s.tone({ type: 'square', from: 880, to: 660, dur: 0.14, gain: 0.07 * v, delay: 0.25 + i * 0.22 });
+  },
+  // Al ponerse la máscara: un clic y un barrido que sube.
+  maskOn(s, v) {
+    s.noise({ dur: 0.03, gain: 0.3 * v, filter: 'highpass', freq: 2200 });
+    s.tone({ type: 'triangle', from: 380, to: 1100, dur: 0.14, gain: 0.2 * v, delay: 0.02 });
+    s.tone({ type: 'sine', from: 90, to: 50, dur: 0.12, gain: 0.35 * v });
+  },
+  // Al despejar el edificio, la puerta se desbloquea: un clic seco y dos notas limpias.
+  unlock(s, v) {
+    s.noise({ dur: 0.04, gain: 0.35 * v, filter: 'bandpass', freq: 1800, q: 3 });
+    s.tone({ type: 'triangle', from: 660, dur: 0.16, gain: 0.16 * v, delay: 0.05 });
+    s.tone({ type: 'triangle', from: 990, dur: 0.22, gain: 0.16 * v, delay: 0.16 });
+  },
   // Carga de la ejecución: un barrido ascendente corto, el aire que se tensa antes del golpe.
   execWind(s, v) {
     s.noise({ dur: 0.26, gain: 0.2 * v, filter: 'bandpass', freq: 250, freqTo: 2400, q: 2.5 });

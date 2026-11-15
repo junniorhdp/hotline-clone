@@ -115,6 +115,36 @@ export const FLOORS = {
     }
     if (rnd() < 0.2) dots(ctx, '#23402a', x0, y0, PX, PX, 8, rnd); // verdín
   },
+  // Asfalto de la calle (exterior): grano oscuro, gravilla clara, grietas y manchas de aceite.
+  asphalt(ctx, tx, ty, rnd) {
+    const x0 = tx * PX, y0 = ty * PX;
+    rect(ctx, '#14111f', x0, y0, PX, PX);
+    dots(ctx, '#1b1729', x0, y0, PX, PX, 22, rnd);
+    dots(ctx, '#0d0a16', x0, y0, PX, PX, 14, rnd);
+    dots(ctx, '#2a2540', x0, y0, PX, PX, 4, rnd);
+    if (rnd() < 0.18) crack(ctx, '#0a0712', x0 + 2 + Math.floor(rnd() * 11), y0 + 1, 7 + Math.floor(rnd() * 8), rnd);
+    if (rnd() < 0.1) {
+      ctx.globalAlpha = 0.5;
+      ctx.fillStyle = '#0a1a2a'; // aceite
+      pixelDisc(ctx, x0 + 4 + rnd() * 8, y0 + 4 + rnd() * 8, 2 + rnd() * 3);
+      ctx.globalAlpha = 1;
+    }
+  },
+  // Raya amarilla discontinua del centro de la calle, desgastada.
+  asphaltLine(ctx, tx, ty, rnd) {
+    FLOORS.asphalt(ctx, tx, ty, rnd);
+    const x0 = tx * PX, y0 = ty * PX;
+    rect(ctx, '#a89420', x0 + 1, y0 + 7, PX - 2, 2);
+    dots(ctx, '#14111f', x0 + 1, y0 + 7, PX - 2, 2, 4, rnd);
+  },
+  // Plaza de aparcamiento de la moto: asfalto con una línea blanca desgastada arriba y abajo.
+  asphaltBay(ctx, tx, ty, rnd) {
+    FLOORS.asphalt(ctx, tx, ty, rnd);
+    const x0 = tx * PX, y0 = ty * PX;
+    rect(ctx, '#8a86a8', x0, y0 + PX - 2, PX, 1);
+    rect(ctx, '#8a86a8', x0, y0, PX, 1);
+    dots(ctx, '#14111f', x0, y0 + PX - 2, PX, 1, 3, rnd);
+  },
   // Chapa metálica antideslizante (almacenes, servidores): marcas en diagonal y óxido.
   metal(ctx, tx, ty, rnd) {
     const x0 = tx * PX, y0 = ty * PX;
@@ -323,7 +353,7 @@ export function renderFloor(map) {
     }
   }
   ctx.fillStyle = 'rgba(5, 0, 15, 0.45)';
-  for (const p of map.props) if (p.solid) ctx.fillRect(p.x * PX + 3, p.y * PX + 3, p.w * PX - 2, p.h * PX - 2);
+  for (const p of map.props) if (p.solid && p.type !== 'bike') ctx.fillRect(p.x * PX + 3, p.y * PX + 3, p.w * PX - 2, p.h * PX - 2);
   return c;
 }
 

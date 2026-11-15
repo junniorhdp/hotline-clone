@@ -1,7 +1,7 @@
 import { moveAndSlide, lineOfSight, isSolidAt, castRay } from './map.js';
 import { WEAPON_DEFS, Bullet, Pickup, inMeleeArc, drawWeaponShape } from './weapons.js';
 import { COLORS, TAU } from './utils.js';
-import { drawSprite, sprites, pixelRect, drawMaskHead, playerBody, BLOOD_LEVELS, WORLD_PX } from './sprites.js';
+import { drawSprite, sprites, pixelRect, drawMaskHead, maskHead, playerBody, BLOOD_LEVELS, WORLD_PX } from './sprites.js';
 import { DEFAULT_EFFECTS } from './masks.js';
 import { drawText } from './pixelfont.js';
 
@@ -49,13 +49,15 @@ export function bloodLevelFor(gore) {
 export class Player {
   // `perks` = efectos de la máscara elegida y `maskId` su aspecto (ver masks.js): la cabeza que
   // se pinta sobre el cuerpo es la de esa máscara, así que en el piso se ve la que se eligió.
-  constructor(x, y, perks = DEFAULT_EFFECTS, maskId = 'neon') {
+  // `masked` = false al llegar en moto: va sin máscara (la lleva en la mano) hasta `putOnMask`.
+  constructor(x, y, perks = DEFAULT_EFFECTS, maskId = 'neon', masked = true) {
     this.x = x;
     this.y = y;
     this.r = 10;
     this.angle = 0;
     this.perks = perks;
     this.maskId = maskId;
+    this.masked = masked;
     this.bloodLevel = 0;  // 0..BLOOD_LEVELS: cuánta sangre lleva encima (lo fija Game)
     this.soles = 0;       // pisadas manchadas que le quedan
     this.solesMax = 0;    // las de la carga actual (para saber en qué punto de la secuencia va)
@@ -63,7 +65,7 @@ export class Player {
     this.foot = 1;        // 1 / -1: pie que toca
     this.exec = null;     // ejecución en curso: { target, t, hit, style }
     // null = puños, o { type, ammo }
-    const start = perks.startWeapon;
+    const start = masked ? perks.startWeapon : null; // sin máscara no hay arma de la máscara todavía
     this.weapon = start ? { type: start, ammo: WEAPON_DEFS[start].maxAmmo || 0 } : null;
     this.cooldown = 0;
     this.swing = 0;
@@ -185,6 +187,18 @@ export class Player {
       game.prints.add(this.x - this.hy * this.foot * FOOT_SPREAD, this.y + this.hx * this.foot * FOOT_SPREAD,
         Math.atan2(this.hy, this.hx), intensity);
     }
+  }
+
+  // Al cruzar el umbral del edificio se pone la máscara que llevaba en la mano: una ráfaga de neón
+  // y un clic. Desde ese momento llevan su efecto las pasivas que dependen de ella: el arma
+  // inicial de BLADE solo se da si no se ha cogido ya otra por el camino.
+  putOnMask(game) {
+    if (this.masked) return;
+    this.masked = true;
+    const start = this.perks.startWeapon;
+    if (start && !this.weapon) this.weapon = { type: start, ammo: WEAPON_DEFS[start].maxAmmo || 0 };
+    game.particles.neon(this.x, this.y, this.angle, 14, Math.PI);
+    game.sfx.play('maskOn');
   }
 
   // --- Ejecución (remate de un enemigo derribado) --------------------------------------------
@@ -368,6 +382,8 @@ export class Player {
     ctx.rotate(this.angle);
     const def = this.def;
     const pose = this.exec ? this.execPose() : null;
+    // Sin máscara puesta la lleva en la mano izquierda (el lado -Y), con el puño agarrándola.
+    const inHand = () => { if (!this.masked) drawSprite(ctx, maskHead(this.maskId), 11, -8, 0.3); };
 
     if (pose) {
       if (!pose.raised) this.drawExecTool(ctx, pose);
@@ -391,12 +407,13 @@ export class Player {
         drawSprite(ctx, 'fist', 10 + reach, side * 8);
       }
     }
+    if (!pose) inHand();
 
     // Cuerpo (con la ropa y la sangre que toquen) y encima la cabeza de la máscara, ya en el eje
     // de apuntado. En la ejecución el cuerpo se echa atrás al cargar y hacia delante al golpear.
     if (pose) ctx.translate(pose.lean, 0);
     drawSprite(ctx, playerBody(this.maskId, this.bloodLevel), 0, 0);
-    drawMaskHead(ctx, this.maskId, this.bloodLevel);
+    drawMaskHead(ctx, this.masked ? this.maskId : 'bare', this.bloodLevel);
     if (pose) {
       ctx.translate(-pose.lean, 0);
       // Levantada, la herramienta está más cerca de la cámara: va POR ENCIMA del jugador.

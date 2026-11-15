@@ -28,9 +28,11 @@ HTML5 Canvas, JavaScript Vanilla (ES Modules) y Vite. Sin frameworks ni librerí
     armas, nivel de sangre del personaje y suelas manchadas (huellas).
   - `enemy.js` — IA de enemigos (patrulla, visión, persecución, búsqueda, derribado, `executing`
     mientras los rematan) y tipo armado.
-  - `doors.js` — puertas batientes: física de la hoja, empuje, patada y derribo.
+  - `doors.js` — puertas batientes: física de la hoja, empuje, patada y derribo; la puerta principal
+    del edificio (`main`) se bloquea (`lock`: se cierra de golpe) y se desbloquea (`unlock`).
   - `map.js` — tilemap, colisiones AABB con sliding, raycast/línea de visión (paredes + puertas),
-    pathfinding BFS, pisos (`LEVELS`), zonas de suelo y muebles sólidos en la cuadrícula.
+    pathfinding BFS, pisos (`LEVELS`, cada uno con su exterior: vestíbulo, puerta principal y calle
+    con la moto), zonas de suelo y muebles sólidos en la cuadrícula.
   - `weapons.js` — definiciones de armas (`WEAPON_DEFS`, `ENEMY_GUN`), `Pickup`, `Bullet`, utilidades de melee.
   - `particles.js` — chispas, polvo, sangre, restos (`gibs`), chispas de neón (`neon`) y casquillos
     persistentes; `gore()` lanza todo lo de una baja. Las gotas y los restos, al caer, se hornean
@@ -75,11 +77,55 @@ HTML5 Canvas, JavaScript Vanilla (ES Modules) y Vite. Sin frameworks ni librerí
 ## Niveles y flujo
 - Los pisos están en `LEVELS` (`src/map.js`): `{ name, floor, par, rows, zones, props, loot, … }`.
   `par` = tiempo objetivo (s); `zones`/`props`: ver "Diseño de niveles".
-  Leyenda del tilemap: `#` pared · `.` suelo · `D` puerta · `P` jugador · `X` salida ·
+  Leyenda del tilemap: `#` pared · `.` suelo · `D` puerta · `N` puerta principal del edificio (una por
+  piso: se bloquea al entrar) · `P` jugador al bajar de la moto (en la acera) ·
   `E`/`A` enemigo melee/armado (patrulla en el eje más largo) · `V`/`W` melee/armado con patrulla
   vertical forzada (para cruzar patrullas) · `B` bate · `G` pistola · `S` escopeta ·
   `K` cuchillo · `T` tubo · `M` subfusil · `?` arma aleatoria (ver "Reparto de armas").
-  `loadLevel` valida anchos de fila, `P`, `X` y la colocación de los muebles.
+  `loadLevel` valida anchos de fila, `P`, la puerta principal `N` (una, en pared horizontal), la moto
+  (mueble `bike`) y la colocación de los muebles; devuelve además `entry` (el punto dos casillas dentro
+  de la puerta principal, con `lockY`, el umbral) y `bike`.
+
+### Llegada en moto, bloqueo del edificio y fuga
+Cada piso empieza **en la calle**, no dentro. El ciclo (`game.js`) es:
+
+1. **Llegada** (`state 'arriving'`, `beginArrival` + `updateCine`): tras elegir máscara, la moto entra
+   por la izquierda con el jugador montado, frena en su plaza (1,9 s) y él baja a la acera (0,55 s).
+   Barras de cine arriba y abajo. **Espacio / Enter / clic / toque** la salta. El jugador llega
+   **sin máscara** (cabeza `bare`, la máscara agarrada en la mano izquierda; el retrato del HUD
+   está apagado) y **sin arma**: las pasivas que dan un arma (BLADE) esperan a ponérsela.
+2. **Fuera** (`state 'playing'`, `inside` = false): camina a la puerta principal, marcada con el marco
+   neón `ENTRADA` y una flecha (`drawObjectiveMarker`). La música es la tranquila (`menu`) y el
+   reloj del piso no corre. La moto es un mueble sólido (no se la atraviesa).
+3. **Bloqueo** (`beginLockdown`): al cruzar el **umbral** (`entry.lockY`: dos casillas dentro de la
+   puerta principal, ya fuera del barrido de la hoja) se pone la máscara (`Player.putOnMask`, ráfaga
+   de neón + sonido), se anota el arma con la que entra (`entryWeapon`), la puerta principal se
+   **cierra de golpe** (`Door.lock()`, 11 rad/s) y se **bloquea**: nadie la mueve (ni el jugador ni los
+   enemigos), las patadas no hacen nada (`kickDoor` da un golpe sordo) y la hoja se pinta en rojo
+   con un candado. Al acabar de cerrarse (`door.slammed` → `slamEffects`): sonido `lockdown`,
+   sacudida, chispas y el aviso `SALIDAS BLOQUEADAS`. Empieza la música de combate y corre el reloj.
+4. **Despejar** (`state 'cleared'`, `this.inside && todos muertos`): suena `tapeStop` y entra el ambiente
+   vacío (ya existente); la puerta se **desbloquea y se abre** (`Door.unlock()`, sonido `unlock`) y
+   sale el aviso `¡EDIFICIO LIMPIO!`. El marco pasa a la moto (`MOTO`).
+5. **Fuga** (`state 'leaving'`): al **rozar la moto** (`touchingBike`: su borde + `MOUNT_MARGIN`) el
+   jugador se sube (0,4 s) y la moto acelera hasta salir de la pantalla (1,35 s) con polvo y motor
+   (`engine`); después fundido y resultados (`finishFloor`). También se puede saltar con
+   Espacio/clic. **El piso solo se completa así**: no basta con limpiar el edificio.
+
+- **Reintento (`R`) sigue siendo instantáneo y no repite la llegada** (`reset()` sin opciones):
+  - ya habiendo entrado (`entered`): reaparece **justo dentro** (`level.entry`), con la máscara puesta,
+    el arma con la que cruzó el umbral (`entryWeapon`) y la puerta ya bloqueada;
+  - sin haber entrado todavía (o durante la llegada): otra vez en la acera, sin cinemática.
+  `entered`/`entryWeapon` se borran al empezar partida o piso (`startRunAt`, `goToLevel`).
+  `reset({ arrival: true })` es el estado de partida (selección de máscara y `confirmMask`).
+- **Reloj y rango**: `game.time` corre solo `inside` y antes de despejar; llegada y fuga no cuentan.
+- **Cámara**: sigue a la moto mientras va montada y al jugador el resto; `camera.snap` al empezar la
+  llegada. Las cinemáticas no usan la entrada salvo para saltarse.
+- **Música/sonido**: llegada y fuera `menu` → bloqueo `action` (+ `lockdown`) → despejado `empty`
+  (+ `unlock`) → fuga `engine`. SFX nuevos en `audio.js`: `engine('arrive'|'leave')`, `lockdown`,
+  `maskOn`, `unlock`.
+- **Mapas**: cada piso lleva al sur un exterior (ver "Diseño de niveles"). La leyenda cambia: ya no
+  hay `X`; `N` = puerta principal y la moto es el mueble sólido `bike` (2×1 casillas).
 
 ## Diseño de niveles: edificio abandonado tomado por la mafia
 - **Arquitectura**: cada piso es un edificio coherente. Pasillos principales de **2 casillas** de
@@ -106,11 +152,20 @@ HTML5 Canvas, JavaScript Vanilla (ES Modules) y Vite. Sin frameworks ni librerí
 - **Reglas al diseñar o editar un piso** (`loadLevel` lanza error si se incumplen las tres primeras):
   - Ningún mueble sólido sobre paredes, entidades, `?`, puertas u otro mueble.
   - Las dos casillas de paso de cada puerta, libres.
-  - Todo (enemigos, `?`, armas, puertas, salida) alcanzable desde `P`.
+  - Todo (enemigos, `?`, armas, puertas, entrada, moto) alcanzable desde `P`.
   - Las patrullas `E`/`A` no deben cruzar puertas (la patrulla automática sigue el eje más largo
     hasta 7 casillas y atraviesa puertas): colocar al enemigo donde su eje largo quede dentro de la sala.
+  - **Exterior de cada piso** (se añade al sur del edificio): la pared sur lleva puertas `D` a las
+    salas, detrás hay un **vestíbulo** de 2 filas (sin enemigos, con un arma fija para entrar armado:
+    `B` bate / `T` tubo), luego la pared con la puerta principal `N` y, fuera, la **calle**: una fila de
+    acera, 4 de asfalto (`asphalt`, raya discontinua `asphaltLine`, plaza `asphaltBay`) y una pared de
+    fondo. Los extremos de la calle quedan abiertos al borde del mapa. La moto (`['bike', x, y, 2, 1]`)
+    va en la primera fila de asfalto y `P` en la acera justo encima de ella. Ningún enemigo en el
+    vestíbulo ni en la calle: la entrada tiene que ser segura (desarmado y sin máscara al llegar).
+  - Comprobar con `npm run check:levels` (`tools/validate-levels.mjs`): pasos de puerta libres, todo
+    alcanzable, patrullas sin cruzar puertas, exterior sin enemigos y camino de la puerta a la moto.
   - Comprobar después que nadie se atasca simulando movimiento real (`moveAndSlide`) y la
-    navegación de los enemigos (`Enemy.goTo`) hacia el jugador, patrullas, armas y salida.
+    navegación de los enemigos (`Enemy.goTo`) hacia el jugador, patrullas, armas y la entrada.
 
 ## Pantallas y estados (`game.state`)
 Correspondencia entre las pantallas conceptuales y los valores reales de `game.state`:
@@ -119,12 +174,14 @@ Correspondencia entre las pantallas conceptuales y los valores reales de `game.s
 |---|---|---|
 | MENU | `'menu'` | subpantallas en `game.menu.screen`: `'title'`, `'floors'`, `'records'` (`menu.js`) |
 | MASK_SELECT | `'masks'` | antes de cada piso; `Esc` vuelve al menú |
-| PLAYING | `'playing'` · `'dead'` | `dead`: `R` reintenta (instantáneo), `Enter` termina la partida |
-| LEVEL_CLEAR | `'cleared'` → `'results'` | `cleared` = sin enemigos, ve a la salida; `results` = rango/tiempo/puntos |
+| ARRIVAL | `'arriving'` | cinemática de llegada en moto (saltable); sin combate |
+| PLAYING | `'playing'` · `'dead'` | `playing` incluye fuera del edificio (`inside` false) y dentro con el piso bloqueado; `dead`: `R` reintenta (instantáneo), `Enter` termina la partida |
+| LEVEL_CLEAR | `'cleared'` → `'leaving'` → `'results'` | `cleared` = edificio despejado y puerta abierta, vuelve a la moto; `leaving` = se sube y se va (saltable); `results` = rango/tiempo/puntos |
 | GAME_OVER | `'gameover'` | edificio completado o muerte definitiva; Top 5. `Espacio` partida nueva, `Esc` menú |
 
 Flujo: arranque → `menu/title` → JUGAR (o un piso desbloqueado en `floors`) → `startRunAt(i)` →
-`masks` → `playing` → `cleared` → pisar `X` → `results` → `Espacio`/`Enter` → `masks` del
+`masks` → `arriving` → `playing` (fuera → cruza el umbral: lockdown) → `cleared` → rozar la moto →
+`leaving` → `results` → `Espacio`/`Enter` → `masks` del
 siguiente piso (`goToLevel`) … tras el último → `gameover` → `menu` o partida nueva.
 
 ### Transiciones
@@ -132,7 +189,7 @@ siguiente piso (`goToLevel`) … tras el último → `gameover` → `menu` o par
   de una línea rosa y otra cian; `action` cambia de estado con la pantalla en negro.
   Mientras hay fundido el juego está congelado y la entrada se ignora; no se encadenan dos.
 - Usan fundido: menú ↔ subpantallas (0,15 s), menú/selector → máscaras, máscaras → piso,
-  salida → resultados (`finishFloor`), resultados → siguiente piso / fin, muerte (`Enter`) → fin,
+  fuga en moto → resultados (`finishFloor`), resultados → siguiente piso / fin, muerte (`Enter`) → fin,
   fin → menú o partida nueva. **`R` NO usa fundido**: reintentar debe ser inmediato.
 - En `menu` no se dibuja el piso: `menu.js` pinta el fondo synthwave (cielo en bandas, sol
   rayado, rejilla en perspectiva con `pixelLine`). Los efectos CRT globales siguen activos.
@@ -172,7 +229,7 @@ siguiente piso (`goToLevel`) … tras el último → `gameover` → `menu` o par
 | **NEON** | `neon` | gallo | ninguna: la experiencia clásica, la máscara "de serie" |
 | **BRUTE** | `oso` | oso | puñetazos mortales (matan al instante, sin derribar) |
 | **STRIKE** | `guepardo` | guepardo | +30 % de velocidad de movimiento |
-| **BLADE** | `tiburon` | tiburón | empiezas cada piso con un cuchillo |
+| **BLADE** | `tiburon` | tiburón | te pones la máscara con un cuchillo (si no has cogido otra arma antes) |
 | **GHOST** | `buho` | búho | tus balas van +20 % más rápidas y con la mitad de dispersión |
 
 - **El `id` no se cambia nunca**, solo el `name`: lo usan los sprites (`head_<id>`, `body_<id>`) y
@@ -493,6 +550,10 @@ Diseños propios del juego (no copiar personajes ni arte de otros juegos).
 - Sprites: definidos en `DEFS` de `sprites.js`, 1 carácter = 1 píxel, contorno `k` oscuro, sombreado
   de 1 px (tono claro arriba-izquierda, oscuro abajo-derecha). Personajes de 16×16 mirando a +X;
   se rotan al dibujar (vecino más cercano). Variantes de color con `RECOLORS`.
+  Moto (`bike`, 32×13 px, ruedas con banda de rodadura clara para que no se pierdan sobre el
+  asfalto) con sombra propia dinámica (`bikeShadow`: la moto se mueve en las cinemáticas, no va en la
+  capa estática). Puerta principal: `doorMain` (cian) / `doorLocked` (roja) + `lock`.
+  Jugador sin máscara: cabeza `bare` (pelo y piel) y la máscara en la mano izquierda.
   Jugador: cazadora cian con capucha gris y puños de color según la máscara, y el hueco de la
   cabeza, que pinta encima la máscara elegida; se mancha de sangre con las bajas (ver "Máscaras").
   Patrulla: camisa amarilla + gorra. Armado: chaleco oscuro.
@@ -566,13 +627,16 @@ Colores centralizados en `COLORS` (`src/utils.js`) y `PALETTE` (`src/sprites.js`
 ## Debug
 - `F1` activa/desactiva el modo debug: hitboxes, conos de visión (cortados por puertas),
   líneas de visión, rutas BFS, estados de la IA (incluido aim/windup y temporizador de
-  derribo), velocidad angular de puertas, contadores de partículas, de manchas permanentes, nivel de sangre del personaje, huellas vivas y FPS. Mantener siempre
+  derribo), velocidad angular de puertas (y si la principal está `BLOQUEADA`/`CERRANDO`), fuera o
+  dentro del edificio, contadores de partículas, de manchas permanentes, nivel de sangre del
+  personaje, huellas vivas y FPS. Mantener siempre
   esta tecla funcionando al añadir sistemas nuevos (cada entidad nueva debería tener su `drawDebug`).
 - Cuidado: los `drawDebug` que cambian `textAlign` sin `save/restore` afectan al HUD;
   `renderHud` lo reinicia al empezar.
 
 ## Controles
 `WASD` mover · ratón apuntar · clic izquierdo atacar/disparar/ejecutar · clic derecho recoger/lanzar arma ·
-`E` patada a puerta o ejecutar a un derribado en rango · `R` reintentar piso · `Espacio`/`Enter` continuar en resultados ·
+`E` patada a puerta o ejecutar a un derribado en rango · `R` reintentar piso (reaparece dentro, sin repetir la llegada) ·
+`Espacio`/`Enter`/clic saltan las cinemáticas de llegada y fuga y continúan en resultados ·
 `T` mejores partidas (selección de máscara y muerte) · `Enter` en la muerte: terminar partida ·
 `F1` debug · `M` silenciar sonido y música · `V` efectos CRT on/off

@@ -5,17 +5,20 @@ const CORNER_TOLERANCE = 8; // px que se "empuja" al jugador para entrar en huec
 const RAY_STEP = 4;
 const PATROL_MAX_TILES = 7;
 
-// Leyenda: # pared · . suelo · D puerta · P jugador · X salida (activa al despejar el piso)
+// Leyenda: # pared · . suelo · D puerta · N puerta principal del edificio (se bloquea al entrar y se
+//   abre al despejarlo) · P jugador al bajar de la moto (fuera, en la acera; el piso empieza en la calle)
 //   E enemigo melee · A enemigo armado (patrulla en el eje más largo)
 //   V enemigo melee · W enemigo armado (patrulla vertical forzada → patrullas cruzadas)
 //   B bate · G pistola · S escopeta · K cuchillo · T tubo · M subfusil
 //   ? arma aleatoria: primero las de `guaranteed`, el resto sorteadas de `loot`
+// La moto es un mueble sólido `bike` (2×1 casillas, en `props`): es el punto de llegada y de fuga.
 // Los enemigos armados llevan subfusil con probabilidad `smgChance` (si no, pistola).
 // `par` = tiempo objetivo en segundos (bonus de tiempo y rango).
 // `floor` = suelo por defecto (pasillos); `zones` = habitaciones [tipo, x0, y0, x1, y1] con su suelo
 // (concrete, brokenTiles, wood, carpet, bathTiles, metal); `props` = muebles [tipo, x, y, ancho, alto]
 // en casillas (sólidos: SOLID_PROPS; decorativos: DECOR_PROPS). Los pisos se diseñan como edificio:
-// pasillos de 2 casillas que conectan salas cerradas por puertas.
+// pasillos de 2 casillas que conectan salas cerradas por puertas. Cada piso lleva al sur un exterior:
+// un vestíbulo seguro (con un arma fija) tras la puerta principal `N`, y una calle con la moto.
 export const LEVELS = [
   {
     name: 'PISO 1 · RECEPCIÓN',
@@ -28,9 +31,9 @@ export const LEVELS = [
       '########################################',
       '#............#...........#......#......#',
       '#............#...........#......#......#',
-      '#..P.........D...........#....?.#......#',
+      '#............D...........#....?.#......#',
       '#............#...........#......#...A..#',
-      '#X..B........#...E....?..#......#......#',
+      '#...B........#...E....?..#......#......#',
       '#............#...........#......#......#',
       '######D############D########D######D####',
       '#......................................#',
@@ -43,12 +46,27 @@ export const LEVELS = [
       '#.......E....#............#......A.....#',
       '#............#..?.........#............#',
       '#............#............#............#',
+      '######D############D############D#######',
+      '#......................................#',
+      '#...............B......................#',
+      '###################N####################',
+      '.......P................................',
+      '........................................',
+      '........................................',
+      '........................................',
+      '........................................',
       '########################################',
     ],
     zones: [
       ['brokenTiles', 1, 1, 12, 6], ['wood', 14, 1, 24, 6], ['bathTiles', 26, 1, 31, 6],
       ['metal', 33, 1, 38, 6], ['carpet', 1, 11, 12, 17], ['wood', 14, 11, 25, 17],
       ['metal', 27, 11, 38, 17],
+      // Exterior: vestíbulo, calle (asfalto, rayas del carril) y plaza de la moto.
+      ['wood', 1, 19, 38, 20], ['asphalt', 0, 23, 39, 26], ['asphaltLine', 0, 25, 1, 25],
+      ['asphaltLine', 4, 25, 5, 25], ['asphaltLine', 8, 25, 9, 25], ['asphaltLine', 12, 25, 13, 25],
+      ['asphaltLine', 16, 25, 17, 25], ['asphaltLine', 20, 25, 21, 25],
+      ['asphaltLine', 24, 25, 25, 25], ['asphaltLine', 28, 25, 29, 25],
+      ['asphaltLine', 32, 25, 33, 25], ['asphaltLine', 36, 25, 37, 25], ['asphaltBay', 6, 23, 9, 23],
     ],
     props: [
       ['counter', 8, 3, 3, 1], ['sofa', 12, 4, 1, 2], ['rug', 3, 1, 3, 2], ['debris', 10, 6, 1, 1],
@@ -66,6 +84,15 @@ export const LEVELS = [
       ['rug', 17, 14, 4, 2], ['tv', 34, 11, 1, 1], ['tv', 35, 11, 1, 1], ['tv', 36, 11, 1, 1],
       ['desk', 34, 12, 3, 1], ['crates', 38, 17, 1, 1], ['crates', 37, 17, 1, 1],
       ['barrel', 27, 17, 1, 1], ['papers', 30, 13, 1, 1],
+      // Exterior: vestíbulo, calle y la moto (aparcada en la plaza, 2×1 casillas).
+      ['counter', 8, 19, 4, 1], ['sofa', 22, 20, 3, 1], ['cabinet', 26, 19, 1, 1],
+      ['cabinet', 27, 19, 1, 1], ['barrel', 1, 19, 1, 1], ['crates', 1, 20, 1, 1],
+      ['shelf', 38, 19, 1, 2], ['rug', 14, 19, 3, 2], ['papers', 12, 20, 1, 1],
+      ['trash', 30, 20, 1, 1], ['stain', 34, 20, 1, 1], ['crates', 3, 26, 1, 1],
+      ['crates', 4, 26, 1, 1], ['barrel', 12, 26, 1, 1], ['trash', 15, 25, 1, 1],
+      ['stain', 20, 24, 1, 1], ['debris', 26, 25, 1, 1], ['barrel', 30, 26, 1, 1],
+      ['crates', 34, 26, 1, 1], ['crates', 35, 26, 1, 1], ['crates', 35, 25, 1, 1],
+      ['trash', 37, 23, 1, 1], ['papers', 23, 26, 1, 1], ['bike', 7, 23, 2, 1],
     ],
   },
   {
@@ -77,9 +104,9 @@ export const LEVELS = [
     par: 75,
     rows: [
       '############################################',
-      '#X........#.........#..#........#..........#',
       '#.........#.........#..#........#..........#',
-      '#..P......#.........#..#....?...#.....A....#',
+      '#.........#.........#..#........#..........#',
+      '#.........#.........#..#....?...#.....A....#',
       '#.........D.........D..D........#..........#',
       '#.........#..E......#V.#........#..........#',
       '#......B..#.........#..#........#.?........#',
@@ -96,12 +123,28 @@ export const LEVELS = [
       '#..E......#..E......#..#.....A..#..........#',
       '#.........#.........#..#........#..?.......#',
       '#.........#.........#..#........#..........#',
+      '#####D#########D#####D#####D#########D######',
+      '#..........................................#',
+      '#................T.........................#',
+      '#####################N######################',
+      '.......P....................................',
+      '............................................',
+      '............................................',
+      '............................................',
+      '............................................',
       '############################################',
     ],
     zones: [
       ['wood', 1, 1, 9, 7], ['carpet', 11, 1, 19, 7], ['bathTiles', 24, 1, 31, 7],
       ['wood', 33, 1, 42, 7], ['metal', 1, 12, 9, 19], ['carpet', 11, 12, 19, 19],
       ['metal', 24, 12, 31, 19], ['brokenTiles', 33, 12, 42, 19],
+      // Exterior: vestíbulo, calle (asfalto, rayas del carril) y plaza de la moto.
+      ['wood', 1, 21, 42, 22], ['asphalt', 0, 25, 43, 28], ['asphaltLine', 0, 27, 1, 27],
+      ['asphaltLine', 4, 27, 5, 27], ['asphaltLine', 8, 27, 9, 27], ['asphaltLine', 12, 27, 13, 27],
+      ['asphaltLine', 16, 27, 17, 27], ['asphaltLine', 20, 27, 21, 27],
+      ['asphaltLine', 24, 27, 25, 27], ['asphaltLine', 28, 27, 29, 27],
+      ['asphaltLine', 32, 27, 33, 27], ['asphaltLine', 36, 27, 37, 27],
+      ['asphaltLine', 40, 27, 41, 27], ['asphaltBay', 6, 25, 9, 25],
     ],
     props: [
       ['desk', 6, 2, 2, 1], ['cabinet', 9, 1, 1, 1], ['shelf', 1, 5, 1, 2], ['rug', 3, 5, 3, 2],
@@ -119,6 +162,16 @@ export const LEVELS = [
       ['trash', 33, 19, 1, 1], ['barrel', 1, 9, 1, 1], ['crates', 42, 10, 1, 1],
       ['debris', 12, 10, 1, 1], ['stain', 33, 9, 1, 1], ['trash', 22, 19, 1, 1],
       ['debris', 21, 2, 1, 1],
+      // Exterior: vestíbulo, calle y la moto (aparcada en la plaza, 2×1 casillas).
+      ['counter', 9, 21, 4, 1], ['sofa', 24, 22, 3, 1], ['cabinet', 30, 21, 1, 1],
+      ['cabinet', 31, 21, 1, 1], ['barrel', 1, 21, 1, 1], ['crates', 1, 22, 1, 1],
+      ['crates', 2, 22, 1, 1], ['shelf', 42, 21, 1, 2], ['rug', 16, 21, 3, 2],
+      ['papers', 13, 22, 1, 1], ['trash', 34, 22, 1, 1], ['tv', 40, 21, 1, 1],
+      ['crates', 4, 28, 1, 1], ['barrel', 5, 28, 1, 1], ['barrel', 14, 28, 1, 1],
+      ['trash', 17, 27, 1, 1], ['stain', 22, 26, 1, 1], ['debris', 28, 27, 1, 1],
+      ['crates', 33, 28, 1, 1], ['crates', 34, 28, 1, 1], ['barrel', 39, 28, 1, 1],
+      ['trash', 41, 25, 1, 1], ['papers', 26, 28, 1, 1], ['crates', 34, 27, 1, 1],
+      ['bike', 7, 25, 2, 1],
     ],
   },
   {
@@ -145,16 +198,32 @@ export const LEVELS = [
       '############..#..................#..############',
       '#..........#..#..................#..#..........#',
       '#..........#..D..................D..#..........#',
-      '#..P.......D..#...A..............#..D..........#',
+      '#..........D..#...A..............#..D..........#',
       '#..........#..#............E.....#..#.....A....#',
       '#.......B..#..#..................#..#..........#',
-      '#X.........#..#..................#..#..........#',
+      '#..........#..#..................#..#..........#',
+      '#####D######D###########D##########D######D#####',
+      '#..............................................#',
+      '#..................B...........................#',
+      '########################N#######################',
+      '.......P........................................',
+      '................................................',
+      '................................................',
+      '................................................',
+      '................................................',
       '################################################',
     ],
     zones: [
       ['metal', 1, 1, 10, 6], ['bathTiles', 1, 8, 10, 12], ['wood', 1, 14, 10, 19],
       ['carpet', 15, 1, 32, 19], ['metal', 37, 1, 46, 6], ['bathTiles', 37, 8, 46, 12],
       ['brokenTiles', 37, 14, 46, 19],
+      // Exterior: vestíbulo, calle (asfalto, rayas del carril) y plaza de la moto.
+      ['wood', 1, 21, 46, 22], ['asphalt', 0, 25, 47, 28], ['asphaltLine', 0, 27, 1, 27],
+      ['asphaltLine', 4, 27, 5, 27], ['asphaltLine', 8, 27, 9, 27], ['asphaltLine', 12, 27, 13, 27],
+      ['asphaltLine', 16, 27, 17, 27], ['asphaltLine', 20, 27, 21, 27],
+      ['asphaltLine', 24, 27, 25, 27], ['asphaltLine', 28, 27, 29, 27],
+      ['asphaltLine', 32, 27, 33, 27], ['asphaltLine', 36, 27, 37, 27],
+      ['asphaltLine', 40, 27, 41, 27], ['asphaltLine', 44, 27, 45, 27], ['asphaltBay', 6, 25, 9, 25],
     ],
     props: [
       ['cashTable', 6, 1, 2, 1], ['crates', 1, 1, 1, 1], ['crates', 2, 1, 1, 1],
@@ -171,6 +240,16 @@ export const LEVELS = [
       ['shelf', 39, 14, 3, 1], ['debris', 40, 17, 1, 1], ['crates', 13, 19, 1, 1],
       ['barrel', 34, 19, 1, 1], ['debris', 13, 1, 1, 1], ['stain', 35, 12, 1, 1],
       ['trash', 12, 19, 1, 1],
+      // Exterior: vestíbulo, calle y la moto (aparcada en la plaza, 2×1 casillas).
+      ['counter', 7, 21, 4, 1], ['sofa', 27, 22, 3, 1], ['cabinet', 32, 21, 1, 1],
+      ['cabinet', 33, 21, 1, 1], ['barrel', 1, 21, 1, 1], ['crates', 1, 22, 1, 1],
+      ['shelf', 46, 21, 1, 2], ['rug', 16, 21, 4, 2], ['papers', 14, 22, 1, 1],
+      ['trash', 37, 22, 1, 1], ['tv', 44, 21, 1, 1], ['stain', 40, 22, 1, 1],
+      ['crates', 4, 28, 1, 1], ['crates', 5, 28, 1, 1], ['barrel', 13, 28, 1, 1],
+      ['trash', 18, 27, 1, 1], ['stain', 24, 26, 1, 1], ['debris', 30, 27, 1, 1],
+      ['barrel', 36, 28, 1, 1], ['crates', 40, 28, 1, 1], ['crates', 41, 28, 1, 1],
+      ['crates', 41, 27, 1, 1], ['trash', 44, 25, 1, 1], ['papers', 28, 28, 1, 1],
+      ['bike', 7, 25, 2, 1],
     ],
   },
 ];
@@ -179,7 +258,7 @@ export const LEVELS = [
 // IA los rodea con el pathfinding. El resto de tipos de `props` son decoración de suelo.
 // El arte de cada tipo está en decor.js.
 export const SOLID_PROPS = new Set(['desk', 'deskFlipped', 'counter', 'sofa', 'cashTable', 'shelf', 'tv',
-  'cabinet', 'crates', 'barrel', 'toilet', 'sink', 'cardTable', 'bed']);
+  'cabinet', 'crates', 'barrel', 'toilet', 'sink', 'cardTable', 'bed', 'bike']);
 export const DECOR_PROPS = new Set(['rug', 'debris', 'trash', 'stain', 'papers']);
 // Celdas de la cuadrícula: 0 suelo · 1 pared estructural · 2 mueble sólido.
 const CELL_WALL = 1;
@@ -203,7 +282,6 @@ export function loadLevel(index = 0, rng = Math.random) {
   // `doors` lo rellena el juego con objetos Door: bloquean visión y balas (ver lineOfSight).
   const map = { w, h, grid, pixelW: w * TILE, pixelH: h * TILE, doors: [] };
   let player = null;
-  let exit = null;
   const enemies = [];
   const weapons = [];
   const doors = [];
@@ -217,15 +295,15 @@ export function loadLevel(index = 0, rng = Math.random) {
       const x = tx * TILE + TILE / 2;
       const y = ty * TILE + TILE / 2;
       if (ch === 'P') player = { x, y };
-      else if (ch === 'X') exit = { x, y, tx, ty };
-      else if (ch === 'D') doors.push({ tx, ty });
+      else if (ch === 'D' || ch === 'N') doors.push({ tx, ty, main: ch === 'N' });
       else if (ENEMY_CHARS[ch]) enemies.push({ x, y, tx, ty, ...ENEMY_CHARS[ch] });
       else if (PICKUP_CHARS[ch]) weapons.push({ type: PICKUP_CHARS[ch], x, y });
       else if (ch === '?') randomSlots.push({ x, y });
     }
   });
   if (!player) throw new Error(`${def.name}: falta la posición del jugador (P)`);
-  if (!exit) throw new Error(`${def.name}: falta la salida (X)`);
+  const mainDoors = doors.filter((d) => d.main);
+  if (mainDoors.length !== 1) throw new Error(`${def.name}: tiene que haber exactamente una puerta principal (N)`);
 
   // Zonas de suelo (habitaciones): rectángulos [tipo, x0, y0, x1, y1]; el resto usa `floor`.
   map.floor = def.floor;
@@ -253,6 +331,16 @@ export function loadLevel(index = 0, rng = Math.random) {
 
   // Puerta horizontal si tiene paredes a izquierda y derecha; si no, vertical.
   for (const d of doors) d.horizontal = isStructuralWall(map, d.tx - 1, d.ty) && isStructuralWall(map, d.tx + 1, d.ty);
+  // La moto (mueble `bike`): punto de llegada y de fuga. El jugador la monta al volver a ella.
+  const bikeProp = map.props.find((p) => p.type === 'bike');
+  if (!bikeProp) throw new Error(`${def.name}: falta la moto (mueble 'bike')`);
+  const bike = { x: (bikeProp.x + bikeProp.w / 2) * TILE, y: (bikeProp.y + bikeProp.h / 2) * TILE, w: bikeProp.w * TILE, h: bikeProp.h * TILE };
+  // La puerta principal y el punto de entrada: dos casillas dentro, pasado el barrido de la hoja,
+  // donde el piso se cierra detrás del jugador (y donde reaparece al reintentar con R).
+  const main = mainDoors[0];
+  if (!main.horizontal) throw new Error(`${def.name}: la puerta principal debe estar en una pared horizontal`);
+  const mainDoor = { tx: main.tx, ty: main.ty, x: main.tx * TILE + TILE / 2, y: main.ty * TILE + TILE / 2 };
+  const entry = { x: mainDoor.x, y: mainDoor.y - 2 * TILE, lockY: mainDoor.y - 46 };
   for (const e of enemies) {
     e.patrol = autoPatrol(map, e.tx, e.ty, e.axis);
     e.weapon = e.armed ? (rng() < def.smgChance ? 'smg' : 'gun') : null;
@@ -266,7 +354,7 @@ export function loadLevel(index = 0, rng = Math.random) {
     const type = i < def.guaranteed.length ? def.guaranteed[i] : def.loot[Math.floor(rng() * def.loot.length)];
     weapons.push({ type, x: slot.x, y: slot.y });
   });
-  return { name: def.name, par: def.par, map, player, exit, enemies, weapons, doors };
+  return { name: def.name, par: def.par, map, player, bike, mainDoor, entry, enemies, weapons, doors };
 }
 
 // Patrulla de ida y vuelta: en el eje más despejado, o en el vertical si se fuerza.

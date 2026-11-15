@@ -16,12 +16,21 @@ const KNOCK_MARGIN = 7;              // margen extra (mundo) de la hoja al golpe
 const KNOCK_FOLLOW_SPEED = 8;        // la hoja conserva al menos este impulso tras estampar
 const DAMPING = 3.5;
 const THICKNESS = 4;
+const CLOSE_SPEED = 11;              // rad/s: la puerta principal se cierra de golpe al bloquearse
+const UNLOCK_KICK = -6;              // rad/s: al desbloquearse se abre hacia dentro, a la vista
 const KICK_RANGE = 46;
 const KICK_ARC = 1.1;                // rad a cada lado de la mirada
 
 // Puerta batiente: un segmento que gira sobre una bisagra pegada a la pared.
+// La puerta principal del edificio (`main`) se puede bloquear: `lock()` la cierra de golpe y la deja
+// inmóvil (para todos: ni el jugador ni los enemigos la mueven y las patadas no hacen nada) hasta
+// `unlock()`, que la abre. `slammed` avisa al juego, una sola vez, del portazo.
 export class Door {
-  constructor(tx, ty, horizontal) {
+  constructor(tx, ty, horizontal, main = false) {
+    this.main = main;
+    this.locked = false;
+    this.closing = false; // cerrándose para bloquearse
+    this.slammed = false; // true el paso en que acaba de cerrarse y bloquearse
     this.tx = tx;
     this.ty = ty;
     this.cx = tx * TILE + TILE / 2;
@@ -66,6 +75,7 @@ export class Door {
   // La patada abre la puerta en sentido contrario a quien la da y anula cualquier empujón de
   // un enemigo desde el otro lado.
   kick(fromX, fromY) {
+    if (this.locked || this.closing) return;
     this.angVel = -this.sideOf(fromX, fromY) * KICK_SPEED;
     this.playerLock = PLAYER_LOCK_TIME;
   }
@@ -84,9 +94,40 @@ export class Door {
     return toEntity >= Math.min(0, swept) - margin && toEntity <= Math.max(0, swept) + margin;
   }
 
+  // Cierra de golpe y bloquea. Si ya estaba cerrada, se bloquea en el siguiente paso.
+  lock() {
+    if (this.locked) return;
+    this.closing = true;
+    this.angVel = 0;
+  }
+
+  unlock() {
+    this.locked = false;
+    this.closing = false;
+    this.angVel = UNLOCK_KICK;
+  }
+
   update(dt) {
     this.prevOffset = this.offset;
     this.playerLock = Math.max(0, this.playerLock - dt);
+    if (this.closing) {
+      const step = CLOSE_SPEED * dt;
+      this.angVel = 0;
+      if (Math.abs(this.offset) <= step) {
+        this.offset = 0;
+        this.closing = false;
+        this.locked = true;
+        this.slammed = true;
+      } else {
+        this.offset -= Math.sign(this.offset) * step;
+      }
+      return;
+    }
+    if (this.locked) {
+      this.offset = 0;
+      this.angVel = 0;
+      return;
+    }
     this.offset += this.angVel * dt;
     if (this.offset > MAX_OPEN) { this.offset = MAX_OPEN; this.angVel = -Math.abs(this.angVel) * 0.25; }
     if (this.offset < -MAX_OPEN) { this.offset = -MAX_OPEN; this.angVel = Math.abs(this.angVel) * 0.25; }
@@ -118,7 +159,9 @@ export class Door {
     if (d >= R) return null;
 
     let result = 'push';
-    if (player) {
+    if (this.locked || this.closing) {
+      result = 'blocked'; // bloqueada: se aparta a quien la toque, pero no la mueve nadie
+    } else if (player) {
       if (this.angVel * -side < PLAYER_PUSH_SPEED) this.angVel = -side * PLAYER_PUSH_SPEED;
       this.playerLock = PLAYER_LOCK_TIME;
     } else if (this.playerLock > 0 || (canPush && !canPush())) {
@@ -138,9 +181,12 @@ export class Door {
 
   // Hoja pixelada de 16×3 que gira sobre la bisagra (rotación con vecino más cercano).
   draw(ctx) {
-    drawSprite(ctx, 'door', this.hx, this.hy, this.angle, { ox: 0, oy: 1.5 });
-    ctx.fillStyle = COLORS.wall;
+    const sprite = this.locked || this.closing ? 'doorLocked' : this.main ? 'doorMain' : 'door';
+    drawSprite(ctx, sprite, this.hx, this.hy, this.angle, { ox: 0, oy: 1.5 });
+    ctx.fillStyle = this.main && !this.locked && !this.closing ? '#00ff9f' : COLORS.wall;
     pixelRect(ctx, this.hx - 2, this.hy - 2, 2, 2);
+    // Candado sobre la puerta mientras está bloqueada (parpadea) para que se vea que no hay salida.
+    if (this.locked && Math.floor(performance.now() / 350) % 3 !== 0) drawSprite(ctx, 'lock', this.cx, this.cy - 22);
   }
 
   drawDebug(ctx) {
@@ -154,6 +200,6 @@ export class Door {
     ctx.stroke();
     ctx.setLineDash([]);
     ctx.restore();
-    drawText(ctx, `V ${this.angVel.toFixed(1)}${this.playerLock > 0 ? " JUGADOR" : ""}`, this.cx, this.cy - 26, { color: COLORS.debug, scale: WORLD_PX, align: 'center' });
+    drawText(ctx, `V ${this.angVel.toFixed(1)}${this.playerLock > 0 ? " JUGADOR" : ""}${this.locked ? " BLOQUEADA" : ""}${this.closing ? " CERRANDO" : ""}`, this.cx, this.cy - 26, { color: COLORS.debug, scale: WORLD_PX, align: 'center' });
   }
 }

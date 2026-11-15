@@ -15,7 +15,7 @@ import { Sfx } from './audio.js';
 import { ScreenFx } from './effects.js';
 import { drawSprite, pixelDisc, pixelRect, BLOOD_LEVELS, WORLD_PX } from './sprites.js';
 import { drawText, measureText, CELL_H } from './pixelfont.js';
-import { COLORS, TAU, rand, clamp, closestOnSegment, seededRandom, hashString } from './utils.js';
+import { COLORS, TAU, rand, clamp, angleDiff, closestOnSegment, seededRandom, hashString } from './utils.js';
 
 const STEP = 1 / 60;       // paso fijo de simulación (60 FPS)
 const MAX_FRAME = 0.25;    // evita la "espiral de la muerte" tras cambiar de pestaña
@@ -52,6 +52,15 @@ const KILL_FEEL = {
   // fuerte del juego. Hacia donde va el golpe (de jugador a enemigo) sale lo más denso.
   execution: { power: 2.2, wide: 1.3, shake: 14, stop: HITSTOP.execution, fx: 1 },
 };
+// Llegada y fuga en moto (cinemáticas, en segundos).
+const BIKE_START_X = -64;       // la moto entra desde fuera de la pantalla, por la izquierda
+const ARRIVE_RIDE = 1.9;        // lo que tarda en llegar y frenar en su plaza
+const ARRIVE_DISMOUNT = 0.55;   // el jugador baja y se coloca en la acera
+const LEAVE_BOARD = 0.4;        // el jugador se sube a la moto
+const LEAVE_RIDE = 1.35;        // la moto acelera hasta salir de la pantalla
+const MOUNT_MARGIN = 18;        // a esta distancia del borde de la moto se monta
+const CINE_BAR = 14;            // alto (px internos) de las barras de cine
+const lerp = (a, b, t) => a + (b - a) * t;
 const CORPSE_STEP_RADIUS = 14;  // a esta distancia del centro de un cadáver ya lo pisas
 const MAX_POOLS = 60;           // charcos de baja que se recuerdan para las suelas
 const INTRO_BANNER_TIME = 2.2;
@@ -148,6 +157,14 @@ export class Game {
     // reintentar un piso vuelve a lo que había al entrar y una partida nueva empieza limpia.
     this.gore = 0;
     this.goreAtEntry = 0;
+    // Edificio: el piso empieza en la calle. Al cruzar el umbral (`inside`) se bloquea la puerta
+    // principal hasta despejarlo; `entered` y `entryWeapon` recuerdan ese momento para que R
+    // reaparezca dentro, sin repetir la llegada.
+    this.inside = false;
+    this.entered = false;
+    this.entryWeapon = null;
+    this.cine = null;      // cinemática en curso: { kind: 'arrive' | 'leave', t }
+    this.callout = null;   // aviso grande temporal: { text, color, t }
     this.runId = newRunId();
     this.showRecords = false;
     this.levelIndex = 0;
@@ -273,7 +290,9 @@ export class Game {
     this.levelIndex = index;
     this.score.startLevel();
     this.goreAtEntry = this.gore;
-    this.reset();
+    this.entered = false;
+    this.entryWeapon = null;
+    this.reset({ arrival: true });
     this.openMaskSelect();
   }
 
@@ -289,7 +308,8 @@ export class Game {
 
   confirmMask() {
     this.mask = MASKS[this.maskIndex];
-    this.reset();
+    this.reset({ arrival: true });
+    this.beginArrival();
     this.player.cooldown = 0.3; // que el clic de confirmar no se convierta en un golpe
     this.sfx.play('pickup');
   }
@@ -470,7 +490,9 @@ export class Game {
     this.score.newRun(this.history.best());
     this.gore = this.goreAtEntry = 0;
     this.levelIndex = index;
-    this.reset();
+    this.entered = false;
+    this.entryWeapon = null;
+    this.reset({ arrival: true });
     this.openMaskSelect();
   }
 
@@ -521,32 +543,51 @@ export class Game {
     ctx.fillRect(0, h - y, w, 1);
   }
 
-  reset() {
+  // Reconstruye el piso. Tres casos:
+  //  - `arrival: true`: el piso desde el principio (la selección de máscara y `confirmMask`, que
+  //    después llama a `beginArrival`): el jugador en la acera, sin máscara, y la moto aparcada.
+  //  - Reintento (R) tras haber entrado: reaparece justo dentro, con la máscara puesta, el arma con
+  //    la que cruzó el umbral y la puerta ya bloqueada. R no repite la llegada: tiene que ser instantáneo.
+  //  - Reintento sin haber entrado todavía: otra vez en la acera, sin cinemática.
+  reset({ arrival = false } = {}) {
     // Armas aleatorias con semilla por partida y piso: al reintentar (R) todo sigue en su sitio;
     // en una partida nueva cambian.
     const level = loadLevel(this.levelIndex, seededRandom(hashString(`${this.runId}:${this.levelIndex}`)));
     this.levelName = level.name;
     this.par = level.par;
-    this.exit = level.exit;
     this.map = level.map;
-    this.player = new Player(level.player.x, level.player.y, maskEffects(this.mask), this.mask.id);
+    const retryInside = !arrival && this.entered;
+    const start = retryInside ? level.entry : level.player;
+    this.player = new Player(start.x, start.y, maskEffects(this.mask), this.mask.id, retryInside);
+    this.player.angle = -Math.PI / 2; // mira al edificio
+    if (retryInside) this.player.weapon = this.entryWeapon ? { ...this.entryWeapon } : null;
     this.player.bloodLevel = bloodLevelFor(this.gore);
+    this.spawn = { x: level.player.x, y: level.player.y }; // la acera, junto a la moto
+    this.entry = level.entry;
+    this.bike = { park: { x: level.bike.x, y: level.bike.y }, w: level.bike.w, h: level.bike.h, x: level.bike.x, y: level.bike.y, riding: false };
+    this.inside = retryInside;
+    this.cine = null;
+    this.callout = null;
     this.enemies = level.enemies.map((e) => new Enemy(e.x, e.y, e.patrol,
       e.weapon ? { type: e.weapon, ammo: ENEMY_WEAPONS[e.weapon].dropAmmo } : null));
     this.pickups = level.weapons.map((w) => new Pickup(w.type, w.x, w.y));
-    this.doors = level.doors.map((d) => new Door(d.tx, d.ty, d.horizontal));
+    this.doors = level.doors.map((d) => new Door(d.tx, d.ty, d.horizontal, d.main));
+    this.mainDoor = this.doors.find((d) => d.main);
+    if (retryInside) this.mainDoor.locked = true;
     this.map.doors = this.doors;
     this.bullets = [];
     this.particles.clear();
     this.prints.clear();
     this.pools = [];
-    this.state = 'playing'; // masks (selección) | playing | dead | cleared (ve a la salida) | results
+    // masks (selección) | arriving (llega en moto) | playing (fuera o dentro: ver `inside`) | dead |
+    // cleared (despejado: vuelve a la moto) | leaving (se sube y se va) | results
+    this.state = 'playing';
     this.time = 0;
     this.hitstop = 0;
     this.results = null;
     this.showRecords = false;
     this.bannerTimer = INTRO_BANNER_TIME;
-    this.sfx.setMusic('action');
+    this.sfx.setMusic(retryInside ? 'action' : 'menu'); // la música de combate empieza al entrar
 
     // Las capas estáticas solo se regeneran al cambiar de piso.
     if (this.layersLevel !== this.levelIndex) {
@@ -618,6 +659,11 @@ export class Game {
       return;
     }
 
+    if (this.state === 'arriving' || this.state === 'leaving') {
+      this.updateCine(dt, confirm || input.mousePressed.left);
+      return;
+    }
+
     if (this.hitstop > 0) {
       this.hitstop -= dt;
       // Las teclas globales ya se han procesado arriba: se descartan para no repetirlas.
@@ -626,7 +672,8 @@ export class Game {
     }
 
     this.bannerTimer = Math.max(0, this.bannerTimer - dt);
-    if (this.state === 'playing') this.time += dt;
+    if (this.callout && (this.callout.t -= dt) <= 0) this.callout = null;
+    if (this.state === 'playing' && this.inside) this.time += dt; // el reloj corre dentro del edificio
     this.score.update(dt, this.state === 'playing');
     if (this.player.alive) this.player.update(dt, this);
     for (const e of this.enemies) if (e.alive) e.update(dt, this);
@@ -640,16 +687,19 @@ export class Game {
     this.bullets = this.bullets.filter((b) => b.alive);
     this.pickups = this.pickups.filter((p) => p.alive);
 
-    if (this.state === 'playing' && this.enemies.every((e) => !e.alive)) {
+    // Cruzar el umbral (dos casillas dentro de la puerta principal, ya fuera del barrido de la hoja)
+    // activa el combate: no hay salida hasta despejar el edificio.
+    if (this.state === 'playing' && !this.inside && this.player.alive && this.player.y < this.entry.lockY) this.beginLockdown();
+    if (this.state === 'playing' && this.inside && this.enemies.every((e) => !e.alive)) {
       this.state = 'cleared';
       // Se acabó la adrenalina: `setMusic('empty')` corta la música con el frenazo de cinta y
-      // abre el ambiente del edificio vacío, que acompaña hasta la salida.
+      // abre el ambiente del edificio vacío, que acompaña hasta la moto. La puerta se desbloquea.
       this.sfx.setMusic('empty');
+      this.mainDoor.unlock();
+      this.sfx.play('unlock');
+      this.showCallout('¡EDIFICIO LIMPIO!', COLORS.player);
     }
-    if (this.state === 'cleared' && this.player.alive
-      && Math.floor(this.player.x / TILE) === this.exit.tx && Math.floor(this.player.y / TILE) === this.exit.ty) {
-      this.transition(() => this.finishFloor());
-    }
+    if (this.state === 'cleared' && this.player.alive && this.touchingBike()) this.startLeaving();
 
     let tx = this.player.x, ty = this.player.y;
     if (this.player.alive) {
@@ -673,11 +723,131 @@ export class Game {
     this.camera.update(dt, tx, ty);
   }
 
+  // --- Llegada, bloqueo y fuga en moto ------------------------------------------------------------
+  // Flujo del piso: masks → arriving (llega en moto) → playing fuera → cruza el umbral y el edificio
+  // se bloquea (`inside`) → despeja → cleared (la puerta se abre) → vuelve a la moto → leaving → results.
+
+  // La moto entra desde la izquierda con el jugador encima, frena en su plaza y él baja a la acera.
+  beginArrival() {
+    const b = this.bike, p = this.player;
+    this.state = 'arriving';
+    this.cine = { kind: 'arrive', t: 0 };
+    b.x = BIKE_START_X;
+    b.y = b.park.y;
+    b.riding = true;
+    p.x = b.x - 4;
+    p.y = b.y;
+    p.angle = 0;
+    this.camera.snap(b.x, b.y);
+    this.sfx.play('engine', 1, 'arrive');
+  }
+
+  // Las dos cinemáticas. `skip` (Espacio/Enter/clic/toque) las salta. La cámara sigue a la moto
+  // mientras va montada y al jugador el resto del tiempo.
+  updateCine(dt, skip) {
+    const c = this.cine, b = this.bike, p = this.player;
+    c.t += dt;
+    if (c.kind === 'arrive') {
+      const end = ARRIVE_RIDE + ARRIVE_DISMOUNT;
+      if (skip) c.t = end;
+      if (c.t < ARRIVE_RIDE) {
+        const k = 1 - Math.pow(1 - c.t / ARRIVE_RIDE, 3); // frena suave al llegar
+        b.x = lerp(BIKE_START_X, b.park.x, k);
+        p.x = b.x - 4;
+        p.y = b.y;
+        if (k < 0.92 && Math.random() < 0.5) this.particles.dust(b.x - 24, b.y + rand(-4, 4), 1);
+      } else if (c.t < end) {
+        const k = (c.t - ARRIVE_RIDE) / ARRIVE_DISMOUNT, e = k * k * (3 - 2 * k);
+        b.x = b.park.x;
+        b.riding = false;
+        p.x = lerp(b.park.x - 4, this.spawn.x, e);
+        p.y = lerp(b.park.y, this.spawn.y, e);
+        p.angle = (-Math.PI / 2) * e;
+      } else {
+        b.x = b.park.x;
+        b.riding = false;
+        p.x = this.spawn.x;
+        p.y = this.spawn.y;
+        p.angle = -Math.PI / 2;
+        this.cine = null;
+        this.state = 'playing';
+        this.bannerTimer = INTRO_BANNER_TIME;
+      }
+    } else {
+      if (skip) { this.finishLeaving(); return; }
+      if (c.t < LEAVE_BOARD) {
+        const k = c.t / LEAVE_BOARD, e = k * k * (3 - 2 * k);
+        p.x = lerp(c.from.x, b.park.x - 4, e);
+        p.y = lerp(c.from.y, b.park.y, e);
+        p.angle = c.from.angle + angleDiff(0, c.from.angle) * e;
+      } else {
+        const t2 = c.t - LEAVE_BOARD;
+        const accel = (2 * (this.map.pixelW + 120 - b.park.x)) / (LEAVE_RIDE * LEAVE_RIDE);
+        b.riding = true;
+        b.x = b.park.x + 0.5 * accel * t2 * t2;
+        p.x = b.x - 4;
+        p.y = b.y;
+        p.angle = 0;
+        if (Math.random() < 0.6) this.particles.dust(b.x - 24, b.y + rand(-4, 4), 1);
+        if (t2 >= LEAVE_RIDE) { this.finishLeaving(); return; }
+      }
+    }
+    const follow = b.riding ? b : p;
+    this.camera.update(dt, follow.x, follow.y);
+    this.particles.update(dt, this.map, (kind, pt) => this.bake(kind, pt));
+  }
+
+  // ¿Toca el jugador la moto? Se monta al rozar su borde (es un mueble sólido: no se la puede pisar).
+  touchingBike() {
+    const b = this.bike, p = this.player;
+    return Math.abs(p.x - b.park.x) < b.w / 2 + p.r + MOUNT_MARGIN && Math.abs(p.y - b.park.y) < b.h / 2 + p.r + MOUNT_MARGIN;
+  }
+
+  // Edificio despejado y de vuelta en la moto: se sube y se va; al salir de la pantalla, los resultados.
+  startLeaving() {
+    const p = this.player;
+    this.state = 'leaving';
+    this.cine = { kind: 'leave', t: 0, from: { x: p.x, y: p.y, angle: p.angle } };
+    this.sfx.play('engine', 1, 'leave');
+  }
+
+  finishLeaving() {
+    this.cine = null;
+    this.transition(() => this.finishFloor());
+  }
+
+  // El jugador cruzó el umbral: se pone la máscara, la puerta principal se cierra de golpe y se
+  // bloquea (el portazo y los efectos llegan cuando acaba de cerrarse: `slamEffects`) y empieza el
+  // combate. Se anota el arma con la que entra para que R reaparezca igual.
+  beginLockdown() {
+    const p = this.player;
+    this.inside = true;
+    this.entered = true;
+    p.putOnMask(this);
+    this.entryWeapon = p.weapon ? { type: p.weapon.type, ammo: p.weapon.ammo } : null;
+    this.mainDoor.lock();
+    this.sfx.setMusic('action');
+  }
+
+  slamEffects(door) {
+    this.playAt('lockdown', door.cx, door.cy);
+    this.particles.dust(door.cx, door.cy, 10);
+    this.particles.sparks(door.cx, door.cy, -Math.PI / 2, 12, 1.2);
+    this.camera.addShake(8);
+    this.fx.kick(0.8);
+    this.showCallout('SALIDAS BLOQUEADAS', COLORS.blood);
+  }
+
+  showCallout(text, color, seconds = 2.4) {
+    this.callout = { text, color, t: seconds, max: seconds };
+  }
+
   // Puertas: primero los enemigos y AL FINAL el jugador, que tiene prioridad absoluta: su empujón
   // impone el giro (y bloquea la puerta), así que un enemigo nunca le gana ni le empuja.
   updateDoors(dt) {
     for (const door of this.doors) {
       door.update(dt);
+      if (door.slammed) { door.slammed = false; this.slamEffects(door); }
       for (const e of this.enemies) {
         if (!e.standing) continue;
         const hit = door.collide(e, this.map, { pushSpeed: ENEMY_PUSH_SPEED, canPush: () => e.doorContact() });
@@ -878,6 +1048,13 @@ export class Game {
       if (d < bestDist) { best = door; bestDist = d; }
     }
     if (!best) return false;
+    if (best.locked || best.closing) {
+      // Bloqueada: no cede. Un golpe sordo y nada más.
+      this.camera.addShake(1.5);
+      this.particles.dust(best.cx, best.cy, 4);
+      this.sfx.play('empty');
+      return true;
+    }
     best.kick(player.x, player.y);
     this.particles.dust(best.cx, best.cy, 8);
     this.camera.addShake(3);
@@ -1084,7 +1261,8 @@ export class Game {
     ctx.drawImage(this.floorLayer, 0, 0, pixelW, pixelH);
     ctx.drawImage(this.bloodLayer, 0, 0, pixelW, pixelH);
     this.prints.draw(ctx); // sobre baldosas y sangre, bajo todo lo demás
-    if (this.state === 'cleared') this.drawExit(ctx);
+    this.drawBike(ctx);
+    this.drawObjectiveMarker(ctx);
     this.particles.drawGround(ctx);
     // Muebles sobre la sangre (lo que cae debajo queda oculto) y bajo los personajes.
     ctx.drawImage(this.propsLayer, 0, 0, pixelW, pixelH);
@@ -1094,7 +1272,7 @@ export class Game {
     for (const b of this.bullets) b.draw(ctx);
     for (const e of this.enemies) if (e.standing) e.draw(ctx, this.time, this);
     if (this.player.alive) {
-      this.player.drawAim(ctx, this);
+      if (this.state === 'playing' || this.state === 'cleared') this.player.drawAim(ctx, this);
       this.player.draw(ctx);
     }
     this.particles.draw(ctx);
@@ -1118,26 +1296,45 @@ export class Game {
   }
 
   // Casilla de salida parpadeante + flecha alrededor del jugador apuntando hacia ella.
-  drawExit(ctx) {
-    const ex = this.exit;
+  // La moto: sombra y sprite. Va montada por el jugador en la llegada y la fuga (el jugador se
+  // dibuja encima, con las demás figuras); el resto del tiempo está aparcada en su plaza.
+  drawBike(ctx) {
+    const b = this.bike;
+    if (!b) return;
+    drawSprite(ctx, 'bikeShadow', b.x + 3, b.y + 3, 0, { alpha: 0.5 });
+    drawSprite(ctx, 'bike', b.x, b.y, 0);
+  }
+
+  // Marco neón con flecha hacia lo que toca hacer: entrar por la puerta principal (fuera, antes de
+  // cruzar el umbral) y, ya despejado el edificio, volver a la moto.
+  drawObjectiveMarker(ctx) {
+    const p = this.player;
+    if (!p.alive || !this.mainDoor) return;
+    let r = null;
+    if (this.state === 'playing' && !this.inside) {
+      const d = this.mainDoor;
+      r = { x: d.cx - TILE / 2, y: d.cy - TILE / 2, w: TILE, h: TILE, label: 'ENTRADA', below: true };
+    } else if (this.state === 'cleared') {
+      const b = this.bike;
+      r = { x: b.park.x - b.w / 2, y: b.park.y - b.h / 2, w: b.w, h: b.h, label: 'MOTO', below: false };
+    }
+    if (!r) return;
     const blink = Math.floor(performance.now() / 250) % 2 === 0;
-    const x0 = ex.tx * TILE, y0 = ex.ty * TILE;
     ctx.save();
     ctx.fillStyle = COLORS.player;
     ctx.globalAlpha = blink ? 0.4 : 0.2;
-    ctx.fillRect(x0, y0, TILE, TILE);
+    ctx.fillRect(r.x, r.y, r.w, r.h);
     ctx.globalAlpha = 1;
-    // Marco de 1 píxel con esquinas marcadas.
-    ctx.fillRect(x0, y0, TILE, WORLD_PX);
-    ctx.fillRect(x0, y0 + TILE - WORLD_PX, TILE, WORLD_PX);
-    ctx.fillRect(x0, y0, WORLD_PX, TILE);
-    ctx.fillRect(x0 + TILE - WORLD_PX, y0, WORLD_PX, TILE);
+    // Marco de 1 píxel.
+    ctx.fillRect(r.x, r.y, r.w, WORLD_PX);
+    ctx.fillRect(r.x, r.y + r.h - WORLD_PX, r.w, WORLD_PX);
+    ctx.fillRect(r.x, r.y, WORLD_PX, r.h);
+    ctx.fillRect(r.x + r.w - WORLD_PX, r.y, WORLD_PX, r.h);
     ctx.restore();
-    drawText(ctx, 'SALIDA', ex.x, y0 - CELL_H * WORLD_PX - 2, { color: COLORS.player, scale: WORLD_PX, align: 'center' });
-
-    const p = this.player;
-    if (p.alive && Math.hypot(ex.x - p.x, ex.y - p.y) > 60) {
-      const a = Math.atan2(ex.y - p.y, ex.x - p.x);
+    const cx = r.x + r.w / 2, cy = r.y + r.h / 2;
+    drawText(ctx, r.label, cx, r.below ? r.y + r.h + 4 : r.y - CELL_H * WORLD_PX - 2, { color: COLORS.player, scale: WORLD_PX, align: 'center' });
+    if (Math.hypot(cx - p.x, cy - p.y) > 60) {
+      const a = Math.atan2(cy - p.y, cx - p.x);
       drawSprite(ctx, 'arrow', p.x + Math.cos(a) * 30, p.y + Math.sin(a) * 30, a);
     }
   }
@@ -1479,7 +1676,9 @@ export class Game {
     // Miniatura de la máscara equipada (12×12 a ×2) con su nombre.
     ctx.fillStyle = '#140a24';
     ctx.fillRect(L - 1, 24 + T, 26, 26);
+    ctx.globalAlpha = p.masked ? 1 : 0.4; // en la mano todavía: se apaga hasta ponérsela
     ctx.drawImage(maskIcon(this.mask), L, 25 + T, 24, 24);
+    ctx.globalAlpha = 1;
     drawText(ctx, this.mask.name, L + 28, 25 + T, { color: '#9d8fb8' });
     // Brutalidad: una gota por nivel de sangre que lleva el personaje.
     for (let i = 0; i < BLOOD_LEVELS; i++) {
@@ -1507,7 +1706,7 @@ export class Game {
 
     if (this.debug) {
       drawText(ctx, `DEBUG · ${this.fps} FPS · BALAS ${this.bullets.length} · PART ${this.particles.list.length} · CASQ ${this.particles.shells.length}`, L, 54 + T, { color: COLORS.debug });
-      drawText(ctx, `ESCENA ${w}X${h} · ESCALA ${this.view.scale} · MÁSCARA ${this.mask.id} · MANCHAS ${this.stains} · SANGRE ${this.player.bloodLevel} (${this.gore.toFixed(1)}) · PISADAS ${this.prints.list.length} · SUELAS ${this.player.soles}`, L, 65 + T, { color: COLORS.debug });
+      drawText(ctx, `ESCENA ${w}X${h} · ESCALA ${this.view.scale} · MÁSCARA ${this.mask.id} · MANCHAS ${this.stains} · SANGRE ${this.player.bloodLevel} (${this.gore.toFixed(1)}) · PISADAS ${this.prints.list.length} · SUELAS ${this.player.soles} · ${this.inside ? 'DENTRO' : 'FUERA'} PUERTA ${this.mainDoor.locked ? 'BLOQUEADA' : this.mainDoor.closing ? 'CERRANDO' : 'LIBRE'}`, L, 65 + T, { color: COLORS.debug });
     }
 
     const cx = Math.round(w / 2);
@@ -1516,10 +1715,26 @@ export class Game {
       drawText(ctx, this.levelName, cx, Math.round(h * 0.28), { color: COLORS.wall, scale: this.fitScale(this.levelName, w - 12), align: 'center' });
       ctx.globalAlpha = 1;
     }
-    if (this.state === 'cleared' && Math.floor(performance.now() / 300) % 3 !== 0) {
-      const msg = '¡PISO DESPEJADO! VE A LA SALIDA';
+    // Objetivo de cada fase (parpadea): entrar y, despejado el edificio, volver a la moto.
+    const goal = this.state === 'cleared' ? '¡EDIFICIO LIMPIO! VUELVE A LA MOTO'
+      : this.state === 'playing' && !this.inside && this.bannerTimer <= 0 ? 'ENTRA AL EDIFICIO' : null;
+    if (goal && Math.floor(performance.now() / 300) % 3 !== 0) {
       // Debajo del bloque de puntuación (termina en y≈67) para no solaparse con él.
-      drawText(ctx, msg, cx, 72 + T, { color: COLORS.player, scale: this.fitScale(msg, w - 12), align: 'center' });
+      drawText(ctx, goal, cx, 72 + T, { color: COLORS.player, scale: this.fitScale(goal, w - 12), align: 'center' });
+    }
+    // Aviso grande temporal (SALIDAS BLOQUEADAS, ¡EDIFICIO LIMPIO!): aparece y se desvanece.
+    if (this.callout) {
+      const c = this.callout;
+      ctx.globalAlpha = Math.min(1, c.t * 2, (c.max - c.t) * 6);
+      drawText(ctx, c.text, cx, Math.round(h * 0.36), { color: c.color, scale: this.fitScale(c.text, w - 12, 2), align: 'center' });
+      ctx.globalAlpha = 1;
+    }
+    // Cinemáticas: barras negras arriba y abajo y cómo saltarlas.
+    if (this.state === 'arriving' || this.state === 'leaving') {
+      ctx.fillStyle = '#05000f';
+      ctx.fillRect(0, 0, w, CINE_BAR);
+      ctx.fillRect(0, h - CINE_BAR, w, CINE_BAR);
+      drawText(ctx, this.hint('ESPACIO · CLIC: SALTAR', 'TOCA: SALTAR'), cx, h - CINE_BAR + 4, { color: '#9d8fb8', align: 'center' });
     }
     if (this.state === 'dead') {
       // En táctil la franja crece para alojar los botones REINTENTAR / TERMINAR / RÉCORDS.

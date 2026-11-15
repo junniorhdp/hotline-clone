@@ -103,6 +103,26 @@ const DEFS = {
     '................',
   ],
   fist: ['.kk.', 'kssk', 'kSSk', '.kk.'],
+  // Moto vista desde arriba, mirando a +X (32×13 px = 64×26 unidades, casi toda su plaza de 2×1
+  // casillas): ruedas con la banda de rodadura clara (si no, el neumático negro desaparece sobre el
+  // asfalto), asiento oscuro, depósito neón, escape, faro y manillar cruzado.
+  bike: [
+    '.....................z..........',
+    '.....................Z..........',
+    '........kkkkkkkkkkkkkkkkk.......',
+    '........kVVVVVVVVkjjjkjjk.......',
+    'kkkkkkk.kVVVVVVVVkLLLkLjkkkkkkkk',
+    'kZZZZZk.kVvvvvvvVkLLLkLjkkZZZZZk',
+    'kzzzzzk.kVvvvvvvVkjjjkjjkZzzzzzk',
+    'kZZZZZk.kVVVVVVVVkjjjkjjkkZZZZZk',
+    'kkkkkkk.kVVVVVVVVkJJJkJJkkkkkkkk',
+    '........kkkkkkkkkkkkkkkkk.......',
+    '..........ZZZZZZZZz..k..........',
+    '..........kkkkkkkk...Z..........',
+    '.....................z..........',
+  ],
+  // Candado de la puerta principal bloqueada (5×5).
+  lock: ['.zzz.', 'z...z', 'rrrrr', 'rrkrr', 'rrrrr'],
   // Bota del pisotón (remate sin arma), mirando a +X: banda cian en el talón, puntera clara.
   boot: ['.kkkkkk.', 'kjZZzzzk', 'kjZZzzzk', 'kjZZzzzk', '.kkkkkk.'],
   // Huella de suela, mirando a +X: talón (2 píxeles) y planta (3×3). 6×3 píxeles = 12×6 unidades.
@@ -133,6 +153,16 @@ const DEFS = {
 // (ojos, nariz, rayas, visor). El color lo pone MASK_SKINS, con los mismos tonos que el retrato
 // del menú (`MASKS` en masks.js) para que se reconozca la misma máscara.
 const MASK_HEADS = {
+  // SIN MÁSCARA (el jugador antes de ponérsela, al llegar en moto): pelo oscuro de arriba y piel en
+  // la frente y la nariz. No es una máscara: no está en MASKS, solo la dibuja `Player`.
+  bare: [
+    '.NMMM...',
+    'NMRMMQ..',
+    'NMMMMOOQ',
+    'NMMMMOOQ',
+    'NMRMMQ..',
+    '.NMMM...',
+  ],
   // NEÓN: gallo. Desde arriba la cresta roja recorre el centro de la cabeza de atrás a delante
   // y el pico ámbar sale en punta por el morro; las plumas claras quedan a los lados.
   neon: [
@@ -186,6 +216,7 @@ const MASK_HEADS = {
 // (desde arriba la cabeza está iluminada) y con contraste alto contra el suelo oscuro y contra
 // la cazadora cian (por eso el visor de NEÓN es magenta y no cian).
 const MASK_SKINS = {
+  bare:     { K: '#0a0a0f', R: '#6b4a75', M: '#3b2440', N: '#24152b', O: '#f1b48a', Q: '#c27a5a' },
   neon:     { K: '#0a0a0f', R: '#ffffff', M: '#ece8ff', N: '#b3abd6', O: '#ffbe0b', Q: '#ff2e55' },
   oso:      { K: '#0a0a0f', R: '#b07545', M: '#8a5530', N: '#5a3418', O: '#d9a878', Q: '#120c06' },
   guepardo: { K: '#0a0a0f', R: '#ffd089', M: '#ffb23f', N: '#c47a1a', O: '#fff1d0', Q: '#3a2006' },
@@ -198,6 +229,7 @@ const MASK_SKINS = {
 // (capucha h/H) y los puños (x), con el color de la máscara. NEÓN es el atuendo clásico, todo cian.
 const HOOD = { h: '#5a5a72', H: '#3a3a4e' };
 const OUTFITS = {
+  bare:     { h: '#05d9e8', H: '#05d9e8', x: '#037f8c' }, // (solo para que exista body_bare; no se usa)
   neon:     { h: '#05d9e8', H: '#05d9e8', x: '#037f8c' },
   oso:      { ...HOOD, x: '#a0693f' },
   guepardo: { ...HOOD, x: '#ff9d2e' },
@@ -364,6 +396,10 @@ const RECOLORS = {
   armedCorpse: ['lying', { b: '#3a2f1a', B: '#241d10', s: '#9a5a40', S: '#6e3c2a' }],
   playerCorpse: ['lying', { b: '#037f8c', B: '#025a63', s: '#9a5a40', S: '#6e3c2a' }],
   // La huella se oscurece al enfriarse: rojo vivo, medio y coagulado.
+  // La puerta principal es cian (abierta) o roja (bloqueada); la sombra de la moto, una silueta oscura.
+  doorMain: ['door', { d: '#9ff6ff', D: '#05d9e8' }],
+  doorLocked: ['door', { d: '#ff2e55', D: '#8a0f2c' }],
+  bikeShadow: ['bike', { k: '#05000f', V: '#05000f', v: '#05000f', j: '#05000f', L: '#05000f', J: '#05000f', Z: '#05000f', z: '#05000f', w: '#05000f' }],
   footMid: ['foot', { r: COLORS.bloodMid }],
   footDark: ['foot', { r: COLORS.bloodDark }],
 };
