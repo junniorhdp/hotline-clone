@@ -109,20 +109,6 @@ const SOUNDS = {
     const f = 520 * Math.pow(2, Math.min(level - 1, 12) / 12);
     s.tone({ type: 'square', from: f, to: f * 1.5, dur: 0.08, gain: 0.08 * v });
   },
-  // Motor de la moto. 'arrive': llega, frena y queda al ralentí; 'leave': acelera y se aleja.
-  engine(s, v, mode = 'arrive') {
-    if (mode === 'arrive') {
-      s.tone({ type: 'sawtooth', from: 48, to: 120, dur: 1.1, gain: 0.16 * v });
-      s.tone({ type: 'sawtooth', from: 120, to: 52, dur: 0.9, gain: 0.14 * v, delay: 1.1 });
-      s.noise({ dur: 1, gain: 0.12 * v, filter: 'lowpass', freq: 500, freqTo: 300, q: 0.8 });
-      s.noise({ dur: 1, gain: 0.1 * v, filter: 'lowpass', freq: 300, freqTo: 200, q: 0.8, delay: 0.9 });
-    } else {
-      s.tone({ type: 'sawtooth', from: 55, to: 240, dur: 1.4, gain: 0.2 * v });
-      s.tone({ type: 'square', from: 110, to: 480, dur: 1.4, gain: 0.05 * v });
-      s.noise({ dur: 1, gain: 0.18 * v, filter: 'lowpass', freq: 300, freqTo: 1800, q: 0.9 });
-      s.noise({ dur: 0.6, gain: 0.16 * v, filter: 'lowpass', freq: 1800, freqTo: 2400, q: 0.9, delay: 0.9 });
-    }
-  },
   // Portazo del bloqueo del edificio: golpe grave y metálico, y tres tonos de alarma.
   lockdown(s, v) {
     s.tone({ type: 'sine', from: 70, to: 28, dur: 0.5, gain: 1 * v });
@@ -183,6 +169,8 @@ export class Sfx {
     this.droneUntil = 0;
     this.staticUntil = 0;
     this.echoAt = 0;
+    this.moto = null;      // voz de la moto en curso (ver playMotoArrival / playMotoDeparture)
+    this.satCurve = null;
     const unlock = () => this.init();
     // En táctil el navegador solo permite arrancar el audio al levantar el dedo (pointerup /
     // touchend), no al tocar; con ratón y teclado basta con pulsar.
@@ -221,6 +209,7 @@ export class Sfx {
   toggleMute() {
     this.muted = !this.muted;
     if (this.master) this.master.gain.value = this.muted ? 0 : MASTER_VOLUME;
+    if (this.muted) this.stopMoto(0.03);
   }
 
   play(name, volume = 1, arg) {
@@ -454,6 +443,184 @@ export class Sfx {
     }
   }
 
+  // --- Moto ---------------------------------------------------------------------------------------
+  // El motor es una VOZ propia, no una primitiva suelta: dura varios segundos, cambia de régimen
+  // todo el rato y hay que poder cortarla limpia si el jugador reinicia (R), salta la cinemática o
+  // silencia (M). Cadena: sierra + triángulo → saturador (WaveShaper: arma armónicos) → paso-bajo
+  // resonante (el cuerpo del sonido; al acelerar se abre) → modulación de amplitud por un LFO
+  // rápido (el pistoneo: ~1/4,5 de las revoluciones) → envolvente → `bus` de la voz. Un ruido grave
+  // filtrado hace de escape. Los chirridos y clics cuelgan del mismo `bus`, así que todo se para
+  // junto con `stopMoto()`. Todas las rampas exponenciales acaban en 0,0001, nunca en 0.
+
+  motoReady() {
+    return !!this.ctx && !this.muted && this.ctx.state === 'running';
+  }
+
+  // Saturación suave y simétrica (sin DC): redondea la sierra y añade armónicos de ataque.
+  saturationCurve() {
+    if (!this.satCurve) {
+      const n = 1024, k = 3.2;
+      this.satCurve = new Float32Array(n);
+      for (let i = 0; i < n; i++) this.satCurve[i] = Math.tanh(k * ((i * 2) / (n - 1) - 1)) / Math.tanh(k);
+    }
+    return this.satCurve;
+  }
+
+  // Programa una curva en un AudioParam: `points` = [[segundos desde t0, valor], ...] con valores > 0
+  // y tiempos crecientes. Entre puntos, rampa exponencial (o lineal si `linear`; en ambos casos el valor
+  // mínimo es 0,0001, nunca 0).
+  motoCurve(param, points, t0, linear = false) {
+    param.setValueAtTime(Math.max(points[0][1], 0.0001), t0 + points[0][0]);
+    for (let i = 1; i < points.length; i++) {
+      const value = Math.max(points[i][1], 0.0001);
+      if (linear) param.linearRampToValueAtTime(value, t0 + points[i][0]);
+      else param.exponentialRampToValueAtTime(value, t0 + points[i][0]);
+    }
+  }
+
+  // Crea la voz de t0 a t0 + dur (en silencio: la envolvente la programa quien la llama). Cuando
+  // acaba la última fuente (`onended`) se desconecta toda la cadena.
+  motoVoice(t0, dur) {
+    const c = this.ctx;
+    const [bus, out, am, mix, lfoDepth, exhaust] = [1, 2, 3, 4, 5, 6].map(() => c.createGain());
+    const filter = c.createBiquadFilter();
+    const exhaustFilter = c.createBiquadFilter();
+    const shaper = c.createWaveShaper();
+    const saw = c.createOscillator(), tri = c.createOscillator(), lfo = c.createOscillator();
+    const noise = c.createBufferSource();
+    bus.gain.value = 1;
+    out.gain.value = 0.0001;
+    am.gain.value = 0.6;         // el LFO la mueve ±lfoDepth alrededor de 0,6 (nunca llega a 0)
+    mix.gain.value = 0.5;
+    lfoDepth.gain.value = 0.4;
+    exhaust.gain.value = 0.0001;
+    filter.type = 'lowpass';
+    filter.Q.value = 7;
+    exhaustFilter.type = 'lowpass';
+    exhaustFilter.frequency.value = 320;
+    shaper.curve = this.saturationCurve();
+    shaper.oversample = '2x';
+    saw.type = 'sawtooth';
+    tri.type = 'triangle';
+    tri.detune.value = 9;
+    lfo.type = 'sine';
+    noise.buffer = this.noiseBuffer;
+    noise.loop = true;
+    saw.connect(mix);
+    tri.connect(mix);
+    mix.connect(shaper);
+    shaper.connect(filter);
+    filter.connect(am);
+    noise.connect(exhaustFilter);
+    exhaustFilter.connect(exhaust);
+    exhaust.connect(am);
+    lfo.connect(lfoDepth);
+    lfoDepth.connect(am.gain);
+    am.connect(out);
+    out.connect(bus);
+    bus.connect(this.master);
+
+    const sources = [saw, tri, lfo, noise];
+    const nodes = [bus, out, am, mix, lfoDepth, exhaust, filter, exhaustFilter, shaper];
+    const voice = { bus, out, filter, saw, tri, lfo, lfoDepth, exhaust, sources, fx: [] };
+    let pending = sources.length;
+    for (const s of sources) {
+      s.onended = () => {
+        if (--pending > 0) return;
+        for (const n of [...sources, ...nodes]) n.disconnect();
+        if (this.moto === voice) this.moto = null;
+      };
+      s.start(t0, s === noise ? Math.random() * 0.5 : 0);
+      s.stop(t0 + dur);
+    }
+    this.moto = voice;
+    return voice;
+  }
+
+  // Frecuencia de giro (Hz) en las tres fuentes: sierra y triángulo siguen la nota y el LFO del
+  // pistoneo va a una fracción de ella.
+  motoPitch(voice, points, t0) {
+    this.motoCurve(voice.saw.frequency, points, t0);
+    this.motoCurve(voice.tri.frequency, points, t0);
+    this.motoCurve(voice.lfo.frequency, points.map(([t, hz]) => [t, Math.max(hz * 0.22, 4)]), t0);
+  }
+
+  // LLEGADA: la moto viene por la calle frenando (las revoluciones siguen su velocidad en pantalla,
+  // (1 - t/ride)²: de ~150 Hz a ~40), chirría un instante sobre el asfalto, queda al ralentí (~42 Hz)
+  // y se apaga con un tosido cuando el jugador baja. `ride` y `dismount` son los de la cinemática.
+  playMotoArrival({ ride = 1.9, dismount = 0.55 } = {}) {
+    if (!this.motoReady()) return;
+    this.stopMoto(0.04);
+    const t0 = this.ctx.currentTime + 0.02, total = ride + dismount;
+    const v = this.motoVoice(t0, total + 0.08);
+    const hz = [];
+    for (let i = 0; i <= 8; i++) hz.push([(ride * i) / 8, 40 + 110 * Math.pow(1 - i / 8, 2)]);
+    hz.push([ride + 0.28, 42], [ride + 0.48, 26]); // ralentí un instante y se apaga: cae de revoluciones
+    this.motoPitch(v, hz, t0);
+    this.motoCurve(v.filter.frequency, [[0, 950], [ride, 420], [ride + 0.28, 380], [total, 180]], t0);
+    this.motoCurve(v.out.gain, [[0, 0.0001], [0.4, 0.34], [ride * 0.6, 0.34], [ride, 0.2], [ride + 0.28, 0.2], [total - 0.02, 0.0001]], t0);
+    this.motoCurve(v.lfoDepth.gain, [[0, 0.3], [ride, 0.5], [total, 0.5]], t0);
+    this.motoCurve(v.exhaust.gain, [[0, 0.0001], [0.4, 0.1], [ride, 0.07], [total - 0.02, 0.0001]], t0);
+    // Frenada: chirrido de la goma sobre el asfalto cuando ya va despacio (dos capas solapadas: una
+    // primitiva decae enseguida y así se sostiene ~0,45 s) y un raspado seco al clavar la rueda.
+    const brake = t0 + ride * 0.6;
+    v.fx.push(this.noise({ dur: 0.36, gain: 0.32, filter: 'bandpass', freq: 3400, freqTo: 1900, q: 9, at: brake, dest: v.bus }));
+    v.fx.push(this.noise({ dur: 0.3, gain: 0.2, filter: 'bandpass', freq: 3000, freqTo: 1700, q: 9, at: brake + 0.14, dest: v.bus }));
+    v.fx.push(this.tone({ type: 'triangle', from: 2900, to: 1500, dur: 0.36, gain: 0.07, at: brake, dest: v.bus }));
+    v.fx.push(this.tone({ type: 'triangle', from: 2500, to: 1400, dur: 0.3, gain: 0.045, at: brake + 0.14, dest: v.bus }));
+    v.fx.push(this.noise({ dur: 0.05, gain: 0.16, filter: 'highpass', freq: 1500, at: brake + 0.3, dest: v.bus }));
+    v.fx.push(this.tone({ type: 'sine', from: 70, to: 30, dur: 0.14, gain: 0.25, at: t0 + ride + 0.3, dest: v.bus })); // el tosido
+  }
+
+  // FUGA: el jugador se sube (`board`): clic de contacto, motor de arranque y el motor prende y queda
+  // al ralentí; la moto arranca (`ride`): acelerón agresivo —las revoluciones suben de golpe a ~160 Hz y
+  // el paso-bajo se abre— con dos cambios de marcha; y mientras sale de la pantalla el volumen cae, el
+  // filtro se cierra y el tono baja (efecto Doppler de alejamiento). `tail` deja que el rastro cubra el
+  // fundido a los resultados: así no se corta de golpe antes de que se aleje.
+  playMotoDeparture({ board = 0.4, ride = 1.35, tail = 0.3 } = {}) {
+    if (!this.motoReady()) return;
+    this.stopMoto(0.04);
+    const t0 = this.ctx.currentTime + 0.02;
+    const L = Math.max(board, 0.42), end = L + ride, total = end + tail; // L = momento en que arranca
+    const v = this.motoVoice(t0, total + 0.08);
+    // 1) Ignición: clic seco de contacto, golpe del arranque y el motor de arranque.
+    v.fx.push(this.noise({ dur: 0.02, gain: 0.4, filter: 'highpass', freq: 1800, at: t0, dest: v.bus }));
+    v.fx.push(this.tone({ type: 'square', from: 150, to: 70, dur: 0.06, gain: 0.22, at: t0, dest: v.bus }));
+    v.fx.push(this.tone({ type: 'sawtooth', from: 55, to: 105, dur: 0.2, gain: 0.08, at: t0 + 0.05, dest: v.bus }));
+    // 2) Ralentí que sube de golpe (con un golpe de gas al subirse) y acelerón con dos cambios de marcha.
+    this.motoPitch(v, [[0, 30], [0.2, 34], [0.28, 44], [0.32, 98], [0.38, 58], [L, 62],
+      [L + 0.22, 160], [L + 0.32, 118], [L + 0.62, 165], [L + 0.72, 126], [end, 160], [total, 140]], t0);
+    this.motoCurve(v.filter.frequency, [[0, 260], [0.3, 320], [L, 380], [L + 0.22, 2600], [L + 0.32, 1800],
+      [L + 0.62, 2800], [L + 0.72, 1900], [end - 0.2, 1400], [end, 700], [total, 220]], t0);
+    // 3) El volumen cae al alejarse y el tono baja ~260 cents (Doppler).
+    this.motoCurve(v.out.gain, [[0, 0.0001], [0.27, 0.2], [L, 0.26], [L + 0.22, 0.5], [L + 0.62, 0.52],
+      [end - 0.35, 0.4], [end, 0.12], [total - 0.01, 0.0001]], t0);
+    this.motoCurve(v.lfoDepth.gain, [[0, 0.5], [L + 0.22, 0.2], [end, 0.12], [total, 0.1]], t0);
+    this.motoCurve(v.exhaust.gain, [[0, 0.0001], [0.27, 0.08], [L + 0.22, 0.16], [end, 0.05], [total - 0.01, 0.0001]], t0);
+    for (const osc of [v.saw, v.tri]) {
+      const base = osc === v.tri ? 9 : 0;
+      osc.detune.setValueAtTime(base, t0 + L + 0.7);
+      osc.detune.linearRampToValueAtTime(base - 260, t0 + total);
+    }
+  }
+
+  // Corta la voz de la moto y todo lo que cuelga de su bus: reinicio con R, cinemática saltada, nueva
+  // llegada o silencio con M. Cae en `fade` s por una rampa exponencial a 0,0001, no de golpe.
+  stopMoto(fade = 0.06) {
+    const v = this.moto;
+    if (!v || !this.ctx) return;
+    this.moto = null;
+    const t = this.ctx.currentTime;
+    v.bus.gain.cancelScheduledValues(t);
+    v.bus.gain.setValueAtTime(Math.max(v.bus.gain.value, 0.0001), t);
+    v.bus.gain.exponentialRampToValueAtTime(0.0001, t + fade);
+    // Las fuentes del motor paran con el fundido; los sonidos puntuales que aún no han empezado
+    // (el chirrido, el tosido...) arrancan y paran a la vez en su hora, sin sonar, y se limpian solos.
+    for (const s of [...v.sources, ...v.fx]) {
+      try { s.stop(Math.max(t + fade + 0.02, s.startAt ?? 0)); } catch { /* ya había acabado */ }
+    }
+  }
+
   // --- Primitivas -----------------------------------------------------------
   // `at` = instante absoluto en el reloj de audio (música); si no, ahora + delay.
 
@@ -467,8 +634,11 @@ export class Sfx {
     g.gain.setValueAtTime(gain, t);
     g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
     osc.connect(g).connect(dest || this.master);
+    osc.onended = () => { osc.disconnect(); g.disconnect(); };
+    osc.startAt = t;
     osc.start(t);
     osc.stop(t + dur + 0.02);
+    return osc;
   }
 
   noise({ dur, gain = 0.3, filter = 'lowpass', freq = 1000, freqTo = freq, q = 1, delay = 0, at, dest }) {
@@ -484,7 +654,10 @@ export class Sfx {
     g.gain.setValueAtTime(gain, t);
     g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
     src.connect(f).connect(g).connect(dest || this.master);
+    src.onended = () => { src.disconnect(); f.disconnect(); g.disconnect(); };
+    src.startAt = t;
     src.start(t, Math.random() * 0.5);
     src.stop(t + dur + 0.02);
+    return src;
   }
 }

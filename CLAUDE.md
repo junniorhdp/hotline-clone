@@ -108,8 +108,8 @@ Cada piso empieza **en la calle**, no dentro. El ciclo (`game.js`) es:
    vacío (ya existente); la puerta se **desbloquea y se abre** (`Door.unlock()`, sonido `unlock`) y
    sale el aviso `¡EDIFICIO LIMPIO!`. El marco pasa a la moto (`MOTO`).
 5. **Fuga** (`state 'leaving'`): al **rozar la moto** (`touchingBike`: su borde + `MOUNT_MARGIN`) el
-   jugador se sube (0,4 s) y la moto acelera hasta salir de la pantalla (1,35 s) con polvo y motor
-   (`engine`); después fundido y resultados (`finishFloor`). También se puede saltar con
+   jugador se sube (0,4 s) y la moto acelera hasta salir de la pantalla (1,35 s) con polvo y el motor
+   (`playMotoDeparture`, ver "La moto"); después fundido y resultados (`finishFloor`). También se puede saltar con
    Espacio/clic. **El piso solo se completa así**: no basta con limpiar el edificio.
 
 - **Reintento (`R`) sigue siendo instantáneo y no repite la llegada** (`reset()` sin opciones):
@@ -122,8 +122,8 @@ Cada piso empieza **en la calle**, no dentro. El ciclo (`game.js`) es:
 - **Cámara**: sigue a la moto mientras va montada y al jugador el resto; `camera.snap` al empezar la
   llegada. Las cinemáticas no usan la entrada salvo para saltarse.
 - **Música/sonido**: llegada y fuera `menu` → bloqueo `action` (+ `lockdown`) → despejado `empty`
-  (+ `unlock`) → fuga `engine`. SFX nuevos en `audio.js`: `engine('arrive'|'leave')`, `lockdown`,
-  `maskOn`, `unlock`.
+  (+ `unlock`) → fuga con el motor de la moto (`playMotoArrival` al llegar, `playMotoDeparture` al subirse).
+  SFX nuevos en `audio.js`: `lockdown`, `maskOn`, `unlock` y las voces de la moto.
 - **Mapas**: cada piso lleva al sur un exterior (ver "Diseño de niveles"). La leyenda cambia: ya no
   hay `X`; `N` = puerta principal y la moto es el mueble sólido `bike` (2×1 casillas).
 
@@ -371,6 +371,42 @@ Pisar sangre fresca mancha las suelas y al andar se dejan huellas rojas que se v
   arranca del valor real (cambiar de piso o reiniciar a toda prisa no debe cruzar
   automatizaciones); nunca una rampa exponencial a 0 (mínimo 0,0001); y `setMusic` antes del
   primer gesto del usuario solo guarda el modo, que `init()` aplica al crear el contexto.
+- **Limpieza de nodos**: toda fuente lleva `onended` que desconecta lo suyo (`tone` y `noise` lo hacen
+  y devuelven su fuente con `startAt`; `motoVoice` desconecta toda la cadena al acabar la última). Lo
+  que dure más de un instante y pueda cancelarse (la moto) es una **voz con `stop…()`** que se llama
+  desde `reset()` (R, piso nuevo), al saltar una cinemática y con `M`; al cortarla caen a 0,0001 en
+  unos ms y los sonidos puntuales aún por empezar arrancan y paran a la vez, sin sonar. En silencio
+  (`M`) no se crea ningún nodo nuevo.
+
+### La moto (`playMotoArrival` / `playMotoDeparture` / `stopMoto`)
+El motor es una **voz propia** de `Sfx` (`motoVoice`), no un efecto de `SOUNDS`: dura varios segundos,
+cambia de régimen todo el rato y se tiene que poder cortar limpia. Es Web Audio puro, sin archivos.
+- **Cadena**: sierra + triángulo (45-165 Hz; el triángulo desafinado +9 cents) → `WaveShaper` tanh
+  (`saturationCurve`, simétrico: sin DC) → paso-bajo resonante (Q 7; su frecuencia es el "cuerpo" y se abre
+  al acelerar) → **modulación de amplitud por un LFO** (el pistoneo, a `0,22 ×` las revoluciones,
+  profundidad variable) → envolvente `out` → `bus` de la voz → master. Un ruido grave filtrado hace de
+  escape. Los chirridos y clics cuelgan del mismo `bus` (`v.fx`), así que se paran con la voz.
+- **Llegada** (`beginArrival`, `playMotoArrival({ ride, dismount })`, 2,45 s): las revoluciones siguen la
+  velocidad de la moto en pantalla —(1 − t/ride)²: 150 → 40 Hz—; chirrido de goma sobre el asfalto
+  (dos capas solapadas, ~0,45 s) y raspado seco al clavar; ralentí en ~41 Hz; al bajar el jugador se
+  apaga (tosido grave, cae a ~26 Hz) y calla.
+- **Fuga** (`startLeaving`, `playMotoDeparture({ board, ride, tail })`, 0,4 + 1,35 + 0,3 s): 1) clic de
+  contacto, golpe del arranque y motor de arranque; 2) ralentí (~41 Hz) con un golpe de gas y, al
+  arrancar la moto, **acelerón**: 62 → 160 Hz en 0,22 s con el filtro abriéndose a ~2,6 kHz y dos cambios
+  de marcha; 3) al salir de la pantalla el volumen cae, el filtro se cierra y el tono baja ~260 cents
+  (Doppler de alejamiento). El `tail` (0,3 s) cubre el fundido (`FADE_TIME` 0,25 s): la voz sigue
+  sonando al llegar a resultados, ya en −80 dBFS, y se libera sola; no se corta de golpe.
+- **Cortes** (`stopMoto(fade)`: rampa exponencial a 0,0001 y para fuentes y sonidos puntuales ya
+  programados): `reset()` (R, piso nuevo, nueva partida: 0,05 s), saltar la llegada (0,12 s) o la fuga
+  (0,2 s), `toggleMute` (0,03 s) y cualquier nueva `playMoto…` (0,04 s). En silencio o con el contexto
+  suspendido (`motoReady`) no se crea ningún nodo.
+- **Medido** (render offline en el navegador, `OfflineAudioContext`): pico 0,31 (llegada) y 0,37 (fuga),
+  sin saturación ni NaN; el tono sigue las curvas previstas (llegada 108 → 91 → 76 → 64 → 54 → 47 → 43 →
+  41 Hz; fuga 41 → 149 → 162 → 128 Hz) y el brillo de la fuga sube de ~190 a ~1440 Hz y baja a ~170 Hz.
+  Balance: el acelerón queda ~6 dB sobre el ambiente vacío (cuya energía es casi toda sub-grave) y
+  la llegada ~9-11 dB sobre la música tranquila; el ambiente recupera el protagonismo al irse la moto.
+  Si se retocan las curvas, repetir esa medición y el banco de pruebas (Web Audio simulada estricta:
+  rampas a ≤ 0, nodos sin desconectar tras 80 inicios/cortes rápidos).
 
 ## Mecánicas de combate
 - Daño: todo es de un golpe. Lo que cambia es el efecto: **matar** o **derribar** (estado `down`

@@ -552,6 +552,7 @@ export class Game {
   reset({ arrival = false } = {}) {
     // Armas aleatorias con semilla por partida y piso: al reintentar (R) todo sigue en su sitio;
     // en una partida nueva cambian.
+    this.sfx.stopMoto(0.05); // R, piso nuevo...: si la moto sonaba, se corta limpia
     const level = loadLevel(this.levelIndex, seededRandom(hashString(`${this.runId}:${this.levelIndex}`)));
     this.levelName = level.name;
     this.par = level.par;
@@ -739,7 +740,7 @@ export class Game {
     p.y = b.y;
     p.angle = 0;
     this.camera.snap(b.x, b.y);
-    this.sfx.play('engine', 1, 'arrive');
+    this.sfx.playMotoArrival({ ride: ARRIVE_RIDE, dismount: ARRIVE_DISMOUNT });
   }
 
   // Las dos cinemáticas. `skip` (Espacio/Enter/clic/toque) las salta. La cámara sigue a la moto
@@ -749,7 +750,10 @@ export class Game {
     c.t += dt;
     if (c.kind === 'arrive') {
       const end = ARRIVE_RIDE + ARRIVE_DISMOUNT;
-      if (skip) c.t = end;
+      if (skip && c.t < end) {
+        this.sfx.stopMoto(0.12);
+        c.t = end;
+      }
       if (c.t < ARRIVE_RIDE) {
         const k = 1 - Math.pow(1 - c.t / ARRIVE_RIDE, 3); // frena suave al llegar
         b.x = lerp(BIKE_START_X, b.park.x, k);
@@ -774,7 +778,11 @@ export class Game {
         this.bannerTimer = INTRO_BANNER_TIME;
       }
     } else {
-      if (skip) { this.finishLeaving(); return; }
+      if (skip) {
+        this.sfx.stopMoto(0.2); // sin esperar a que se aleje: directo a resultados
+        this.finishLeaving();
+        return;
+      }
       if (c.t < LEAVE_BOARD) {
         const k = c.t / LEAVE_BOARD, e = k * k * (3 - 2 * k);
         p.x = lerp(c.from.x, b.park.x - 4, e);
@@ -808,7 +816,7 @@ export class Game {
     const p = this.player;
     this.state = 'leaving';
     this.cine = { kind: 'leave', t: 0, from: { x: p.x, y: p.y, angle: p.angle } };
-    this.sfx.play('engine', 1, 'leave');
+    this.sfx.playMotoDeparture({ board: LEAVE_BOARD, ride: LEAVE_RIDE });
   }
 
   finishLeaving() {
