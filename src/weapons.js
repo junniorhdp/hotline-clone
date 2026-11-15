@@ -48,9 +48,9 @@ export function segmentPointDistance(x0, y0, x1, y1, px, py) {
 // Píxel del sprite que hace de empuñadura (el resto del arma se extiende hacia +X).
 const GRIP = { bat: [1, 1], gun: [1, 2], shotgun: [3, 1], knife: [1, 1], pipe: [1, 1], smg: [1, 1] };
 
-export function drawWeaponShape(ctx, type, x, y, angle, dim = false) {
+export function drawWeaponShape(ctx, type, x, y, angle, dim = false, scale = WORLD_PX) {
   const [ox, oy] = GRIP[type];
-  drawSprite(ctx, type, x, y, angle, { ox, oy, alpha: dim ? 0.45 : 1 });
+  drawSprite(ctx, type, x, y, angle, { ox, oy, alpha: dim ? 0.45 : 1, scale });
 }
 
 // Arma en el suelo o volando tras ser lanzada.

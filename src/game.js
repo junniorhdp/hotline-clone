@@ -6,14 +6,14 @@ import { MASKS, maskEffects, maskIcon } from './masks.js';
 import { ScoreHistory, FloorStats, MAX_ENTRIES, newRunId, formatDate } from './scores-history.js';
 import { Menu } from './menu.js';
 import { TouchControls } from './touch.js';
-import { Player, bloodLevelFor } from './player.js';
+import { Player, bloodLevelFor, FINISH_RANGE, EXEC_HIT } from './player.js';
 import { Enemy } from './enemy.js';
 import { Door, ENEMY_PUSH_SPEED } from './doors.js';
 import { Pickup, Bullet, ENEMY_WEAPONS, segmentPointDistance } from './weapons.js';
 import { Particles, Footprints, GIB_COLORS } from './particles.js';
 import { Sfx } from './audio.js';
 import { ScreenFx } from './effects.js';
-import { drawSprite, pixelDisc, BLOOD_LEVELS, WORLD_PX } from './sprites.js';
+import { drawSprite, pixelDisc, pixelRect, BLOOD_LEVELS, WORLD_PX } from './sprites.js';
 import { drawText, measureText, CELL_H } from './pixelfont.js';
 import { COLORS, TAU, rand, clamp, closestOnSegment, seededRandom, hashString } from './utils.js';
 
@@ -40,7 +40,7 @@ const COARSE_POINTER = window.matchMedia?.('(pointer: coarse)').matches ?? false
 
 // Hit-stop: segundos que se congela la simulación en cada tipo de impacto. Las bajas cuerpo a
 // cuerpo y los remates (40-60 ms) se notan más que un disparo.
-const HITSTOP = { kill: 0.05, melee: 0.055, finisher: 0.06, knock: 0.035, doorKnock: 0.07, playerDeath: 0.12 };
+const HITSTOP = { kill: 0.05, melee: 0.055, execution: 0.07, knock: 0.035, doorKnock: 0.07, playerDeath: 0.12 };
 // Cómo se siente cada tipo de baja: `power` = cantidad de sangre y restos, `wide` = semiapertura
 // del salpicado (rad; π = en todas direcciones), `shake` = sacudida de cámara, `stop` = hit-stop
 // y `fx` = patada del CRT. Un disparo sale en cono estrecho; la melé abre el arco; el remate
@@ -48,7 +48,9 @@ const HITSTOP = { kill: 0.05, melee: 0.055, finisher: 0.06, knock: 0.035, doorKn
 const KILL_FEEL = {
   bullet: { power: 1, wide: 0.55, shake: 7, stop: HITSTOP.kill, fx: 0.45 },
   melee: { power: 1.35, wide: 0.9, shake: 10, stop: HITSTOP.melee, fx: 0.65 },
-  finisher: { power: 1.7, wide: Math.PI, shake: 12, stop: HITSTOP.finisher, fx: 0.8 },
+  // Ejecución de un derribado: el charco más grande, el salpicado más abierto y la sacudida más
+  // fuerte del juego. Hacia donde va el golpe (de jugador a enemigo) sale lo más denso.
+  execution: { power: 2.2, wide: 1.3, shake: 14, stop: HITSTOP.execution, fx: 1 },
 };
 const CORPSE_STEP_RADIUS = 14;  // a esta distancia del centro de un cadáver ya lo pisas
 const MAX_POOLS = 60;           // charcos de baja que se recuerdan para las suelas
@@ -803,7 +805,8 @@ export class Game {
     this.camera.addShake(feel.shake);
     this.fx.kick(feel.fx);
     this.hitstop = Math.max(this.hitstop, feel.stop);
-    this.sfx.play('hit', cause === 'finisher' ? 1 : 0.85);
+    if (cause === 'execution') this.sfx.play('crunch');
+    else this.sfx.play('hit', 0.85);
   }
 
   // Cada baja salpica al jugador: la sangre acumulada sube con la fuerza del golpe (más en melé y
@@ -855,6 +858,7 @@ export class Game {
     if (this.state !== 'playing' || !this.player.alive) return;
     const p = this.player;
     p.alive = false;
+    p.cancelExecution(); // si lo matan a mitad de un remate, el derribado no se queda congelado
     this.state = 'dead';
     this.bleed(p.x, p.y, angle, 1.3, 0.7);
     this.drawCorpse(p.x, p.y, angle, 'playerCorpse');
@@ -1085,6 +1089,7 @@ export class Game {
     // Muebles sobre la sangre (lo que cae debajo queda oculto) y bajo los personajes.
     ctx.drawImage(this.propsLayer, 0, 0, pixelW, pixelH);
     for (const e of this.enemies) if (e.alive && e.state === 'down') e.draw(ctx, this.time, this);
+    this.drawExecuteMarks(ctx);
     for (const p of this.pickups) p.draw(ctx, this.time);
     for (const b of this.bullets) b.draw(ctx);
     for (const e of this.enemies) if (e.standing) e.draw(ctx, this.time, this);
@@ -1148,6 +1153,47 @@ export class Game {
   }
 
   // --- HUD (en píxeles internos, todo con la fuente bitmap) -----------------------------
+
+  // Marca de remate: corchetes neón rojo/blanco sobre el derribado al que se va a golpear (los demás
+  // derribados al alcance, más tenues). Parpadean más rápido cuando está a punto de levantarse y,
+  // durante la ejecución, se cierran sobre él al ritmo de la carga. Es el mismo objetivo que elige
+  // `player.executionTarget`, así que lo marcado es exactamente a quien se golpea.
+  drawExecuteMarks(ctx) {
+    const p = this.player;
+    if (!p.alive || this.state === 'dead') return;
+    const target = p.exec ? p.exec.target : p.executionTarget(this);
+    const now = performance.now();
+    ctx.save();
+    for (const e of this.enemies) {
+      if (!e.alive || e.state !== 'down') continue;
+      const isTarget = e === target;
+      if (!isTarget && Math.hypot(e.x - p.x, e.y - p.y) - e.r >= FINISH_RANGE) continue;
+      const urgent = e.timer < 0.9 && !e.executing;
+      const blink = Math.floor(now / (urgent ? 70 : 130)) % 2;
+      const executing = p.exec && p.exec.target === e;
+      const half = executing ? 14 - 8 * Math.min(1, p.exec.t / EXEC_HIT) : 13 + blink;
+      ctx.globalAlpha = isTarget ? 1 : 0.4;
+      ctx.fillStyle = executing && p.exec.hit ? '#ffffff' : blink ? COLORS.text : COLORS.enemyBullet;
+      const x0 = e.x - half, x1 = e.x + half, y0 = e.y - half, y1 = e.y + half;
+      pixelRect(ctx, x0, y0, 3, 1); pixelRect(ctx, x0, y0, 1, 3);
+      pixelRect(ctx, x1 - 6, y0, 3, 1); pixelRect(ctx, x1 - 2, y0, 1, 3);
+      pixelRect(ctx, x0, y1 - 2, 3, 1); pixelRect(ctx, x0, y1 - 6, 1, 3);
+      pixelRect(ctx, x1 - 6, y1 - 2, 3, 1); pixelRect(ctx, x1 - 2, y1 - 6, 1, 3);
+    }
+    ctx.restore();
+  }
+
+  // La etiqueta de la tecla sobre el derribado al que se va a golpear (en la escena, no en el mundo,
+  // para que el texto salga nítido).
+  drawExecutePrompt(ctx) {
+    const p = this.player;
+    if (!p.alive || p.exec || this.state === 'dead') return;
+    const e = p.executionTarget(this);
+    if (!e) return;
+    const s = this.camera.worldToScreen(e.x, e.y + 22); // debajo: los popups de puntos flotan por encima
+    const blink = Math.floor(performance.now() / 130) % 2;
+    drawText(ctx, this.hint('E · CLIC', 'ATACAR'), s.x, s.y, { color: blink ? COLORS.text : COLORS.enemyBullet, align: 'center' });
+  }
 
   drawPopups(ctx) {
     for (const pop of this.score.popups) {
@@ -1422,6 +1468,7 @@ export class Game {
       return;
     }
     this.drawPopups(ctx);
+    this.drawExecutePrompt(ctx);
 
     // Márgenes del HUD: separación fija + zona segura (muesca / esquinas redondeadas).
     const L = 6 + this.safe.l, R = w - 6 - this.safe.r, T = this.safe.t;

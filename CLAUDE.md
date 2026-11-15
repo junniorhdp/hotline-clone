@@ -24,9 +24,10 @@ HTML5 Canvas, JavaScript Vanilla (ES Modules) y Vite. Sin frameworks ni librerí
   - `game.js` — game loop, cámara, hit-stop, estado global, colisiones entre entidades
     (balas, armas lanzadas, puertas), muertes/derribos (`killEnemy` → `bleed`: sangre permanente en
     suelo y paredes), render de la escena y HUD.
-  - `player.js` — movimiento, apuntado, ataque, remate, patada, recoger/lanzar armas, nivel de
-    sangre del personaje y suelas manchadas (huellas).
-  - `enemy.js` — IA de enemigos (patrulla, visión, persecución, búsqueda, derribado) y tipo armado.
+  - `player.js` — movimiento, apuntado, ataque, ejecución de derribados, patada, recoger/lanzar
+    armas, nivel de sangre del personaje y suelas manchadas (huellas).
+  - `enemy.js` — IA de enemigos (patrulla, visión, persecución, búsqueda, derribado, `executing`
+    mientras los rematan) y tipo armado.
   - `doors.js` — puertas batientes: física de la hoja, empuje, patada y derribo.
   - `map.js` — tilemap, colisiones AABB con sliding, raycast/línea de visión (paredes + puertas),
     pathfinding BFS, pisos (`LEVELS`), zonas de suelo y muebles sólidos en la cuadrícula.
@@ -229,7 +230,7 @@ siguiente piso (`goToLevel`) … tras el último → `gameover` → `menu` o par
 ### Sangre en el personaje
 El jugador se va manchando con las bajas de la partida y la máscara también.
 - **Acumulación** (`game.gore`, `game.stainPlayer`): cada baja suma la `power` de su `KILL_FEEL`
-  (disparo 1, melé 1,35, remate 1,7), así que lo cuerpo a cuerpo mancha más. `bloodLevelFor(gore)`
+  (disparo 1, melé 1,35, ejecución 2,2), así que lo cuerpo a cuerpo mancha más. `bloodLevelFor(gore)`
   (`player.js`) lo traduce en nivel 0..`BLOOD_LEVELS` (5) con `BLOOD_STEPS` = 1, 3, 6, 10, 15: un
   piso tiene 5, 8 y 11 enemigos, así que el primero llega al nivel 2-3, el segundo al 4 y el
   máximo, bien entrado el tercero. Al subir de nivel caen unas gotas sobre el jugador para que se
@@ -316,7 +317,7 @@ Pisar sangre fresca mancha las suelas y al andar se dejan huellas rojas que se v
 
 ## Mecánicas de combate
 - Daño: todo es de un golpe. Lo que cambia es el efecto: **matar** o **derribar** (estado `down`
-  ~3,2 s, luego se levanta; se remata con clic izquierdo encima con cualquier arma).
+  ~3,2 s, luego se levanta; se remata con una **ejecución**, ver "Ejecuciones").
   Cualquier arma **lanzada** (clic derecho) derriba si va a más de 160 px/s.
 
 ### Ritmo: el jugador y la IA
@@ -357,7 +358,7 @@ Alcance en unidades del mundo (1 casilla = 32). Cadencia = segundos entre ataque
   y `arc` del arma. La mira del ratón (PC) se mantiene.
 - `auto: true` = dispara mientras se mantiene el clic (si no, un clic = un disparo; el melee
   siempre se puede mantener). Al vaciarse avisa "SIN MUNICIÓN"; se puede lanzar igualmente.
-- Toda baja/derribo pasa `cause` (`finisher`, `door`, `thrown`, `melee`, `bullet`, `fists`) a
+- Toda baja/derribo pasa `cause` (`execution`, `door`, `thrown`, `melee`, `bullet`, `fists`) a
   `killEnemy`/`knockDown` para puntuar con `score.register`.
 
 ### Armas enemigas (`ENEMY_WEAPONS`)
@@ -395,9 +396,48 @@ Alcance en unidades del mundo (1 casilla = 32). Cadencia = segundos entre ataque
     `DOOR_PUSH_WINDOW`. Mientras están parados solo se giran. Lógica en `Enemy.doorContact()`.
   - `collide` devuelve `'knock'`, `'push'`, `'blocked'` (la toca pero no puede moverla) o `null`.
     En F1 la puerta muestra su velocidad angular y "JUGADOR" mientras está bloqueada por él.
-- Hit-stop (`HITSTOP` en `game.js`): baja por disparo 50 ms, baja cuerpo a cuerpo 55 ms, remate
-  60 ms, derribo 35 ms, portazo 70 ms, muerte del jugador 120 ms. Con varias bajas o un portazo en
+- Hit-stop (`HITSTOP` en `game.js`): baja por disparo 50 ms, baja cuerpo a cuerpo 55 ms, ejecución
+  70 ms, derribo 35 ms, portazo 70 ms, muerte del jugador 120 ms. Con varias bajas o un portazo en
   curso se queda el mayor (`Math.max`), nunca se acorta.
+
+### Ejecuciones (remate de un derribado)
+Un enemigo derribado (estado `down`, ~3,2 s) se remata con una **ejecución**: una secuencia corta
+en lugar de un golpe instantáneo. Sustituye al antiguo remate instantáneo (`finisher`).
+- **Detección** (`Player.executionTarget(game)`): el derribado más cercano a `FINISH_RANGE` (34 u
+  más su radio), **a la vista** (`lineOfSight`: una pared o una puerta no se atraviesan) y que no
+  esté ya siendo rematado. Es la única fuente de verdad: la usan el ataque, la tecla E y el
+  indicador, así que lo marcado en pantalla es exactamente a quien se golpea. Con dos derribados
+  juntos se ejecuta primero el más cercano y el otro sigue con su aturdimiento.
+- **Disparador**: clic izquierdo / botón ATACAR en táctil (en `attack()`, antes que cualquier
+  golpe al aire) o la tecla **E** (que antes solo daba la patada a la puerta: ahora remata si hay
+  un derribado a tiro y, si no, patea).
+- **Indicador** (`game.drawExecuteMarks` + `drawExecutePrompt`): corchetes neón rojo/blanco sobre el
+  objetivo (más tenues sobre los otros derribados al alcance), que parpadean más rápido si está a
+  punto de levantarse (`timer` < 0,9 s) y se cierran sobre él durante la carga, y la etiqueta
+  `E · CLIC` (`ATACAR` en táctil, con `game.hint`) debajo del enemigo para no chocar con los
+  popups de puntos, que flotan por encima.
+- **Secuencia** (`Player.exec = { target, t, hit, style }`, `EXEC_TIME` 0,42 s, golpe en
+  `EXEC_HIT` 0,27 s): el jugador queda **clavado** (sin movimiento, ataque ni recoger/lanzar:
+  `update` sale pronto), mirando al objetivo. Carga (0 → 0,27 s), golpe, recogida (0,27 → 0,42 s).
+  Suena `execWind` al empezar y `crunch` al golpear.
+- **Estilo según el arma** (`execPose`/`drawExecTool`): sin arma, **pisotón** (sprite `boot`); con
+  arma cuerpo a cuerpo (tubo, bate, cuchillo) o pistola sin balas, **golpe de arriba abajo**; con
+  balas, **disparo a quemarropa** (gasta una, suena su disparo y hace su ruido). En vista cenital
+  "arriba" es hacia la cámara: al levantarse la herramienta se dibuja al doble de tamaño y por
+  **encima** del jugador (la bota sube adelante, sobre la víctima, para no taparlo) y baja a
+  tamaño normal al golpear; el cuerpo se echa atrás al cargar y hacia delante al golpear.
+- **Golpe** (`landExecution` → `killEnemy(e, ángulo, 'execution')`): `KILL_FEEL.execution` (ver la
+  tabla de arriba) con hit-stop **70 ms**, la sacudida más fuerte (14), el charco mayor y un
+  salpicado hacia donde cae el golpe; `crunch` en vez de `hit`; +1000 puntos **EJECUCIÓN** (el
+  doble que el antiguo remate; se multiplican por el combo); `stainPlayer` con `power` 2,2 (sube el
+  nivel de sangre del jugador) y `wetSoles()` (suelas empapadas: 8..14 huellas). Ruido de 220 u (un
+  golpe sordo) o el del disparo.
+- **Seguridad, sin estados bloqueados**: mientras lo rematan, el derribado tiene `executing` y su
+  aturdimiento se **congela** (no se levanta a mitad del golpe; sacude el sprite 1 px); el
+  jugador sigue siendo vulnerable (el juego es de un solo golpe: es el riesgo de ejecutar). Si lo
+  matan a mitad, `killPlayer` llama a `cancelExecution()` y el derribado queda libre; si el
+  objetivo desaparece o se levanta antes del golpe, la ejecución se aborta sola (`updateExecution`)
+  y no hay doble baja. Al acabar queda un enfriamiento de 0,12 s. F1 muestra `EJECUCION`.
 
 ### Sangre y ejecuciones
 Cada baja pasa por `killEnemy(e, ángulo, causa)` (y la del jugador por `killPlayer`), que consulta
@@ -407,7 +447,7 @@ Cada baja pasa por `killEnemy(e, ángulo, causa)` (y la del jugador por `killPla
 |---|---|---|---|---|
 | `bullet` | 1 | cono estrecho (±0,55 rad) | 7 | 50 ms |
 | `melee` (tubo, bate, cuchillo, puños de BRUTE) | 1,35 | arco abierto (±0,9) | 10 | 55 ms |
-| `finisher` (remate) | 1,7 | en todas direcciones (±π) | 12 | 60 ms |
+| `execution` (remate de un derribado) | 2,2 | cono abierto hacia el golpe (±1,3) | 14 | 70 ms |
 
 - `bleed()` = `particles.gore()` (partículas) + `splatBlood()` (suelo) + `splatWalls()` (paredes).
   Una causa nueva sin entrada en `KILL_FEEL` usa la del disparo.
@@ -493,7 +533,7 @@ Colores centralizados en `COLORS` (`src/utils.js`) y `PALETTE` (`src/sprites.js`
   móvil lo natural es tocar o mantener (fue un bug real).
   Botón **ATACAR** (el principal: más grande, esquina inferior derecha): tocar = `input.tapAttack`
   (un ataque), mantener = `input.attackHeld` (ataque continuo a la cadencia). Sin botón de patada:
-  un golpe cuerpo a cuerpo sin enemigo delante ya patea la puerta de enfrente (`kickDoor`).
+  un golpe cuerpo a cuerpo sin enemigo delante ya patea la puerta de enfrente (`kickDoor`). Con un derribado a tiro, ATACAR lo ejecuta (ver "Ejecuciones"; no hay botón de E).
   LANZAR (= clic derecho) encima de ATACAR y REINICIAR (= R) bajo la máscara.
   Tamaños en píxeles CSS (`STICK_CSS_RADIUS`, `BUTTON_CSS_HEIGHT`) para que midan lo mismo que un dedo.
 - **Fuera de la partida** un toque = clic en ese punto (menús, tarjetas). Antes se comprueban los
@@ -532,7 +572,7 @@ Colores centralizados en `COLORS` (`src/utils.js`) y `PALETTE` (`src/sprites.js`
   `renderHud` lo reinicia al empezar.
 
 ## Controles
-`WASD` mover · ratón apuntar · clic izquierdo atacar/disparar/rematar · clic derecho recoger/lanzar arma ·
-`E` patada a puerta · `R` reintentar piso · `Espacio`/`Enter` continuar en resultados ·
+`WASD` mover · ratón apuntar · clic izquierdo atacar/disparar/ejecutar · clic derecho recoger/lanzar arma ·
+`E` patada a puerta o ejecutar a un derribado en rango · `R` reintentar piso · `Espacio`/`Enter` continuar en resultados ·
 `T` mejores partidas (selección de máscara y muerte) · `Enter` en la muerte: terminar partida ·
 `F1` debug · `M` silenciar sonido y música · `V` efectos CRT on/off

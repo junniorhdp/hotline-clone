@@ -109,6 +109,21 @@ const SOUNDS = {
     const f = 520 * Math.pow(2, Math.min(level - 1, 12) / 12);
     s.tone({ type: 'square', from: f, to: f * 1.5, dur: 0.08, gain: 0.08 * v });
   },
+  // Carga de la ejecución: un barrido ascendente corto, el aire que se tensa antes del golpe.
+  execWind(s, v) {
+    s.noise({ dur: 0.26, gain: 0.2 * v, filter: 'bandpass', freq: 250, freqTo: 2400, q: 2.5 });
+    s.tone({ type: 'sawtooth', from: 70, to: 190, dur: 0.26, gain: 0.07 * v });
+  },
+  // Golpe final de la ejecución: impacto grave, crujido de hueso (clics secos de ruido filtrado)
+  // y un chapoteo húmedo. Mucho más pesado que `hit`.
+  crunch(s, v) {
+    s.tone({ type: 'sine', from: 95, to: 26, dur: 0.34, gain: 1 * v });
+    s.noise({ dur: 0.12, gain: 0.6 * v, filter: 'lowpass', freq: 1900, freqTo: 200, q: 0.9 });
+    for (let i = 0; i < 3; i++) {
+      s.noise({ dur: 0.028, gain: 0.4 * v, filter: 'bandpass', freq: 800 + i * 520 + Math.random() * 300, q: 3.5, delay: 0.012 + i * 0.034 });
+    }
+    s.noise({ dur: 0.3, gain: 0.32 * v, filter: 'lowpass', freq: 750, freqTo: 110, delay: 0.07 });
+  },
   // Corte estilo cinta/VHS al caer el último enemigo: la música se desploma de tono y la
   // cinta se para con un chasquido. Suena por el master, no por el bus de música, para que
   // el corte de la música no se lo lleve por delante.

@@ -103,6 +103,8 @@ const DEFS = {
     '................',
   ],
   fist: ['.kk.', 'kssk', 'kSSk', '.kk.'],
+  // Bota del pisotón (remate sin arma), mirando a +X: banda cian en el talón, puntera clara.
+  boot: ['.kkkkkk.', 'kjZZzzzk', 'kjZZzzzk', 'kjZZzzzk', '.kkkkkk.'],
   // Huella de suela, mirando a +X: talón (2 píxeles) y planta (3×3). 6×3 píxeles = 12×6 unidades.
   foot: ['...rr.', 'rr.rrr', '...rr.'],
   bat: ['.......PPPPP.', 'PPPPPPPpqqqpP', '.......PPPPP.'],

@@ -6,7 +6,7 @@ const POPUP_TIME = 1.1;
 
 // Puntos base por estilo; se multiplican por el combo actual.
 export const STYLE = {
-  finisher: { points: 500, label: 'REMATE' },
+  execution: { points: 1000, label: 'EJECUCIÓN' },
   door: { points: 400, label: 'PORTAZO' },
   thrown: { points: 300, label: 'LANZAMIENTO' },
   melee: { points: 250, label: 'CUERPO A CUERPO' },

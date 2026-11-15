@@ -46,6 +46,7 @@ export class Enemy {
     this.wait = 0.5;
     this.state = 'patrol'; // patrol | alert | chase | investigate | search | down
     this.alive = true;
+    this.executing = false; // el jugador lo está rematando: mientras tanto no se levanta
     this.target = null;    // última posición conocida del jugador / del ruido
     this.timer = 0;
     this.sees = false;
@@ -91,6 +92,7 @@ export class Enemy {
 
   update(dt, game) {
     if (this.state === 'down') {
+      if (this.executing) return; // el temblor del golpe que viene: el aturdimiento se congela
       this.timer -= dt;
       if (this.timer <= 0) {
         this.state = 'alert';
@@ -317,7 +319,9 @@ export class Enemy {
 
   // Tumbado boca arriba con "estrellitas" pixeladas girando: se puede rematar.
   drawDown(ctx, time) {
-    drawSprite(ctx, 'enemyDown', this.x, this.y, this.angle);
+    // Mientras lo rematan tiembla (1 píxel a cada lado).
+    const shake = this.executing ? (Math.floor(time * 40) % 2 ? WORLD_PX : -WORLD_PX) : 0;
+    drawSprite(ctx, 'enemyDown', this.x + shake, this.y, this.angle);
     ctx.save();
     ctx.fillStyle = COLORS.spark;
     for (let i = 0; i < 3; i++) {
@@ -335,7 +339,7 @@ export class Enemy {
       ctx.beginPath();
       ctx.arc(this.x, this.y, this.r + 6, -Math.PI / 2, -Math.PI / 2 + TAU * (this.timer / DOWN_TIME));
       ctx.stroke();
-      drawText(ctx, `DOWN ${this.timer.toFixed(1)}`, this.x, this.y + this.r + 4, { color: COLORS.debug, scale: WORLD_PX, align: 'center' });
+      drawText(ctx, `${this.executing ? 'EJECUTANDO' : 'DOWN'} ${this.timer.toFixed(1)}`, this.x, this.y + this.r + 4, { color: COLORS.debug, scale: WORLD_PX, align: 'center' });
       return;
     }
 
