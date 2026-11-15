@@ -4,7 +4,13 @@ import { COLORS, TAU } from './utils.js';
 import { drawSprite, sprites, pixelRect, drawMaskHead, WORLD_PX } from './sprites.js';
 import { DEFAULT_EFFECTS } from './masks.js';
 
-const SPEED = 210;
+const SPEED = 228;           // antes 210: un ~9% más rápido
+// El movimiento ya responde al instante (no hay inercia), así que la "aceleración" es un
+// empujón: al arrancar desde parado o girar en seco, la velocidad sube un DODGE_BOOST y cae
+// enseguida. Da ese primer paso explosivo al esquivar sin quitar control en el resto.
+const DODGE_BOOST = 0.3;      // fracción extra de velocidad en el primer instante
+const DODGE_TURN_COS = 0.35;  // giro de más de ~70° respecto al rumbo anterior
+const DODGE_DECAY = 0.13;     // s: constante de caída del empujón
 const PICKUP_RADIUS = 30;
 const THROW_SPEED = 720;
 const NOISE_RADIUS_KICK = 260;
@@ -36,6 +42,10 @@ export class Player {
     this.noAmmoFlash = 0;
     this.stepTimer = 0;
     this.bumpCd = 0;
+    this.boost = 0;       // empujón de esquive vigente (fracción de velocidad extra)
+    this.moving = false;  // ¿se movía el fotograma anterior?
+    this.hx = 0;          // rumbo anterior (dirección normalizada)
+    this.hy = 0;
     this.alive = true;
   }
 
@@ -64,8 +74,14 @@ export class Player {
     }
 
     this.bumpCd = Math.max(0, this.bumpCd - dt);
+    this.boost *= Math.exp(-dt / DODGE_DECAY);
     if (mx || my) {
-      const speed = SPEED * this.perks.speedMul * mag;
+      // Arrancar desde parado o girar en seco renueva el empujón (no se acumula).
+      if (!this.moving || mx * this.hx + my * this.hy < DODGE_TURN_COS) this.boost = DODGE_BOOST;
+      this.hx = mx;
+      this.hy = my;
+      this.moving = true;
+      const speed = SPEED * this.perks.speedMul * mag * (1 + this.boost);
       const hit = moveAndSlide(map, this, mx * speed * dt, my * speed * dt);
       if ((hit.hitX || hit.hitY) && this.bumpCd <= 0) {
         game.particles.dust(this.x + (hit.hitX ? Math.sign(mx) * this.r : 0), this.y + (hit.hitY ? Math.sign(my) * this.r : 0), 4);
@@ -78,6 +94,7 @@ export class Player {
       }
     } else {
       this.stepTimer = 0.05;
+      this.moving = false;
     }
 
     if (input.touchMode) {

@@ -20,8 +20,8 @@ export const WEAPON_DEFS = {
 // Armas de los enemigos. El wind-up (mira láser) es la ventana para cubrirse tras una esquina;
 // después disparan `burst` balas separadas `burstInterval` s y esperan `cooldown`.
 export const ENEMY_WEAPONS = {
-  gun: { range: 320, windup: 0.5, cooldown: 0.9, bulletSpeed: 650, spread: 0.05, burst: 1, burstInterval: 0, dropAmmo: 4, sound: 'enemyShot' },
-  smg: { range: 280, windup: 0.6, cooldown: 1.2, bulletSpeed: 600, spread: 0.13, burst: 4, burstInterval: 0.09, dropAmmo: 12, sound: 'smg' },
+  gun: { range: 320, windup: 0.38, cooldown: 0.7, bulletSpeed: 650, spread: 0.05, burst: 1, burstInterval: 0, dropAmmo: 4, sound: 'enemyShot' },
+  smg: { range: 280, windup: 0.45, cooldown: 0.95, bulletSpeed: 600, spread: 0.13, burst: 4, burstInterval: 0.09, dropAmmo: 12, sound: 'smg' },
 };
 
 const THROW_DECEL = 900;      // px/s² de frenado del arma lanzada

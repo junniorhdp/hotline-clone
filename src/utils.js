@@ -15,6 +15,13 @@ export const COLORS = {
   enemyDark: '#b38600',
   enemyCorpse: '#8c6a00',
   blood: '#d90429',
+  bloodMid: '#9e0320',
+  bloodDark: '#7a0218',
+  bloodWet: '#ff4d6d',     // brillo de la sangre fresca sobre las paredes
+  flesh: '#b3162f',      // restos: carne
+  gore: '#5c0a16',       // restos: coágulos oscuros
+  bone: '#e8dcc8',       // restos: esquirlas de hueso
+  neonLight: '#9ff6ff',  // chispas de neón del impacto letal (junto a player y wall)
   weapon: '#c77dff',
   bullet: '#fff6d6',
   enemyBullet: '#ff5c5c',

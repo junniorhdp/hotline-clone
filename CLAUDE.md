@@ -22,14 +22,17 @@ HTML5 Canvas, JavaScript Vanilla (ES Modules) y Vite. Sin frameworks ni librerí
 - Todo el código del juego vive en `src/` y es modular, un módulo por responsabilidad:
   - `main.js` — punto de entrada: crea el `Game` y lo arranca. Nada de lógica aquí.
   - `game.js` — game loop, cámara, hit-stop, estado global, colisiones entre entidades
-    (balas, armas lanzadas, puertas), muertes/derribos, render de la escena y HUD.
+    (balas, armas lanzadas, puertas), muertes/derribos (`killEnemy` → `bleed`: sangre permanente en
+    suelo y paredes), render de la escena y HUD.
   - `player.js` — movimiento, apuntado, ataque, remate, patada, recoger/lanzar armas.
   - `enemy.js` — IA de enemigos (patrulla, visión, persecución, búsqueda, derribado) y tipo armado.
   - `doors.js` — puertas batientes: física de la hoja, empuje, patada y derribo.
   - `map.js` — tilemap, colisiones AABB con sliding, raycast/línea de visión (paredes + puertas),
     pathfinding BFS, pisos (`LEVELS`), zonas de suelo y muebles sólidos en la cuadrícula.
   - `weapons.js` — definiciones de armas (`WEAPON_DEFS`, `ENEMY_GUN`), `Pickup`, `Bullet`, utilidades de melee.
-  - `particles.js` — chispas, polvo, gotas de sangre (se pintan en la capa de sangre al caer) y casquillos persistentes.
+  - `particles.js` — chispas, polvo, sangre, restos (`gibs`), chispas de neón (`neon`) y casquillos
+    persistentes; `gore()` lanza todo lo de una baja. Las gotas y los restos, al caer, se hornean
+    en la capa de sangre (ver "Sangre y ejecuciones").
   - `audio.js` — SFX, música y ambiente procedimentales con Web Audio (osciladores + ruido
     filtrado). Sin archivos de audio. Ver "Música y ambiente".
   - `decor.js` — arte estático del entorno: texturas de suelo por zona, muebles, decoración de
@@ -235,6 +238,23 @@ siguiente piso (`goToLevel`) … tras el último → `gameover` → `menu` o par
   ~3,2 s, luego se levanta; se remata con clic izquierdo encima con cualquier arma).
   Cualquier arma **lanzada** (clic derecho) derriba si va a más de 160 px/s.
 
+### Ritmo: el jugador y la IA
+Todo está ajustado para que el combate sea frenético (entre paréntesis, el valor anterior).
+- **Jugador** (`player.js`): `SPEED` 228 (210). El movimiento ya responde al instante (no hay
+  inercia), así que la "aceleración" es un **empujón**: al arrancar desde parado o girar en seco
+  (más de ~70° respecto al rumbo anterior) la velocidad sube un `DODGE_BOOST` (+30 %) y cae con
+  constante `DODGE_DECAY` (0,13 s). No se acumula (renueva, no suma) y un giro suave (45°) no lo da.
+  Se aplica también con joystick y se suma a la pasiva GUEPARDO (pico ≈ 385 u/s, crucero 296).
+- **Enemigos** (`enemy.js`): patrulla a 84 u/s (70) con un barrido de mirada más amplio y 0,7 s de
+  pausa por punto (1 s); investigan a 144 (120) y te persiguen a 192 (172) —el jugador sigue siendo
+  más rápido, pero por poco—; `REACTION_TIME` 0,18 s (0,3), golpe cuerpo a cuerpo con `WINDUP`
+  0,17 s (0,22) y `ATTACK_COOLDOWN` 0,3 s (0,4); te buscan `SEARCH_TIME` 3,2 s (2,5) y te notan a
+  `CLOSE_SENSE` 44 (36) aunque estés a su espalda. Las pausas ante puertas no se han tocado
+  (ver "Puertas").
+- **Medido** con un enemigo a 200 u con línea de visión directa: el de melé te mata en 1,23 s
+  (1,52 s); el armado con pistola dispara a los 0,58 s (0,85 s) y con subfusil a los 0,67 s (0,93 s).
+  Si se retoca el ritmo, repetir esa medición.
+
 ### Arsenal del jugador (`WEAPON_DEFS` en `weapons.js`)
 Alcance en unidades del mundo (1 casilla = 32). Cadencia = segundos entre ataques.
 
@@ -262,8 +282,8 @@ Alcance en unidades del mundo (1 casilla = 32). Cadencia = segundos entre ataque
 ### Armas enemigas (`ENEMY_WEAPONS`)
 | Arma | Alcance | Aviso (mira láser) | Disparos | Pausa | Suelta |
 |---|---|---|---|---|---|
-| Pistola | 320 | 0,5 s | 1 | 0,9 s | pistola con 4 balas |
-| Subfusil | 280 | 0,6 s | ráfaga de 4 (cada 0,09 s) | 1,2 s | subfusil con 12 balas |
+| Pistola | 320 | 0,38 s | 1 | 0,7 s | pistola con 4 balas |
+| Subfusil | 280 | 0,45 s | ráfaga de 4 (cada 0,09 s) | 0,95 s | subfusil con 12 balas |
 
 - Si el enemigo pierde la línea de visión, el aviso y la ráfaga se cancelan (cubrirse tras
   esquinas funciona). Al morir o ser derribado suelta su arma.
@@ -294,7 +314,42 @@ Alcance en unidades del mundo (1 casilla = 32). Cadencia = segundos entre ataque
     `DOOR_PUSH_WINDOW`. Mientras están parados solo se giran. Lógica en `Enemy.doorContact()`.
   - `collide` devuelve `'knock'`, `'push'`, `'blocked'` (la toca pero no puede moverla) o `null`.
     En F1 la puerta muestra su velocidad angular y "JUGADOR" mientras está bloqueada por él.
-- Hit-stop (`HITSTOP` en `game.js`): muerte 50 ms, remate 80 ms, derribo 35 ms, portazo 70 ms, muerte del jugador 120 ms.
+- Hit-stop (`HITSTOP` en `game.js`): baja por disparo 50 ms, baja cuerpo a cuerpo 55 ms, remate
+  60 ms, derribo 35 ms, portazo 70 ms, muerte del jugador 120 ms. Con varias bajas o un portazo en
+  curso se queda el mayor (`Math.max`), nunca se acorta.
+
+### Sangre y ejecuciones
+Cada baja pasa por `killEnemy(e, ángulo, causa)` (y la del jugador por `killPlayer`), que consulta
+`KILL_FEEL` (`game.js`) según la causa y llama a `bleed()`:
+
+| Causa | Sangre/restos (`power`) | Salpicado (`wide`) | Sacudida | Hit-stop |
+|---|---|---|---|---|
+| `bullet` | 1 | cono estrecho (±0,55 rad) | 7 | 50 ms |
+| `melee` (tubo, bate, cuchillo, puños OSO) | 1,35 | arco abierto (±0,9) | 10 | 55 ms |
+| `finisher` (remate) | 1,7 | en todas direcciones (±π) | 12 | 60 ms |
+
+- `bleed()` = `particles.gore()` (partículas) + `splatBlood()` (suelo) + `splatWalls()` (paredes).
+  Una causa nueva sin entrada en `KILL_FEEL` usa la del disparo.
+- **Partículas** (`particles.js`, tope `MAX_PARTICLES` 900): `blood` mezcla niebla fina y gotas
+  gordas, con una salpicadura hacia atrás (la herida de entrada); `gibs` son restos (carne,
+  coágulo, hueso) que rebotan en las paredes, sueltan gotas por el camino y al pararse se
+  hornean en el suelo; `neon` son chispas aditivas cian/magenta con estela. El dibujo va en dos
+  pasadas (normales y aditivas) para no cambiar de modo de mezcla en cada partícula.
+- **Suelo** (capa de sangre, `splatBlood`): charco + charcos satélite + gotas en cono + regueros
+  gruesos al principio con una gota al final + arrastre (`bloodSmear`) hacia donde cae el cuerpo.
+  Las gotas rápidas dejan una estela corta en su dirección de vuelo (`bake`).
+- **Paredes** (capa propia `wallBloodLayer`, dibujada **después** de las paredes y solo cuando hay
+  alguna mancha, `wallBloodDirty`): `splatWalls` lanza un abanico de rayos (`castRay`) en la
+  dirección del golpe y, donde un rayo llega a una pared del edificio (`isStructuralWall`: no
+  muebles ni puertas), `wallSplat` deja una mancha con borde oscuro, gotas y regueros; más grande
+  cuanto más cerca. Cada píxel se comprueba contra la pared para no salirse.
+- Todo lo permanente (suelo, paredes y `game.stains`, el contador que muestra F1) se borra solo en
+  `reset()` (nuevo piso o `R`).
+- **Rendimiento** (medido en Edge sin GPU, el peor caso): una baja cuesta 0,4 ms (disparo) a 1 ms
+  (melé/remate) de CPU, 900 partículas ≈ 0,1 ms de update + 1,1 ms de dibujo por fotograma, y 60
+  bajas a la vez (muy por encima del juego real) mantienen la media por debajo de 13 ms. Al tocar
+  esto, no meter nada por partícula que sea caro (cambios de estado del contexto, `shadowBlur`,
+  asignaciones) y repetir la medición.
 
 ## Estilo visual: pixel art 16-bit neón / synthwave oscuro
 Diseños propios del juego (no copiar personajes ni arte de otros juegos).
@@ -319,9 +374,9 @@ Diseños propios del juego (no copiar personajes ni arte de otros juegos).
   se rotan al dibujar (vecino más cercano). Variantes de color con `RECOLORS`.
   Jugador: cazadora cian con el hueco de la cabeza, que pinta encima la máscara elegida
   (ver "Máscaras"). Patrulla: camisa amarilla + gorra. Armado: chaleco oscuro.
-- Capas estáticas (suelo, paredes, glow) y la capa de sangre van a media resolución del mundo
-  (1 píxel = 2 unidades) y se dibujan escaladas ×2. Los cadáveres son sprites estampados en la
-  capa de sangre.
+- Capas estáticas (suelo, paredes, glow) y las capas de sangre (suelo y paredes) van a media
+  resolución del mundo (1 píxel = 2 unidades) y se dibujan escaladas ×2. Los cadáveres son sprites
+  estampados en la capa de sangre del suelo; la de las paredes se pinta sobre ellas.
 - Suelos por zona y muebles: ver "Diseño de niveles". Todo el entorno lleva desgaste generado
   con semilla fija. Paredes y muebles sólidos proyectan sombra dura abajo-derecha; las paredes tienen
   tubo neón de 2 px en los bordes que dan al suelo + capa de glow sumada con `lighter`.
@@ -334,7 +389,9 @@ Colores centralizados en `COLORS` (`src/utils.js`) y `PALETTE` (`src/sprites.js`
 - Paredes `#ff2a85` (puertas `#ff7ab8`)
 - Jugador `#05d9e8`
 - Enemigos `#ffbe0b`
-- Sangre persistente `#d90429` (se pinta en una capa offscreen que solo se limpia al reiniciar)
+- Sangre persistente `#d90429` (+ `bloodMid`, `bloodDark` y `bloodWet` en `COLORS`; se pinta en
+  capas offscreen que solo se limpian al reiniciar). Restos: carne `flesh`, coágulo `gore`, hueso
+  `bone`; chispas de neón: `player`, `wall`, `door` y `neonLight`
 - Armas `#c77dff`, debug `#00ff9f`
 
 ## Móvil y táctil
@@ -387,7 +444,7 @@ Colores centralizados en `COLORS` (`src/utils.js`) y `PALETTE` (`src/sprites.js`
 ## Debug
 - `F1` activa/desactiva el modo debug: hitboxes, conos de visión (cortados por puertas),
   líneas de visión, rutas BFS, estados de la IA (incluido aim/windup y temporizador de
-  derribo), velocidad angular de puertas, contadores de partículas y FPS. Mantener siempre
+  derribo), velocidad angular de puertas, contadores de partículas, de manchas permanentes y FPS. Mantener siempre
   esta tecla funcionando al añadir sistemas nuevos (cada entidad nueva debería tener su `drawDebug`).
 - Cuidado: los `drawDebug` que cambian `textAlign` sin `save/restore` afectan al HUD;
   `renderHud` lo reinicia al empezar.

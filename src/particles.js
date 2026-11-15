@@ -2,10 +2,13 @@ import { isSolidAt } from './map.js';
 import { COLORS, TAU, rand } from './utils.js';
 import { pixelRect } from './sprites.js';
 
-const MAX_PARTICLES = 700;
+const MAX_PARTICLES = 900;
 const MAX_SHELLS = 150;
+const NEON = [COLORS.player, COLORS.wall, COLORS.door, COLORS.neonLight];
+export const GIB_COLORS = [COLORS.flesh, COLORS.gore, COLORS.bone]; // carne · coágulo · hueso
 
-// Partículas efímeras (chispas, polvo, gotas de sangre) + casquillos que se quedan en el suelo.
+// Partículas efímeras (chispas, polvo, sangre, restos, chispas de neón) + casquillos que se
+// quedan en el suelo. Las gotas y los restos, al caer, se hornean en la capa de sangre.
 export class Particles {
   constructor() {
     this.list = [];
@@ -50,13 +53,48 @@ export class Particles {
     }
   }
 
-  blood(x, y, angle, count = 10) {
+  // Rocío de sangre en cono (`wide` = semiapertura en rad). Mezcla niebla fina (muchas gotas
+  // rápidas) con gotas gordas (pocas, lentas y más abiertas) para que cada baja salpique distinto.
+  blood(x, y, angle, count = 10, wide = 0.6) {
     for (let i = 0; i < count; i++) {
-      const a = angle + rand(-0.6, 0.6);
-      const s = rand(80, 320);
-      const life = rand(0.12, 0.35);
-      this.add({ type: 'blood', x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life, max: life, size: rand(1.2, 3) });
+      const heavy = Math.random() < 0.22;
+      const a = angle + rand(-wide, wide) * (heavy ? 1.4 : 1);
+      const s = heavy ? rand(60, 210) : rand(120, 430);
+      const life = heavy ? rand(0.22, 0.5) : rand(0.1, 0.32);
+      this.add({ type: 'blood', x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life, max: life,
+        size: heavy ? rand(3.2, 4.6) : rand(1.1, 2.6) });
     }
+  }
+
+  // Restos: trozos que salen despedidos, rebotan en las paredes, van soltando gotas por el
+  // camino (rastro) y al pararse quedan pegados al suelo.
+  gibs(x, y, angle, count = 4, wide = 0.9) {
+    for (let i = 0; i < count; i++) {
+      const a = angle + rand(-wide, wide);
+      const s = rand(110, 330);
+      const life = rand(0.35, 0.75);
+      const kind = Math.random() < 0.2 ? 2 : Math.random() < 0.5 ? 1 : 0; // hueso · coágulo · carne
+      this.add({ type: 'gib', kind, x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life, max: life, size: rand(2, 3.4), trail: 0 });
+    }
+  }
+
+  // Chispas de neón del impacto letal: cian y magenta, aditivas y más largas que las del disparo.
+  neon(x, y, angle, count = 10, wide = 1.1) {
+    for (let i = 0; i < count; i++) {
+      const a = angle + rand(-wide, wide);
+      const s = rand(180, 560);
+      const life = rand(0.12, 0.34);
+      this.add({ type: 'neon', color: NEON[(Math.random() * NEON.length) | 0], x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life, max: life });
+    }
+  }
+
+  // Todo lo que sale de una baja: sangre hacia donde va el golpe, un poco hacia atrás (la herida
+  // de entrada), restos y neón. `power` ≈ 1 (disparo), más en melé y remate; `wide` = apertura.
+  gore(x, y, angle, power = 1, wide = 0.55) {
+    this.blood(x, y, angle, Math.round(20 * power), wide);
+    this.blood(x, y, angle + Math.PI, Math.round(6 * power), 0.9);
+    this.gibs(x, y, angle, Math.round(rand(3, 5) * power), Math.max(wide, 0.8));
+    this.neon(x, y, angle, Math.round(11 * power), Math.max(wide, 1));
   }
 
   shell(x, y, angle) {
@@ -66,9 +104,11 @@ export class Particles {
     this.shells.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, rot: rand(0, TAU), spin: rand(-25, 25) });
   }
 
-  // `onBloodLand(x, y, size)` se llama cuando una gota "cae" para pintarla en la capa de sangre.
-  update(dt, map, onBloodLand) {
+  // `bake(kind, p)` pinta en la capa de sangre cuando algo "cae": kind = 'drop' (una gota),
+  // 'gib' (un resto que se para) o 'trail' (gota del rastro de un resto en vuelo).
+  update(dt, map, bake) {
     for (const p of this.list) {
+      if (p.type === 'gib') { this.updateGib(p, dt, map, bake); continue; }
       const drag = p.type === 'spark' ? 6 : p.type === 'dust' || p.type === 'chip' ? 4 : 3;
       const k = Math.exp(-drag * dt);
       p.vx *= k;
@@ -78,7 +118,7 @@ export class Particles {
       if (p.type === 'dust') p.size += dt * 6;
       if (p.type === 'blood' && isSolidAt(map, p.x, p.y)) p.life = 0;
       p.life -= dt;
-      if (p.life <= 0 && p.type === 'blood' && !isSolidAt(map, p.x, p.y)) onBloodLand(p.x, p.y, p.size);
+      if (p.life <= 0 && p.type === 'blood' && !isSolidAt(map, p.x, p.y)) bake('drop', p);
     }
     this.list = this.list.filter((p) => p.life > 0);
 
@@ -96,6 +136,23 @@ export class Particles {
     }
   }
 
+  updateGib(p, dt, map, bake) {
+    const k = Math.exp(-4.5 * dt);
+    p.vx *= k;
+    p.vy *= k;
+    const nx = p.x + p.vx * dt;
+    if (isSolidAt(map, nx, p.y)) p.vx *= -0.45; else p.x = nx;
+    const ny = p.y + p.vy * dt;
+    if (isSolidAt(map, p.x, ny)) p.vy *= -0.45; else p.y = ny;
+    p.trail -= dt;
+    if (p.trail <= 0 && Math.abs(p.vx) + Math.abs(p.vy) > 40) {
+      p.trail = 0.035;
+      bake('trail', p);
+    }
+    p.life -= dt;
+    if (p.life <= 0) bake('gib', p);
+  }
+
   // Casquillos: 2×1 píxeles de latón; horizontales o verticales según su giro.
   drawGround(ctx) {
     ctx.fillStyle = COLORS.shell;
@@ -106,24 +163,33 @@ export class Particles {
   }
 
   // Todo son cuadrados alineados a la rejilla de píxeles: nada de círculos ni líneas suavizadas.
+  // Dos pasadas (normales y aditivas): cambiar de modo de mezcla en cada partícula sería caro.
   draw(ctx) {
     ctx.save();
     for (const p of this.list) {
+      if (p.type === 'spark' || p.type === 'neon') continue;
       const t = p.life / p.max;
-      if (p.type === 'spark') {
-        ctx.globalCompositeOperation = 'lighter';
-        ctx.globalAlpha = t;
-        ctx.fillStyle = COLORS.spark;
-        pixelRect(ctx, p.x, p.y);
-        ctx.globalAlpha = t * 0.5;
-        pixelRect(ctx, p.x - p.vx * 0.012, p.y - p.vy * 0.012);
-      } else {
-        ctx.globalCompositeOperation = 'source-over';
-        ctx.globalAlpha = p.type === 'dust' ? t * 0.5 : p.type === 'chip' ? Math.min(1, t * 2) : 1;
-        ctx.fillStyle = p.type === 'dust' ? COLORS.dust : p.type === 'chip' ? COLORS.door : COLORS.blood;
-        const size = p.size > 3 ? 2 : 1;
+      ctx.globalAlpha = p.type === 'dust' ? t * 0.5 : p.type === 'chip' ? Math.min(1, t * 2) : 1;
+      if (p.type === 'gib') {
+        ctx.fillStyle = GIB_COLORS[p.kind];
+        const size = p.size > 2.7 ? 2 : 1;
         pixelRect(ctx, p.x, p.y, size, size);
+        continue;
       }
+      ctx.fillStyle = p.type === 'dust' ? COLORS.dust : p.type === 'chip' ? COLORS.door : COLORS.blood;
+      const size = p.size > 3 ? 2 : 1;
+      pixelRect(ctx, p.x, p.y, size, size);
+    }
+    ctx.globalCompositeOperation = 'lighter';
+    for (const p of this.list) {
+      if (p.type !== 'spark' && p.type !== 'neon') continue;
+      const t = p.life / p.max;
+      ctx.fillStyle = p.type === 'neon' ? p.color : COLORS.spark;
+      ctx.globalAlpha = t;
+      pixelRect(ctx, p.x, p.y);
+      ctx.globalAlpha = t * 0.5;
+      pixelRect(ctx, p.x - p.vx * 0.012, p.y - p.vy * 0.012);
+      if (p.type === 'neon') pixelRect(ctx, p.x - p.vx * 0.024, p.y - p.vy * 0.024); // estela más larga
     }
     ctx.restore();
   }

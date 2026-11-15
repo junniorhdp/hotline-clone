@@ -6,15 +6,18 @@ import { drawText } from './pixelfont.js';
 
 export const VIEW_DIST = 340;
 export const FOV = Math.PI * 0.6;
-const CLOSE_SENSE = 36;      // a esta distancia te detectan aunque estés a su espalda
-const PATROL_SPEED = 70;
-const INVESTIGATE_SPEED = 120;
-const CHASE_SPEED = 172;
-const REACTION_TIME = 0.3;   // pausa entre verte y empezar a perseguir
+// Ritmo de la IA (entre paréntesis, el valor anterior): más tensa al patrullar y mucho más
+// rápida en cuanto te ve. El jugador sigue siendo más veloz que CHASE_SPEED, pero por poco.
+const CLOSE_SENSE = 44;      // a esta distancia te detectan aunque estés a su espalda (36)
+const PATROL_SPEED = 84;     // (70)
+const PATROL_WAIT = 0.7;     // pausa mirando alrededor en cada punto de la ruta (1)
+const INVESTIGATE_SPEED = 144; // (120)
+const CHASE_SPEED = 192;     // (172)
+const REACTION_TIME = 0.18;  // pausa entre verte y empezar a perseguir (0,3)
 const ATTACK_REACH = 14;     // hueco entre cuerpos para poder golpear
-const WINDUP = 0.22;         // preparación del puñetazo (ventana para esquivar)
-const ATTACK_COOLDOWN = 0.4;
-const SEARCH_TIME = 2.5;
+const WINDUP = 0.17;         // preparación del puñetazo (ventana para esquivar) (0,22)
+const ATTACK_COOLDOWN = 0.3; // (0,4)
+const SEARCH_TIME = 3.2;     // cuánto te buscan tras perderte (2,5)
 const DOWN_TIME = 3.2;       // segundos noqueado antes de levantarse
 const KNOCKBACK = 14;
 const ARRIVE_DIST = 6;
@@ -143,13 +146,14 @@ export class Enemy {
   updatePatrol(dt, map) {
     if (this.wait > 0) {
       this.wait -= dt;
-      this.angle += Math.sin(this.wait * 5) * dt * 1.5;
+      // Barrido de la mirada más amplio (±26°): vigilan en vez de quedarse mirando al frente.
+      this.angle += Math.sin(this.wait * 7) * dt * 3.2;
       return;
     }
     const wp = this.patrol[this.wp];
     if (this.goTo(wp.x, wp.y, PATROL_SPEED, dt, map)) {
       this.wp = (this.wp + 1) % this.patrol.length;
-      this.wait = 1;
+      this.wait = PATROL_WAIT;
     }
   }
 

@@ -1,5 +1,5 @@
 import { Input } from './input.js';
-import { LEVELS, TILE, loadLevel, isSolidAt, doorHitT } from './map.js';
+import { LEVELS, TILE, loadLevel, isSolidAt, isStructuralWall, castRay, doorHitT } from './map.js';
 import { renderFloor, renderWalls, renderProps } from './decor.js';
 import { Score, COMBO_WINDOW } from './score.js';
 import { MASKS, maskEffects, maskIcon } from './masks.js';
@@ -10,7 +10,7 @@ import { Player } from './player.js';
 import { Enemy } from './enemy.js';
 import { Door, ENEMY_PUSH_SPEED } from './doors.js';
 import { Pickup, Bullet, ENEMY_WEAPONS, segmentPointDistance } from './weapons.js';
-import { Particles } from './particles.js';
+import { Particles, GIB_COLORS } from './particles.js';
 import { Sfx } from './audio.js';
 import { ScreenFx } from './effects.js';
 import { drawSprite, pixelDisc, WORLD_PX } from './sprites.js';
@@ -22,7 +22,7 @@ const MAX_FRAME = 0.25;    // evita la "espiral de la muerte" tras cambiar de pe
 const CAMERA_LERP = 8;
 const CAMERA_LOOKAHEAD = 0.2;   // fracción de la distancia al ratón que la cámara se adelanta
 const MAX_LOOKAHEAD = 70;       // tope en unidades del mundo: el jugador nunca se va al borde
-const MAX_SHAKE = 14;
+const MAX_SHAKE = 16;
 const HEARING_DIST = 700;  // a partir de aquí los sonidos lejanos apenas se oyen
 
 // Resolución interna del pixel art: ~216 px de alto con escala ENTERA (píxeles siempre nítidos).
@@ -38,8 +38,18 @@ const LOW_FPS = 45;              // por debajo, durante LOW_FPS_SECONDS seguidos
 const LOW_FPS_SECONDS = 3;
 const COARSE_POINTER = window.matchMedia?.('(pointer: coarse)').matches ?? false;
 
-// Hit-stop: segundos que se congela la simulación en cada tipo de impacto.
-const HITSTOP = { kill: 0.05, finisher: 0.08, knock: 0.035, doorKnock: 0.07, playerDeath: 0.12 };
+// Hit-stop: segundos que se congela la simulación en cada tipo de impacto. Las bajas cuerpo a
+// cuerpo y los remates (40-60 ms) se notan más que un disparo.
+const HITSTOP = { kill: 0.05, melee: 0.055, finisher: 0.06, knock: 0.035, doorKnock: 0.07, playerDeath: 0.12 };
+// Cómo se siente cada tipo de baja: `power` = cantidad de sangre y restos, `wide` = semiapertura
+// del salpicado (rad; π = en todas direcciones), `shake` = sacudida de cámara, `stop` = hit-stop
+// y `fx` = patada del CRT. Un disparo sale en cono estrecho; la melé abre el arco; el remate
+// revienta en todas direcciones.
+const KILL_FEEL = {
+  bullet: { power: 1, wide: 0.55, shake: 7, stop: HITSTOP.kill, fx: 0.45 },
+  melee: { power: 1.35, wide: 0.9, shake: 10, stop: HITSTOP.melee, fx: 0.65 },
+  finisher: { power: 1.7, wide: Math.PI, shake: 12, stop: HITSTOP.finisher, fx: 0.8 },
+};
 const INTRO_BANNER_TIME = 2.2;
 const FADE_TIME = 0.25;        // segundos de cada mitad del fundido (salida y entrada)
 const RANK_COLORS = { S: COLORS.player, A: COLORS.weapon, B: COLORS.enemy, C: COLORS.blood };
@@ -536,8 +546,18 @@ export class Game {
       this.bloodLayer.height = this.map.pixelH / WORLD_PX;
       this.bloodCtx = this.bloodLayer.getContext('2d');
       this.bloodCtx.imageSmoothingEnabled = false;
+      // Sangre sobre las paredes: se dibuja DESPUÉS de las paredes (la capa de sangre del suelo
+      // queda debajo de ellas).
+      this.wallBloodLayer = document.createElement('canvas');
+      this.wallBloodLayer.width = this.bloodLayer.width;
+      this.wallBloodLayer.height = this.bloodLayer.height;
+      this.wallBloodCtx = this.wallBloodLayer.getContext('2d');
+      this.wallBloodCtx.imageSmoothingEnabled = false;
     }
     this.bloodCtx.clearRect(0, 0, this.bloodLayer.width, this.bloodLayer.height);
+    this.wallBloodCtx.clearRect(0, 0, this.wallBloodLayer.width, this.wallBloodLayer.height);
+    this.wallBloodDirty = false; // hasta la primera mancha en pared ni se dibuja la capa
+    this.stains = 0;             // salpicaduras permanentes de este piso (se ve en F1)
     this.camera.setBounds(this.map.pixelW, this.map.pixelH);
     this.camera.snap(this.player.x, this.player.y);
   }
@@ -598,7 +618,7 @@ export class Game {
     this.updateDoors(dt);
     this.updateBullets(dt);
     this.updatePickups(dt);
-    this.particles.update(dt, this.map, (x, y, size) => this.bakeDrop(x, y, size));
+    this.particles.update(dt, this.map, (kind, p) => this.bake(kind, p));
 
     this.bullets = this.bullets.filter((b) => b.alive);
     this.pickups = this.pickups.filter((p) => p.alive);
@@ -757,17 +777,25 @@ export class Game {
   // `cause` es el estilo de la baja para la puntuación (ver STYLE en score.js).
   killEnemy(e, angle, cause = 'bullet') {
     if (!e.alive) return;
-    const finisher = cause === 'finisher';
+    const feel = KILL_FEEL[cause] || KILL_FEEL.bullet;
     e.alive = false;
     this.addScore(cause, e);
     this.dropWeapon(e);
-    this.splatBlood(e.x, e.y, angle, finisher ? 1.4 : 1);
-    this.particles.blood(e.x, e.y, angle, finisher ? 18 : 12);
+    this.bleed(e.x, e.y, angle, feel.power, feel.wide);
     this.drawCorpse(e.x, e.y, angle, e.armed ? 'armedCorpse' : 'enemyCorpse');
-    this.camera.addShake(finisher ? 8 : 6);
-    this.fx.kick(finisher ? 0.6 : 0.4);
-    this.hitstop = finisher ? HITSTOP.finisher : HITSTOP.kill;
-    this.sfx.play('hit', finisher ? 1 : 0.85);
+    this.camera.addShake(feel.shake);
+    this.fx.kick(feel.fx);
+    this.hitstop = Math.max(this.hitstop, feel.stop);
+    this.sfx.play('hit', cause === 'finisher' ? 1 : 0.85);
+  }
+
+  // Todo el desangrado de una baja: partículas (sangre, restos, chispas de neón), charco y
+  // regueros en el suelo y salpicaduras en las paredes de enfrente. Lo permanente se queda hasta
+  // que se reinicia el piso.
+  bleed(x, y, angle, power, wide) {
+    this.particles.gore(x, y, angle, power, wide);
+    this.splatBlood(x, y, angle, power, wide);
+    this.splatWalls(x, y, angle, power, wide);
   }
 
   addScore(cause, e) {
@@ -792,8 +820,7 @@ export class Game {
     const p = this.player;
     p.alive = false;
     this.state = 'dead';
-    this.splatBlood(p.x, p.y, angle, 1.2);
-    this.particles.blood(p.x, p.y, angle, 16);
+    this.bleed(p.x, p.y, angle, 1.3, 0.7);
     this.drawCorpse(p.x, p.y, angle, 'playerCorpse');
     if (p.weapon) this.pickups.push(new Pickup(p.weapon.type, p.x, p.y, p.weapon.ammo));
     this.camera.addShake(10);
@@ -839,38 +866,143 @@ export class Game {
 
   // --- Capa de sangre (media resolución: 1 píxel = 2 unidades del mundo) ---------------
 
-  bakeDrop(x, y, size) {
+  // Algo llega al suelo y se queda para siempre: una gota (con su estela corta en la dirección en
+  // la que viajaba, así el salpicado tiene dirección), un resto que se para (con su mancha) o
+  // una gota del rastro que va dejando un resto en vuelo.
+  bake(kind, p) {
     const ctx = this.bloodCtx;
-    ctx.fillStyle = size > 2.2 ? COLORS.blood : '#9e0320';
-    const s = size > 2.2 ? 2 : 1;
-    ctx.fillRect(Math.round(x / WORLD_PX), Math.round(y / WORLD_PX), s, s);
+    const x = Math.round(p.x / WORLD_PX), y = Math.round(p.y / WORLD_PX);
+    if (kind === 'trail') {
+      ctx.fillStyle = Math.random() < 0.5 ? COLORS.bloodDark : COLORS.blood;
+      ctx.fillRect(x, y, 1, 1);
+      return;
+    }
+    if (kind === 'gib') {
+      ctx.fillStyle = COLORS.bloodDark;
+      ctx.fillRect(x - 1, y - 1, 3, 3);
+      ctx.fillStyle = GIB_COLORS[p.kind];
+      ctx.fillRect(x, y, 2, 2);
+      return;
+    }
+    const heavy = p.size > 2.2;
+    ctx.fillStyle = heavy ? COLORS.blood : COLORS.bloodMid;
+    const s = heavy ? 2 : 1;
+    ctx.fillRect(x, y, s, s);
+    const speed = Math.hypot(p.vx, p.vy);
+    if (speed > 70) {
+      const len = Math.min(heavy ? 4 : 2, Math.floor(speed / 60));
+      for (let i = 1; i <= len; i++) ctx.fillRect(Math.round(x + (p.vx / speed) * i), Math.round(y + (p.vy / speed) * i), 1, 1);
+    }
   }
 
-  // Charco + salpicaduras + regueros, todo en píxeles. Solo se borra al reiniciar.
-  splatBlood(x, y, angle, power = 1) {
+  // Charco, charcos satélite, gotas en cono, regueros y arrastre, todo en píxeles. `power` es la
+  // cantidad (más en melé y remate) y `wide` la semiapertura del salpicado. Solo se borra al
+  // reiniciar el piso.
+  splatBlood(x, y, angle, power = 1, wide = 0.55) {
     const ctx = this.bloodCtx;
     const px = x / WORLD_PX, py = y / WORLD_PX;
     const cos = Math.cos(angle), sin = Math.sin(angle);
+    this.stains++;
     ctx.save();
-    ctx.fillStyle = '#7a0218';
+    ctx.fillStyle = COLORS.bloodDark;
     pixelDisc(ctx, px + cos * 3, py + sin * 3, rand(5, 7) * power);
     ctx.fillStyle = COLORS.blood;
     pixelDisc(ctx, px + cos * 3 - 1, py + sin * 3 - 1, rand(3.5, 5) * power);
-    for (let i = 0; i < 30 * power; i++) {
-      const d = rand(3, 28) * power;
-      const a = angle + rand(-0.55, 0.55);
-      ctx.fillStyle = Math.random() < 0.3 ? '#7a0218' : COLORS.blood;
+    // Charcos satélite: salpicaduras gordas que han caído más lejos.
+    for (let i = 0, n = 2 + Math.floor(power * 2); i < n; i++) {
+      const a = angle + rand(-wide, wide), d = rand(8, 20) * power;
+      ctx.fillStyle = Math.random() < 0.5 ? COLORS.bloodDark : COLORS.blood;
+      pixelDisc(ctx, px + Math.cos(a) * d, py + Math.sin(a) * d, rand(1, 2.2));
+    }
+    for (let i = 0; i < 34 * power; i++) {
+      const d = rand(3, 30) * power;
+      const a = angle + rand(-wide, wide);
+      ctx.fillStyle = Math.random() < 0.3 ? COLORS.bloodDark : COLORS.blood;
       const s = d < 12 ? 2 : 1;
       ctx.fillRect(Math.round(px + Math.cos(a) * d), Math.round(py + Math.sin(a) * d), s, s);
     }
-    // Regueros: líneas de píxeles en la dirección del golpe.
-    ctx.fillStyle = COLORS.blood;
-    for (let i = 0; i < 3; i++) {
-      const a = angle + rand(-0.3, 0.3);
+    // Regueros: líneas de píxeles en la dirección del golpe, gruesas al principio y con una
+    // gota al final. Son más y más largos cuanto más fuerte es la baja.
+    const spread = Math.min(wide * 0.55, 1.6);
+    for (let i = 0, n = 3 + Math.floor(rand(0, 3) * power); i < n; i++) {
+      const a = angle + rand(-spread, spread);
       const len = rand(12, 32) * power;
-      for (let d = 0; d < len; d++) ctx.fillRect(Math.round(px + Math.cos(a) * d), Math.round(py + Math.sin(a) * d), 1, 1);
+      const ca = Math.cos(a), sa = Math.sin(a);
+      ctx.fillStyle = COLORS.blood;
+      for (let d = 0; d < len; d++) {
+        const thick = d < len * 0.4 ? 2 : 1;
+        ctx.fillRect(Math.round(px + ca * d), Math.round(py + sa * d), thick, thick);
+      }
+      ctx.fillStyle = COLORS.bloodDark;
+      ctx.fillRect(Math.round(px + ca * len), Math.round(py + sa * len), 2, 2);
     }
     ctx.restore();
+    this.bloodSmear(px, py, angle, rand(10, 22) * power);
+  }
+
+  // Arrastre de sangre desde el punto del impacto hacia donde cae el cuerpo (que se estampa
+  // encima): pincelada gruesa que se afina, con huecos como de pincel seco.
+  bloodSmear(px, py, angle, len) {
+    const ctx = this.bloodCtx;
+    const cos = Math.cos(angle), sin = Math.sin(angle);
+    for (let d = 0; d < len; d++) {
+      if (Math.random() < 0.12) continue;
+      ctx.fillStyle = d % 5 < 2 ? COLORS.bloodDark : COLORS.blood;
+      const thick = d < len * 0.55 ? 2 : 1;
+      ctx.fillRect(Math.round(px + cos * d), Math.round(py + sin * d), thick, thick);
+    }
+  }
+
+  // Salpicaduras en las paredes: un abanico de rayos desde la baja hacia donde va el golpe; donde
+  // un rayo llega a una pared del edificio (no a un mueble ni a una puerta) queda una mancha, más
+  // grande cuanto más cerca. Cuanto más fuerte es la baja, más lejos llega la sangre.
+  splatWalls(x, y, angle, power = 1, wide = 0.55) {
+    const reach = 150 * power + 40;
+    for (let i = 0, n = Math.round(7 + 4 * power); i < n; i++) {
+      const a = angle + rand(-wide, wide);
+      const d = castRay(this.map, x, y, a, reach);
+      if (d >= reach) continue;
+      const hx = x + Math.cos(a) * (d + 0.5), hy = y + Math.sin(a) * (d + 0.5);
+      if (!isStructuralWall(this.map, Math.floor(hx / TILE), Math.floor(hy / TILE))) continue;
+      this.wallSplat(hx / WORLD_PX, hy / WORLD_PX, a, 1 - d / reach, power);
+    }
+  }
+
+  // Una mancha en la capa de paredes (coordenadas en píxeles): mancha central con borde oscuro,
+  // gotas alrededor (sobre todo hacia donde iba la sangre) y regueros en esa dirección. Cada
+  // píxel se comprueba contra la pared para no salirse de ella.
+  wallSplat(px, py, angle, near, power) {
+    const ctx = this.wallBloodCtx, map = this.map;
+    const onWall = (cx, cy) => isStructuralWall(map, Math.floor((cx * WORLD_PX) / TILE), Math.floor((cy * WORLD_PX) / TILE));
+    const put = (x, y, color, s = 1) => {
+      const X = Math.round(x), Y = Math.round(y);
+      if (!onWall(X, Y) || !onWall(X + s - 1, Y + s - 1)) return;
+      ctx.fillStyle = color;
+      ctx.fillRect(X, Y, s, s);
+    };
+    const disc = (cx, cy, r, color) => {
+      const R = Math.max(1, Math.round(r));
+      for (let dy = -R; dy <= R; dy++) {
+        const half = Math.floor(Math.sqrt(R * R - dy * dy));
+        for (let dx = -half; dx <= half; dx++) put(cx + dx, cy + dy, color);
+      }
+    };
+    this.wallBloodDirty = true;
+    this.stains++;
+    const r = 1.5 + near * 2.5 * Math.min(power, 1.6);
+    disc(px, py, r, COLORS.bloodDark);
+    disc(px, py, r - 1, COLORS.blood);
+    put(px - 1, py - 1, COLORS.bloodWet);
+    for (let i = 0, n = Math.round((5 + near * 9) * power); i < n; i++) {
+      const a = Math.random() < 0.6 ? angle + rand(-1.2, 1.2) : rand(0, TAU);
+      const d = rand(r + 1, r + 8);
+      put(px + Math.cos(a) * d, py + Math.sin(a) * d, Math.random() < 0.3 ? COLORS.bloodDark : COLORS.blood);
+    }
+    for (let i = 0, n = 1 + Math.floor(rand(0, 2.5)); i < n; i++) {
+      const a = angle + rand(-0.4, 0.4);
+      const len = 2 + near * 6 * rand(0.5, 1.2);
+      for (let d = 0; d < len; d++) put(px + Math.cos(a) * d, py + Math.sin(a) * d, d < len * 0.6 ? COLORS.blood : COLORS.bloodDark);
+    }
   }
 
   // El cadáver es el sprite tumbado estampado (rotado, sin suavizado) en la capa de sangre.
@@ -929,6 +1061,7 @@ export class Game {
     ctx.globalCompositeOperation = 'source-over';
     ctx.globalAlpha = 1;
     ctx.drawImage(this.wallLayer, 0, 0, pixelW, pixelH);
+    if (this.wallBloodDirty) ctx.drawImage(this.wallBloodLayer, 0, 0, pixelW, pixelH);
 
     if (this.debug) this.renderDebug(ctx);
 
@@ -1282,7 +1415,7 @@ export class Game {
 
     if (this.debug) {
       drawText(ctx, `DEBUG · ${this.fps} FPS · BALAS ${this.bullets.length} · PART ${this.particles.list.length} · CASQ ${this.particles.shells.length}`, L, 54 + T, { color: COLORS.debug });
-      drawText(ctx, `ESCENA ${w}X${h} · ESCALA ${this.view.scale} · MÁSCARA ${this.mask.id}`, L, 65 + T, { color: COLORS.debug });
+      drawText(ctx, `ESCENA ${w}X${h} · ESCALA ${this.view.scale} · MÁSCARA ${this.mask.id} · MANCHAS ${this.stains}`, L, 65 + T, { color: COLORS.debug });
     }
 
     const cx = Math.round(w / 2);
