@@ -2,7 +2,7 @@ import { Input } from './input.js';
 import { LEVELS, TILE, loadLevel, isSolidAt, doorHitT } from './map.js';
 import { renderFloor, renderWalls, renderProps } from './decor.js';
 import { Score, COMBO_WINDOW } from './score.js';
-import { MASKS, maskEffects, maskIcon } from './masks.js';
+import { MASKS, maskEffects, maskIcon, MASK_ICON_SIZE } from './masks.js';
 import { ScoreHistory, FloorStats, MAX_ENTRIES, newRunId, formatDate } from './scores-history.js';
 import { Menu } from './menu.js';
 import { TouchControls } from './touch.js';
@@ -274,11 +274,15 @@ export class Game {
   }
 
   // Rectángulos de las tarjetas (en píxeles internos), compartidos por el dibujo y el ratón.
+  // El icono es el sprite de partida de la máscara (MASK_ICON_SIZE px de lado) a escala entera.
   maskLayout() {
     const w = this.scene.width, h = this.scene.height, n = MASKS.length, gap = 6;
+    const S = MASK_ICON_SIZE;
     const cardW = clamp(Math.floor((w - 16 - gap * (n - 1)) / n), 40, 78);
-    const iconScale = clamp(Math.min(Math.floor((cardW - 12) / 12), Math.floor((h - 130) / 12)), 2, 5);
-    const cardH = 12 * iconScale + 24;
+    // El alto que se reserva (142) es el de la pasiva bajo las tarjetas más los pies de
+    // pantalla: con escenas bajas las tarjetas encogen antes que pisar el texto.
+    const iconScale = clamp(Math.min(Math.floor((cardW - 8) / S), Math.floor((h - 142) / S)), 2, 4);
+    const cardH = S * iconScale + 24;
     const x0 = Math.round((w - (n * cardW + (n - 1) * gap)) / 2);
     const cards = MASKS.map((_, i) => ({ x: x0 + i * (cardW + gap), y: 36, w: cardW, h: cardH }));
     return { cards, iconScale, bottom: 36 + cardH };
@@ -506,7 +510,7 @@ export class Game {
     this.par = level.par;
     this.exit = level.exit;
     this.map = level.map;
-    this.player = new Player(level.player.x, level.player.y, maskEffects(this.mask));
+    this.player = new Player(level.player.x, level.player.y, maskEffects(this.mask), this.mask.id);
     this.enemies = level.enemies.map((e) => new Enemy(e.x, e.y, e.patrol,
       e.weapon ? { type: e.weapon, ammo: ENEMY_WEAPONS[e.weapon].dropAmmo } : null));
     this.pickups = level.weapons.map((w) => new Pickup(w.type, w.x, w.y));
@@ -1161,7 +1165,7 @@ export class Game {
       ctx.restore();
       ctx.fillStyle = sel ? '#2a0d3a' : '#1a0d2e';
       ctx.fillRect(c.x + 1, y + 1, c.w - 2, c.h - 2);
-      const size = 12 * iconScale;
+      const size = MASK_ICON_SIZE * iconScale;
       ctx.globalAlpha = sel ? 1 : 0.55;
       ctx.drawImage(maskIcon(mask), Math.round(c.x + (c.w - size) / 2), y + 6, size, size);
       ctx.globalAlpha = 1;
@@ -1255,12 +1259,13 @@ export class Game {
     let weaponText = def.name;
     if (p.weapon && def.maxAmmo) weaponText += `  ${p.weapon.ammo}/${def.maxAmmo}`;
     drawText(ctx, weaponText, L, 4 + T, { color: COLORS.player, scale: 2 });
-    // Miniatura de la máscara equipada (12×12 a ×2) con su nombre.
+    // Miniatura de la máscara equipada: su sprite de partida (16×16 a ×2) con el nombre al lado.
+    const icon = MASK_ICON_SIZE * 2;
     ctx.fillStyle = '#140a24';
-    ctx.fillRect(L - 1, 24 + T, 26, 26);
-    ctx.drawImage(maskIcon(this.mask), L, 25 + T, 24, 24);
-    drawText(ctx, this.mask.name, L + 28, 25 + T, { color: '#9d8fb8' });
-    if (p.noAmmoFlash > 0) drawText(ctx, 'SIN MUNICIÓN', L + 28, 37 + T, { color: COLORS.blood });
+    ctx.fillRect(L - 1, 24 + T, icon + 2, icon + 2);
+    ctx.drawImage(maskIcon(this.mask), L, 25 + T, icon, icon);
+    drawText(ctx, this.mask.name, L + icon + 4, 25 + T, { color: '#9d8fb8' });
+    if (p.noAmmoFlash > 0) drawText(ctx, 'SIN MUNICIÓN', L + icon + 4, 37 + T, { color: COLORS.blood });
 
     const alive = this.enemies.filter((e) => e.alive).length;
     drawText(ctx, `ENEMIGOS ${alive}/${this.enemies.length}`, R, 4 + T, { color: COLORS.enemy, align: 'right' });
@@ -1280,8 +1285,8 @@ export class Game {
     }
 
     if (this.debug) {
-      drawText(ctx, `DEBUG · ${this.fps} FPS · BALAS ${this.bullets.length} · PART ${this.particles.list.length} · CASQ ${this.particles.shells.length}`, L, 54 + T, { color: COLORS.debug });
-      drawText(ctx, `ESCENA ${w}X${h} · ESCALA ${this.view.scale} · MÁSCARA ${this.mask.id}`, L, 65 + T, { color: COLORS.debug });
+      drawText(ctx, `DEBUG · ${this.fps} FPS · BALAS ${this.bullets.length} · PART ${this.particles.list.length} · CASQ ${this.particles.shells.length}`, L, 60 + T, { color: COLORS.debug });
+      drawText(ctx, `ESCENA ${w}X${h} · ESCALA ${this.view.scale} · MÁSCARA ${this.mask.id}`, L, 71 + T, { color: COLORS.debug });
     }
 
     const cx = Math.round(w / 2);

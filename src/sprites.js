@@ -7,9 +7,7 @@ export const WORLD_PX = 2;
 const PALETTE = {
   k: '#140a24', // contorno
   j: '#05d9e8', J: '#037f8c', L: '#9ff6ff', // cazadora del jugador
-  h: '#3b2440', H: '#24152b', i: '#6b4a75', // pelo (+ brillo)
   s: '#f1b48a', S: '#c27a5a',               // piel
-  g: '#ff2a85',                              // gafas neón
   y: '#ffbe0b', Y: '#b38600', u: '#ffe08a', // camisa enemigo (+ brillo)
   c: '#4b2a7a', C: '#2e1850', m: '#6a45a3', // gorra (+ brillo)
   v: '#5b4a2a', V: '#3a2f1a',               // chaleco
@@ -21,26 +19,6 @@ const PALETTE = {
 };
 
 const DEFS = {
-  // Vista cenital: hombros perpendiculares a la mirada, mangas hacia delante hasta los puños
-  // y la cabeza en el centro. Protagonista: cazadora cian, pelo oscuro y gafas neón.
-  player: [
-    '................',
-    '................',
-    '.....kkkk.......',
-    '....kLjjjkkk....',
-    '....kLjjjjjJk...',
-    '...kLjjkkkkJk...',
-    '...kjjkhhhhkk...',
-    '...kjjkhihhgk...',
-    '...kjjkhhhhgk...',
-    '...kjjkhhhHkk...',
-    '...kjjjkkkkJk...',
-    '....kjjjjjjJk...',
-    '....kJjjjkkk....',
-    '.....kkkk.......',
-    '................',
-    '................',
-  ],
   // Patrulla: camisa amarilla y gorra con visera hacia delante.
   enemy: [
     '................',
@@ -110,6 +88,131 @@ const DEFS = {
   arrow: ['j....', 'jj...', 'jjj..', 'jj...', 'j....'],
 };
 
+// --- Jugador: una cabeza por máscara --------------------------------------------------------
+// Cada máscara tiene su sprite completo del jugador: el cuerpo (cazadora cian, mangas hacia
+// delante y hombros perpendiculares a la mirada) es idéntico en todas para que la silueta siga
+// leyéndose como el protagonista; lo único que cambia es la cabeza, que es lo que se ve desde
+// la vista cenital. Las cuadrículas solo definen la forma y usan letras genéricas a las que
+// cada máscara da color en MASK_SKINS:
+//   R luz (arriba-izquierda) · M base · N sombra (abajo-derecha) · O claro · Q acento
+// Mirando a +X, el frente de la cabeza es la columna 12: ahí van visores, hocicos y picos.
+// Las orejas y penachos asoman por encima del cuello (filas 5 y 10).
+const MASK_DEFS = {
+  // NEÓN: casco liso y visor magenta de lado a lado, con el borde encendido. Sin orejas.
+  neon: [
+    '................',
+    '................',
+    '.....kkkk.......',
+    '....kLjjjkkk....',
+    '....kLjjjjjJk...',
+    '...kLjjkMMRJk...',
+    '...kjjkRMMMMk...',
+    '...kjjkRMMQQOk..',
+    '...kjjkNMMQQOk..',
+    '...kjjkNNMMMk...',
+    '...kjjjkMNNJk...',
+    '....kjjjjjjJk...',
+    '....kJjjjkkk....',
+    '.....kkkk.......',
+    '................',
+    '................',
+  ],
+  // OSO: cabezón pardo y redondo, hocico claro y nariz negra asomando al frente.
+  oso: [
+    '................',
+    '................',
+    '.....kkkk.......',
+    '....kLjjjkkk....',
+    '....kLjjjjjJk...',
+    '...kLjjkMRRJk...',
+    '...kjjkRMMMMk...',
+    '...kjjkRMMOOQk..',
+    '...kjjkNMMOOQk..',
+    '...kjjkNNMMMk...',
+    '...kjjjkNNMJk...',
+    '....kjjjjjjJk...',
+    '....kJjjjkkk....',
+    '.....kkkk.......',
+    '................',
+    '................',
+  ],
+  // GUEPARDO: naranja, orejas oscuras asomando por detrás y las dos rayas de lágrima
+  // flanqueando el hocico crema.
+  guepardo: [
+    '................',
+    '................',
+    '.....kkkk.......',
+    '....kLjjjkkk....',
+    '....kLjjjjjJk...',
+    '...kLjjkQMRJk...',
+    '...kjjkRMMQQk...',
+    '...kjjkRMMOOOk..',
+    '...kjjkNMMOOOk..',
+    '...kjjkNNMQQk...',
+    '...kjjjkQMNJk...',
+    '....kjjjjjjJk...',
+    '....kJjjjkkk....',
+    '.....kkkk.......',
+    '................',
+    '................',
+  ],
+  // TIBURÓN: cabeza en cuña gris azulada, morro blanco en punta y aleta dorsal oscura
+  // asomando por detrás.
+  tiburon: [
+    '................',
+    '................',
+    '.....kkkk.......',
+    '....kLjjjkkk....',
+    '....kLjjjjjJk...',
+    '...kLjjkkMRJk...',
+    '...kjjkRMMMMk...',
+    '...kjjQQMMOOOk..',
+    '...kjjQQNMOOOk..',
+    '...kjjkNNMMMk...',
+    '...kjjjkkNNJk...',
+    '....kjjjjjjJk...',
+    '....kJjjjkkk....',
+    '.....kkkk.......',
+    '................',
+    '................',
+  ],
+  // BÚHO: cabeza morada ancha, dos ojos ámbar en las esquinas delanteras y el pico naranja
+  // entre ellos.
+  buho: [
+    '................',
+    '................',
+    '.....kkkk.......',
+    '....kLjjjkkk....',
+    '....kLjjjjjJk...',
+    '...kLjjkMRRJk...',
+    '...kjjkRMMQQk...',
+    '...kjjkRMMMMOk..',
+    '...kjjkNMMMMOk..',
+    '...kjjkNMMQQk...',
+    '...kjjjkNNNJk...',
+    '....kjjjjjjJk...',
+    '....kJjjjkkk....',
+    '.....kkkk.......',
+    '................',
+    '................',
+  ],
+};
+
+// Color de cada máscara: alto contraste contra el fondo oscuro y, sobre todo, contra la
+// cazadora cian del propio jugador (por eso el visor de NEÓN es magenta y no cian).
+const MASK_SKINS = {
+  neon:     { R: '#7878ae', M: '#4e4e78', N: '#2a2a44', O: '#ff9ed4', Q: '#ff2a85' },
+  oso:      { R: '#c88a58', M: '#a06840', N: '#6b3d1f', O: '#e8c49a', Q: '#1f1208' },
+  guepardo: { R: '#ffd089', M: '#ffb23f', N: '#c47a1a', O: '#fff1d0', Q: '#4a2a08' },
+  tiburon:  { R: '#9fb0d6', M: '#6c7fa8', N: '#45557a', O: '#f5f3ff', Q: '#3c4a6e' },
+  buho:     { R: '#9b74c4', M: '#7a53a0', N: '#4a3366', O: '#ff8a3d', Q: '#ffd166' },
+};
+
+// Nombre del sprite del jugador con una máscara puesta (las máscaras desconocidas usan NEÓN).
+export function playerSprite(maskId) {
+  return MASK_DEFS[maskId] ? `player_${maskId}` : 'player_neon';
+}
+
 // Variantes recoloreadas de la plantilla "tumbado".
 const RECOLORS = {
   enemyDown: ['lying', {}],
@@ -141,8 +244,29 @@ export function sprites() {
     cache = {};
     for (const [name, rows] of Object.entries(DEFS)) cache[name] = buildSprite(rows);
     for (const [name, [base, colors]] of Object.entries(RECOLORS)) cache[name] = buildSprite(DEFS[base], colors);
+    for (const [id, rows] of Object.entries(MASK_DEFS)) cache[`player_${id}`] = buildSprite(rows, MASK_SKINS[id]);
   }
   return cache;
+}
+
+const upright = new Map();
+// Copia de un sprite mirando hacia arriba (-Y), para los iconos de menú y HUD: se hornea una
+// vez girando el bitmap de partida 90°, así el icono nunca puede divergir de lo que se ve en el
+// piso. El giro es de 90° exactos alrededor del centro, así que no desplaza ni difumina píxeles.
+export function uprightSprite(name) {
+  if (!upright.has(name)) {
+    const img = sprites()[name];
+    const c = document.createElement('canvas');
+    c.width = img.height;
+    c.height = img.width;
+    const ctx = c.getContext('2d');
+    ctx.imageSmoothingEnabled = false;
+    ctx.translate(c.width / 2, c.height / 2);
+    ctx.rotate(-Math.PI / 2);
+    ctx.drawImage(img, -img.width / 2, -img.height / 2);
+    upright.set(name, c);
+  }
+  return upright.get(name);
 }
 
 // Dibuja un sprite en coordenadas del mundo. (ox, oy) = píxel del sprite que cae en (x, y)
