@@ -27,7 +27,8 @@ HTML5 Canvas, JavaScript Vanilla (ES Modules) y Vite. Sin frameworks ni librerí
   - `player.js` — movimiento, apuntado, ataque, ejecución de derribados, patada, recoger/lanzar
     armas, nivel de sangre del personaje y suelas manchadas (huellas).
   - `enemy.js` — IA de enemigos (patrulla, visión, persecución, búsqueda, derribado, `executing`
-    mientras los rematan) y tipo armado.
+    mientras los rematan), tipo armado y las variantes `runner` (corredor) y `heavy` (guardia pesado).
+  - `boss.js` — `Boss` (subclase de `Enemy`): el jefe del piso 6, EL EJECUTOR, y su barra de vida (`drawBossBar`).
   - `doors.js` — puertas batientes: física de la hoja, empuje, patada y derribo; la puerta principal
     del edificio (`main`) se bloquea (`lock`: se cierra de golpe) y se desbloquea (`unlock`).
   - `map.js` — tilemap, colisiones AABB con sliding, raycast/línea de visión (paredes + puertas),
@@ -77,13 +78,28 @@ HTML5 Canvas, JavaScript Vanilla (ES Modules) y Vite. Sin frameworks ni librerí
   sangre, sin recargar la página. Audio, efectos y `Score` persisten entre reinicios.
 
 ## Niveles y flujo
+- **Campaña de 6 pisos** (`LEVELS`): 1 Recepción · 2 Oficinas · 3 Ático · **4 El Club** · **5 Almacén** · **6 Penthouse (jefe)**. Los
+  tres últimos se generaron con una herramienta que compone salas y puertas, comparten el exterior del piso 3 (vestíbulo, puerta
+  principal, calle y moto) y pasan `npm run check:levels`:
+  - **Piso 4 · EL CLUB** (`strobe: true`): salas VIP estrechas (7×6) a los lados, pasillos de 2 casillas y una pista de baile de 24×19 con
+    cabina de DJ, barra y mesas de cobertura. 12 enemigos: 4 **corredores** (ágiles, cuerpo a cuerpo), bates/tubos y armados. Luces
+    estroboscópicas (`drawStrobe`: pulso de color a cada tiempo de 0,46 s —cian, magenta, violeta, ámbar—, destello blanco cada
+    compás y haces diagonales; máx. 22 % de opacidad) apagables en Opciones (`LUCES ESTROBOSCÓPICAS`, `strobeEnabled`).
+  - **Piso 5 · ALMACÉN**: una nave de 46×13 con estanterías largas (aisles de 2 casillas = cobertura) y cuatro oficinas debajo con puertas
+    a la nave y dos al vestíbulo. 11 enemigos con **3 guardias pesados** (escopeta) y subfusiles; garantizados escopeta y subfusil.
+  - **Piso 6 · PENTHOUSE** (`boss: true`): salón de recepción largo (3 guardias), dos alas de dos salas (4 enemigos) y la **arena del jefe**
+    (20×13, cuatro columnas 2×2, mesa central y escritorio al fondo) con puertas al salón y a ambos flancos. Garantizados escopeta,
+    bate, subfusil y tubo. Ver "El jefe".
+- Los pisos nuevos usan `loadLevel` normal; `loadLevel` devuelve además `strobe` y `boss`. El selector de pisos muestra una **ventana
+  deslizante** de tarjetas cuando no caben todas (`floorsLayout`: `first`/`perPage`, flechas `<` `>` y toque en los bordes).
 - Los pisos están en `LEVELS` (`src/map.js`): `{ name, floor, par, rows, zones, props, loot, … }`.
   `par` = tiempo objetivo (s); `zones`/`props`: ver "Diseño de niveles".
   Leyenda del tilemap: `#` pared · `.` suelo · `D` puerta · `N` puerta principal del edificio (una por
   piso: se bloquea al entrar) · `P` jugador al bajar de la moto (en la acera) ·
   `E`/`A` enemigo melee/armado (patrulla en el eje más largo) · `V`/`W` melee/armado con patrulla
   vertical forzada (para cruzar patrullas) · `B` bate · `G` pistola · `S` escopeta ·
-  `K` cuchillo · `T` tubo · `M` subfusil · `?` arma aleatoria (ver "Reparto de armas").
+  `K` cuchillo · `T` tubo · `M` subfusil · `?` arma aleatoria (ver "Reparto de armas") ·
+  `R` corredor (melee ágil) · `H` guardia pesado (escopeta) · `X` jefe (uno por piso, en su sitio hasta verte u oírte).
   `loadLevel` valida anchos de fila, `P`, la puerta principal `N` (una, en pared horizontal), la moto
   (mueble `bike`) y la colocación de los muebles; devuelve además `entry` (el punto dos casillas dentro
   de la puerta principal, con `lockY`, el umbral) y `bike`.
@@ -476,9 +492,35 @@ Alcance en unidades del mundo (1 casilla = 32). Cadencia = segundos entre ataque
 |---|---|---|---|---|---|
 | Pistola | 320 | 0,38 s | 1 | 0,7 s | pistola con 4 balas |
 | Subfusil | 280 | 0,45 s | ráfaga de 4 (cada 0,09 s) | 0,95 s | subfusil con 12 balas |
+| Escopeta (guardia pesado) | 250 | 0,55 s | 5 perdigones en abanico ±0,3 rad (alcance 270) | 1,2 s | escopeta con 2 balas |
 
+- **Variantes de enemigo** (`Enemy(kind)`, letra del mapa): **corredor** `R` (sprite rosa; patrulla ×1,5 y persigue ×1,16 ≈ 223 u/s,
+  aún por debajo del jugador; golpea tras 0,12 s en vez de 0,17 s) y **guardia pesado** `H` (hitbox 11, ×0,88 de velocidad, escopeta; sprite
+  granate). Cada uno tiene su `sprite`/`corpseSprite` (recolores en `sprites.js`).
 - Si el enemigo pierde la línea de visión, el aviso y la ráfaga se cancelan (cubrirse tras
   esquinas funciona). Al morir o ser derribado suelta su arma.
+
+### El jefe: EL EJECUTOR (`boss.js`, piso 6)
+Un matón hiper-acorazado (`Boss extends Enemy`, hitbox 14, **12 de vida**, barra arriba al centro con marcas al 60 % y 30 %). Se queda quieto
+(`awake` = false, vigila) hasta verte a ≤ 150 u, oírte o recibir un golpe; al despertar sale el cartel `¡EL EJECUTOR!`. El resto del piso
+cuenta igual: el piso se despeja al caer todos, jefe incluido.
+- **Ataques** (cada uno con aviso; `mode`: `cool` → ataque → `recover` → `cool`): **embestida** (`windCharge` 0,78/0,62/0,50 s según fase: línea roja
+  en el suelo; el rumbo se bloquea en el último 30 % del aviso; carga a 430 u/s hasta 1,7 s, lo bastante para cruzar la arena; mata si te
+  alcanza), **tajo** (`windSlash` a < 52 u, arco de ~63°) y **descarga** de escopeta con mira láser (`windVolley`, solo si te ve; 2 en la fase 3).
+  Las fases (`phase` 0/1/2 por vida) lo aceleran y acortan el respiro (1,0/0,7/0,45 s).
+- **Entorno**: si la embestida choca con una pared o un mueble (`moveAndSlide` con `hitX/hitY`) queda **aturdido** 2,4 s (`crash`: sacudida 16,
+  polvo, chispas). **Las puertas las revienta** (`door.kick`) y sigue; las bloqueadas cuentan como pared. Úsalo de cebo: ponte tras una columna
+  de la arena o al fondo en línea con un muro.
+- **Coraza** (`guardKill`/`guardKnock`, los llama `Game.killEnemy`/`knockDown` antes de matar): un golpe cuya dirección difiere más de
+  `π − 1,22` del frente del jefe viene de frente (si está derribado no cuenta la coraza). De frente: pistola y subfusil **rebotan** (0), escopeta
+  0,3 por perdigón, cuerpo a cuerpo 0 (rebota y el jugador se resiente 0,3 s). Por la espalda/costados: pistola 1,5 · subfusil 0,6 ·
+  perdigón 0,9 · bate 3 · tubo 2,5 · cuchillo 2 · puños 1,5. Las balas del jugador llevan `b.src` (tipo de arma) para distinguirlo.
+- **Aturdimiento**: arma lanzada (2,6 s), portazo o choque (2,4 s) → `state 'down'`, rematable. La ejecución es lo que más daña
+  (`EXEC_DMG`: bate y escopeta 4,5 · tubo/cuchillo/pistola 3,5 · puños/subfusil 3; los golpes intermedios `onWound` restan 0,8 y nunca
+  rematan). Tras levantarse es **inmune a nuevos derribos 2,5 s** (sin aturdimiento encadenado). Los puños no lo derriban.
+- **Dificultad justa**: con arma lanzada o un choque + remate (≈ 4,5) bastan unos 3 ciclos; la escopeta de cerca y el bate por la espalda
+  aceleran la pelea. Cambiar de arma importa: pistola/subfusil solo sirven si lo rodeas.
+- Cadáver: `bossCorpse` a escala 1,5 (`corpseScale`). F1 muestra `mode` y vida sobre el jefe.
 
 ### Reparto de armas en los pisos
 - Puntos `?` del mapa: armas aleatorias. Cada piso define en `LEVELS` `guaranteed` (siempre
@@ -526,16 +568,28 @@ en lugar de un golpe instantáneo. Sustituye al antiguo remate instantáneo (`fi
   punto de levantarse (`timer` < 0,9 s) y se cierran sobre él durante la carga, y la etiqueta
   `E · CLIC` (`REMATAR` en táctil, con `game.hint`) debajo del enemigo para no chocar con los
   popups de puntos, que flotan por encima.
-- **Secuencia** (`Player.exec = { target, t, hit, style }`, `EXEC_TIME` 0,42 s, golpe en
-  `EXEC_HIT` 0,27 s): el jugador queda **clavado** (sin movimiento, ataque ni recoger/lanzar:
-  `update` sale pronto), mirando al objetivo. Carga (0 → 0,27 s), golpe, recogida (0,27 → 0,42 s).
-  Suena `execWind` al empezar y `crunch` al golpear.
-- **Estilo según el arma** (`execPose`/`drawExecTool`): sin arma, **pisotón** (sprite `boot`); con
-  arma cuerpo a cuerpo (tubo, bate, cuchillo) o pistola sin balas, **golpe de arriba abajo**; con
-  balas, **disparo a quemarropa** (gasta una, suena su disparo y hace su ruido). En vista cenital
-  "arriba" es hacia la cámara: al levantarse la herramienta se dibuja al doble de tamaño y por
-  **encima** del jugador (la bota sube adelante, sobre la víctima, para no taparlo) y baja a
-  tamaño normal al golpear; el cuerpo se echa atrás al cargar y hacia delante al golpear.
+- **Secuencia** (`Player.exec = { target, t, hit, hitIdx, style, spec }`; `EXEC_STYLES[style] = { time, hits[] }`): el jugador queda
+  **clavado** (sin movimiento, ataque ni recoger/lanzar: `update` sale pronto), mirando al objetivo. Cada golpe es un ciclo de carga y
+  recogida; los `hits` intermedios solo **hieren** (`game.woundEnemy`: sangre, sacudida, sonido) y el último es la baja. Suena
+  `execWind` al empezar y `crunch` al golpear.
+- **Una ejecución distinta por arma** (`startExecution` elige el estilo; `execPose`/`drawExecTool` lo dibujan):
+
+  | Arma | Estilo | Tiempo | Golpes (s) | Qué se ve |
+  |---|---|---|---|---|
+  | Puños | `stomp` | 0,42 | 0,27 | pisotón (sprite `boot`) |
+  | Bate | `bat` | 0,64 | 0,44 | swing enorme y lento hacia la cabeza: se levanta a ×2,4, el cuerpo se echa atrás y cae con sacudida 16 |
+  | Tubo | `pipe` | 0,58 | 0,20 · 0,40 | dos golpes secos seguidos |
+  | Cuchillo | `knife` | 0,70 | 0,17 · 0,30 · 0,44 | no se levanta: el brazo se echa atrás y puñala tres veces hacia delante |
+  | Pistola | `shoot` | 0,42 | 0,27 | disparo a quemarropa |
+  | Escopeta | `blast` | 0,52 | 0,32 | descarga con gran retroceso (sacudida 18, chispas ×16) |
+  | Subfusil | `burst` | 0,52 | 0,24 · 0,31 · 0,38 | ráfaga de tres (gasta 3 balas) |
+  | Arma de fuego vacía | `smash` | 0,42 | 0,27 | culatazo de arriba abajo |
+
+  Las herramientas que se levantan (pisotón, bate, tubo, culatazo) se dibujan al doble de tamaño y por **encima** del jugador (en vista
+  cenital "arriba" es hacia la cámara); el cuchillo y las armas de fuego no se levantan.
+- **Ataque normal por arma** (`Player.draw`): el **bate** barre un arco que arranca lento y acaba fuerte (`t^1,6`); el **tubo**, un arco
+  uniforme; el **cuchillo** puñala hacia delante (sin girar) con un empuje del cuerpo; las armas de fuego **retroceden** (`RECOIL`: pistola 3 u,
+  escopeta 6 u + bombeo de la corredera, subfusil 1,5 u por disparo). Todo vive en el jugador, así que sirve igual con ratón y con táctil.
 - **Golpe** (`landExecution` → `killEnemy(e, ángulo, 'execution')`): `KILL_FEEL.execution` (ver la
   tabla de arriba) con hit-stop **70 ms**, la sacudida más fuerte (14), el charco mayor y un
   salpicado hacia donde cae el golpe; `crunch` en vez de `hit`; +1000 puntos **EJECUCIÓN** (el
@@ -720,7 +774,7 @@ Colores centralizados en `COLORS` (`src/utils.js`) y `PALETTE` (`src/sprites.js`
   `Settings` guarda `{ version: 1, values: {…} }` en `localStorage` clave **`neonrush.settings.v1`** (lectura defensiva
   con `sanitize`: JSON corrupto, tipos o valores fuera de rango → valor por defecto; escritura con try/catch). `set`/`adjust`
   guardan y llaman a `apply`; `applyAll` (al final del constructor de `Game`) aplica lo guardado; `reset` restaura.
-- **Opciones actuales**: AUDIO `musicVolume`, `sfxVolume` (0–100 % de 10 en 10) · JUEGO `goreEnabled` · TÁCTIL `buttonScale`
+- **Opciones actuales**: AUDIO `musicVolume`, `sfxVolume` (0–100 % de 10 en 10) · JUEGO `strobeEnabled` (LUCES ESTROBOSCÓPICAS del club), `goreEnabled` · TÁCTIL `buttonScale`
   (PEQUEÑO 0,85 / NORMAL 1 / GRANDE 1,2), `buttonOpacity` (BAJA 0,5 / MEDIA 0,75 / ALTA 1), `stickFire` (DISPARO CON JOYSTICK: BORDE 0,85 / FÁCIL 0,6 / NO = solo apunta; escribe `fireThreshold`), `autoFire` (DISPARO AUTOMÁTICO), `hapticsEnabled`,
   `aimAssist` (OFF / SUAVE / ALTO; el antiguo sí/no se migra: true → SUAVE, false → OFF). Las táctiles escriben en `touch.setConfig`.
 - **Audio** (`audio.js`): `sfx.setVolumes({ music, sfx })`. Hay un `sfxBus` nuevo entre todos los efectos (y la moto) y el master;

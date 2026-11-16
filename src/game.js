@@ -7,8 +7,9 @@ import { ScoreHistory, FloorStats, MAX_ENTRIES, newRunId, formatDate } from './s
 import { Menu } from './menu.js';
 import { TouchControls } from './touch.js';
 import { Settings } from './settings.js';
+import { Boss, drawBossBar } from './boss.js';
 import { buildOptionsMenu, buildPauseMenu } from './options-menu.js';
-import { Player, bloodLevelFor, FINISH_RANGE, EXEC_HIT } from './player.js';
+import { Player, bloodLevelFor, FINISH_RANGE } from './player.js';
 import { Enemy } from './enemy.js';
 import { Door, ENEMY_PUSH_SPEED } from './doors.js';
 import { Pickup, Bullet, ENEMY_WEAPONS, segmentPointDistance } from './weapons.js';
@@ -435,6 +436,13 @@ export class Game {
       .catch(() => {});
   }
 
+  // Crea el enemigo de una casilla del mapa según su tipo (ver ENEMY_CHARS en map.js).
+  makeEnemy(e) {
+    if (e.kind === 'boss') return new Boss(e.x, e.y);
+    const weapon = e.weapon ? { type: e.weapon, ammo: ENEMY_WEAPONS[e.weapon].dropAmmo } : null;
+    return new Enemy(e.x, e.y, e.patrol, weapon, e.kind);
+  }
+
   // --- Menús modales (options-menu.js): OPCIONES y PAUSA -------------------------------------
   openOptions(onBack = () => this.closePanel()) {
     this.panel = buildOptionsMenu(this, onBack);
@@ -577,6 +585,8 @@ export class Game {
     this.sfx.stopMoto(0.05); // R, piso nuevo...: si la moto sonaba, se corta limpia
     const level = loadLevel(this.levelIndex, seededRandom(hashString(`${this.runId}:${this.levelIndex}`)));
     this.levelName = level.name;
+    this.strobe = level.strobe;   // el club: luces estroboscópicas (opción `strobeEnabled`)
+    this.hasBoss = level.boss;
     this.par = level.par;
     this.map = level.map;
     const retryInside = !arrival && this.entered;
@@ -592,8 +602,7 @@ export class Game {
     this.cine = null;
     this.callout = null;
     this.goalAge = 0;
-    this.enemies = level.enemies.map((e) => new Enemy(e.x, e.y, e.patrol,
-      e.weapon ? { type: e.weapon, ammo: ENEMY_WEAPONS[e.weapon].dropAmmo } : null));
+    this.enemies = level.enemies.map((e) => this.makeEnemy(e));
     this.pickups = level.weapons.map((w) => new Pickup(w.type, w.x, w.y));
     this.doors = level.doors.map((d) => new Door(d.tx, d.ty, d.horizontal, d.main));
     this.mainDoor = this.doors.find((d) => d.main);
@@ -949,7 +958,7 @@ export class Game {
         for (const e of this.enemies) {
           if (!e.alive) continue;
           if (segmentPointDistance(b.px, b.py, b.x, b.y, e.x, e.y) < e.r + b.r) {
-            this.killEnemy(e, Math.atan2(b.vy, b.vx), 'bullet');
+            this.killEnemy(e, Math.atan2(b.vy, b.vx), 'bullet', b);
             b.alive = false;
             b.hitWall = false;
             break;
@@ -1015,8 +1024,10 @@ export class Game {
   }
 
   // `cause` es el estilo de la baja para la puntuación (ver STYLE en score.js).
-  killEnemy(e, angle, cause = 'bullet') {
+  killEnemy(e, angle, cause = 'bullet', src = null) {
     if (!e.alive) return;
+    // El jefe absorbe los golpes que no lo matan (coraza, vida): ver Boss.guardKill.
+    if (e.guardKill && !e.guardKill(cause, angle, this, src)) return;
     const feel = KILL_FEEL[cause] || KILL_FEEL.bullet;
     e.alive = false;
     this.addScore(cause, e);
@@ -1024,7 +1035,7 @@ export class Game {
     e.corpse = { x: e.x + Math.cos(angle) * 8, y: e.y + Math.sin(angle) * 8 }; // donde se estampa el cadáver
     this.bleed(e.x, e.y, angle, feel.power, feel.wide);
     this.stainPlayer(feel.power, angle);
-    this.drawCorpse(e.x, e.y, angle, e.armed ? 'armedCorpse' : 'enemyCorpse');
+    this.drawCorpse(e.x, e.y, angle, e.corpseSprite || (e.armed ? 'armedCorpse' : 'enemyCorpse'), e.corpseScale || 1);
     this.camera.addShake(feel.shake);
     this.fx.kick(feel.fx);
     this.hitstop = Math.max(this.hitstop, feel.stop);
@@ -1082,8 +1093,25 @@ export class Game {
     if (this.score.combo > 1) this.sfx.play('combo', 1, this.score.combo);
   }
 
+  // Golpe intermedio de una ejecución (cuchillo, tubo, ráfaga): hiere sin matar. Salpica un poco, hace
+  // temblar al derribado y suena; sin sangre (ajuste) salen chispas de neón.
+  woundEnemy(e, angle, style) {
+    if (e.onWound) e.onWound(style, this);
+    if (this.goreOn) {
+      this.particles.blood(e.x, e.y, angle, style === 'burst' ? 6 : 9, 0.8);
+      this.splatBlood(e.x, e.y, angle, 0.4, 0.6);
+    } else {
+      this.particles.neon(e.x, e.y, angle, 8, 0.9);
+    }
+    this.stainPlayer(0.35, angle);
+    this.camera.addShake(4);
+    this.hitstop = Math.max(this.hitstop, 0.03);
+    this.sfx.play(style === 'knife' ? 'hit' : 'crunch', 0.6);
+  }
+
   knockDown(e, angle, cause = 'fists') {
     if (!e.standing) return;
+    if (e.guardKnock && !e.guardKnock(cause, angle, this)) return;
     e.knockDown(angle, this.map);
     this.addScore(cause, e);
     this.dropWeapon(e);
@@ -1137,12 +1165,16 @@ export class Game {
     let bx = e.x + cos * 14, by = e.y + sin * 14;
     if (isSolidAt(this.map, bx, by)) { bx = e.x; by = e.y; }
     const def = e.gunDef;
-    const angle = e.angle + rand(-def.spread, def.spread);
-    this.bullets.push(new Bullet(bx, by, angle, def.bulletSpeed, 'enemy'));
+    const pellets = def.pellets || 1;
+    for (let i = 0; i < pellets; i++) {
+      const angle = e.angle + (pellets > 1 ? rand(-def.fan, def.fan) : rand(-def.spread, def.spread));
+      const speed = def.bulletSpeed * (pellets > 1 ? 0.85 + Math.random() * 0.3 : 1);
+      this.bullets.push(new Bullet(bx, by, angle, speed, 'enemy', def.bulletRange || Infinity));
+    }
     this.particles.sparks(e.x + cos * 20, e.y + sin * 20, e.angle, def.burst > 1 ? 4 : 6, 0.45);
     this.particles.shell(e.x + cos * 6, e.y + sin * 6, e.angle + Math.PI / 2);
     this.playAt(def.sound, e.x, e.y);
-    this.camera.addShake(def.burst > 1 ? 1 : 2);
+    this.camera.addShake(def.burst > 1 ? 1 : pellets > 1 ? 5 : 2);
   }
 
   makeNoise(x, y, radius) {
@@ -1297,11 +1329,11 @@ export class Game {
   }
 
   // El cadáver es el sprite tumbado estampado (rotado, sin suavizado) en la capa de sangre.
-  drawCorpse(x, y, angle, sprite) {
+  drawCorpse(x, y, angle, sprite, scale = 1) {
     const ctx = this.bloodCtx;
     ctx.save();
     ctx.translate(Math.round((x + Math.cos(angle) * 8) / WORLD_PX), Math.round((y + Math.sin(angle) * 8) / WORLD_PX));
-    drawSprite(ctx, sprite, 0, 0, angle, { scale: 1 });
+    drawSprite(ctx, sprite, 0, 0, angle, { scale });
     ctx.restore();
   }
 
@@ -1361,6 +1393,7 @@ export class Game {
     if (this.debug) this.renderDebug(ctx);
 
     ctx.setTransform(1, 0, 0, 1, 0, 0);
+    this.drawStrobe(ctx);
     this.renderHud(ctx);
     this.drawFade(ctx);
 
@@ -1440,7 +1473,7 @@ export class Game {
       const urgent = e.timer < 0.9 && !e.executing;
       const blink = Math.floor(now / (urgent ? 70 : 130)) % 2;
       const executing = p.exec && p.exec.target === e;
-      const half = executing ? 14 - 8 * Math.min(1, p.exec.t / EXEC_HIT) : 13 + blink;
+      const half = executing ? 14 - 8 * Math.min(1, p.exec.t / p.exec.spec.hits[Math.min(p.exec.hitIdx, p.exec.spec.hits.length - 1)]) : 13 + blink;
       ctx.globalAlpha = isTarget ? 1 : 0.4;
       ctx.fillStyle = executing && p.exec.hit ? '#ffffff' : blink ? COLORS.text : COLORS.enemyBullet;
       const x0 = e.x - half, x1 = e.x + half, y0 = e.y - half, y1 = e.y + half;
@@ -1697,6 +1730,33 @@ export class Game {
   }
 
   // Escala de texto más grande (hasta `preferred`) con la que el texto cabe en `maxW`.
+  // Luces estroboscópicas del club (piso 4): sobre la escena, una pulsación de color neón a cada tiempo
+  // (cian, magenta, violeta, ámbar) con un destello blanco corto en los golpes fuertes y un parpadeo rápido
+  // muy suave. Nunca supera el 22 % de opacidad, y se puede apagar en Opciones (`LUCES ESTROBOSCÓPICAS`)
+  // por si molesta (fotosensibilidad). Solo con el piso en juego.
+  drawStrobe(ctx) {
+    if (!this.strobe || !this.settings.get('strobeEnabled') || this.panel) return;
+    if (this.state !== 'playing' && this.state !== 'cleared') return;
+    const t = performance.now() / 1000, beat = 0.46;
+    const i = Math.floor(t / beat), f = (t / beat) % 1;
+    const colors = ['#05d9e8', '#ff2a85', '#9b5cff', '#ffbe0b'];
+    const pulse = Math.max(0, 1 - f * 3.2);                 // decae rápido tras cada tiempo
+    const flash = i % 4 === 0 && f < 0.1 ? 0.1 : 0;         // destello blanco en el primer tiempo de cada compás
+    const w = this.scene.width, h = this.scene.height;
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.globalAlpha = 0.04 + pulse * 0.18;
+    ctx.fillStyle = colors[i % colors.length];
+    ctx.fillRect(0, 0, w, h);
+    if (flash) { ctx.globalAlpha = flash; ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, w, h); }
+    // Haces de luz: dos barras diagonales del color contrario que barren la pista.
+    ctx.globalAlpha = 0.05 + pulse * 0.05;
+    ctx.fillStyle = colors[(i + 2) % colors.length];
+    const sweep = Math.round(((t * 40) % (w + 60)) - 30);
+    for (let k = 0; k < h; k += 2) ctx.fillRect(sweep + Math.round(k * 0.35), k, 5, 2);
+    ctx.restore();
+  }
+
   // Cartel grande (SALIDAS BLOQUEADAS, PISO COMPLETADO): una franja oscura se abre desde el centro con
   // filos de neón, el texto entra deslizándose con doble sombra rosa/cian y un destello lo barre; el
   // subtítulo aparece después y todo se desvanece al final. Ocupa el centro: el objetivo va aparte.
@@ -1844,6 +1904,8 @@ export class Game {
     }
     this.drawPopups(ctx);
     this.drawExecutePrompt(ctx);
+    const boss = this.enemies.find((e) => e.kind === 'boss' && e.alive && e.awake);
+    if (boss && this.state !== 'cleared') drawBossBar(ctx, boss, w, 32 + this.safe.t);
 
     // Márgenes del HUD: separación fija + zona segura (muesca / esquinas redondeadas).
     const L = 6 + this.safe.l, R = w - 6 - this.safe.r, T = this.safe.t;

@@ -22,6 +22,8 @@ export const WEAPON_DEFS = {
 export const ENEMY_WEAPONS = {
   gun: { range: 320, windup: 0.38, cooldown: 0.7, bulletSpeed: 650, spread: 0.05, burst: 1, burstInterval: 0, dropAmmo: 4, sound: 'enemyShot' },
   smg: { range: 280, windup: 0.45, cooldown: 0.95, bulletSpeed: 600, spread: 0.13, burst: 4, burstInterval: 0.09, dropAmmo: 12, sound: 'smg' },
+  // Escopeta del guardia pesado: cinco perdigones en abanico (`fan`), alcance corto y mucho aviso.
+  shotgun: { range: 250, windup: 0.55, cooldown: 1.2, bulletSpeed: 640, spread: 0.06, burst: 1, burstInterval: 0, dropAmmo: 2, sound: 'shotgun', pellets: 5, fan: 0.3, bulletRange: 270 },
 };
 
 const THROW_DECEL = 900;      // px/s² de frenado del arma lanzada

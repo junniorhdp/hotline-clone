@@ -393,6 +393,12 @@ export function playerBody(maskId, level = 0) {
 const RECOLORS = {
   enemyDown: ['lying', {}],
   enemyCorpse: ['lying', { b: '#8c6a00', B: '#5c4500', s: '#9a5a40', S: '#6e3c2a' }],
+  // Corredor (rosa, cuerpo a cuerpo) y guardia pesado (chaleco granate y mangas de acero).
+  enemyRunner: ['enemy', { y: '#ff4fa3', Y: '#a31f66', u: '#ffc2e0', c: '#05d9e8', C: '#037f8c', m: '#9ff6ff' }],
+  enemyHeavy: ['enemyArmed', { v: '#8a1c2b', V: '#4a0f18', y: '#6b6b85', Y: '#3a3a52' }],
+  runnerCorpse: ['lying', { b: '#a31f66', B: '#6b1243', s: '#9a5a40', S: '#6e3c2a' }],
+  heavyCorpse: ['lying', { b: '#4a0f18', B: '#2a0710', s: '#9a5a40', S: '#6e3c2a' }],
+  bossCorpse: ['lying', { b: '#2b2b3a', B: '#14141e', s: '#9a5a40', S: '#6e3c2a' }],
   armedCorpse: ['lying', { b: '#3a2f1a', B: '#241d10', s: '#9a5a40', S: '#6e3c2a' }],
   playerCorpse: ['lying', { b: '#037f8c', B: '#025a63', s: '#9a5a40', S: '#6e3c2a' }],
   // La huella se oscurece al enfriarse: rojo vivo, medio y coagulado.

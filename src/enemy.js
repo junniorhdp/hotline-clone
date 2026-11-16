@@ -30,13 +30,23 @@ const DOOR_PUSH_WINDOW = 1.2;   // s durante los que puede empujar tras la pausa
 
 export class Enemy {
   // weapon: null (cuerpo a cuerpo) o { type: 'gun', ammo } para el enemigo armado
-  constructor(x, y, patrol, weapon = null) {
+  // kind: 'grunt' (el de siempre) | 'runner' (corredor ágil, cuerpo a cuerpo) | 'heavy' (guardia pesado con
+  // escopeta) | el jefe es una subclase (boss.js).
+  constructor(x, y, patrol, weapon = null, kind = 'grunt') {
     this.x = x;
     this.y = y;
-    this.r = 10;
+    this.r = kind === 'heavy' ? 11 : 10;
     this.patrol = patrol;
     this.weapon = weapon;
     this.armed = !!weapon;  // el sprite con chaleco se mantiene aunque suelte el arma
+    this.kind = kind;
+    // Corredor: patrulla y persigue más rápido (aún un poco por debajo del jugador) y golpea antes.
+    // Pesado: más lento y robusto (hitbox mayor), dispara una escopeta con mucho aviso.
+    this.speedMul = kind === 'runner' ? 1.16 : kind === 'heavy' ? 0.88 : 1;
+    this.patrolMul = kind === 'runner' ? 1.5 : 1;
+    this.windupTime = kind === 'runner' ? 0.12 : WINDUP;
+    this.sprite = kind === 'runner' ? 'enemyRunner' : kind === 'heavy' ? 'enemyHeavy' : (weapon ? 'enemyArmed' : 'enemy');
+    this.corpseSprite = kind === 'runner' ? 'runnerCorpse' : kind === 'heavy' ? 'heavyCorpse' : (weapon ? 'armedCorpse' : 'enemyCorpse');
     this.gunDef = weapon ? ENEMY_WEAPONS[weapon.type] : null;
     this.burstLeft = 0;     // balas que quedan de la ráfaga en curso
     this.burstTimer = 0;
@@ -129,7 +139,7 @@ export class Enemy {
         break;
       case 'chase': this.updateChase(dt, game); break;
       case 'investigate':
-        if (this.goTo(this.target.x, this.target.y, INVESTIGATE_SPEED, dt, game.map)) this.startSearch();
+        if (this.goTo(this.target.x, this.target.y, INVESTIGATE_SPEED * this.speedMul, dt, game.map)) this.startSearch();
         break;
       case 'search':
         this.angle += 2.2 * dt;
@@ -153,7 +163,7 @@ export class Enemy {
       return;
     }
     const wp = this.patrol[this.wp];
-    if (this.goTo(wp.x, wp.y, PATROL_SPEED, dt, map)) {
+    if (this.goTo(wp.x, wp.y, PATROL_SPEED * this.patrolMul, dt, map)) {
       this.wp = (this.wp + 1) % this.patrol.length;
       this.wait = PATROL_WAIT;
     }
@@ -169,7 +179,7 @@ export class Enemy {
       // Una ráfaga cortada a medias deja un pequeño respiro antes de volver a apuntar.
       if (this.burstLeft > 0) this.attackCd = this.gunDef.cooldown * 0.5;
       this.windup = this.aim = this.burstLeft = 0;
-      if (this.goTo(this.target.x, this.target.y, CHASE_SPEED, dt, game.map)) this.startSearch();
+      if (this.goTo(this.target.x, this.target.y, CHASE_SPEED * this.speedMul, dt, game.map)) this.startSearch();
       return;
     }
 
@@ -204,7 +214,7 @@ export class Enemy {
         return;
       }
       this.aim = 0;
-      this.goTo(p.x, p.y, CHASE_SPEED, dt, game.map);
+      this.goTo(p.x, p.y, CHASE_SPEED * this.speedMul, dt, game.map);
       return;
     }
 
@@ -212,7 +222,7 @@ export class Enemy {
       this.turnTowards(angleToPlayer, 16, dt);
       if (this.attackCd <= 0) {
         this.windup += dt;
-        if (this.windup >= WINDUP) {
+        if (this.windup >= this.windupTime) {
           this.windup = 0;
           this.attackCd = ATTACK_COOLDOWN;
           game.killPlayer(angleToPlayer);
@@ -221,7 +231,7 @@ export class Enemy {
       return;
     }
     this.windup = 0;
-    this.goTo(p.x, p.y, CHASE_SPEED, dt, game.map);
+    this.goTo(p.x, p.y, CHASE_SPEED * this.speedMul, dt, game.map);
   }
 
   // Va hacia (tx, ty): en línea recta si el cuerpo cabe, si no siguiendo una ruta BFS.
@@ -297,7 +307,7 @@ export class Enemy {
     ctx.save();
     ctx.rotate(this.angle);
     // Puños; durante la preparación del golpe el brazo se echa hacia atrás.
-    const wind = this.windup / WINDUP;
+    const wind = this.windup / this.windupTime;
     if (this.weapon) {
       drawSprite(ctx, 'fist', 10, 6);
       drawWeaponShape(ctx, this.weapon.type, 10, 6, 0);
@@ -305,7 +315,7 @@ export class Enemy {
       drawSprite(ctx, 'fist', 10 - wind * 8, 8);
       drawSprite(ctx, 'fist', 10, -8);
     }
-    drawSprite(ctx, this.armed ? 'enemyArmed' : 'enemy', 0, 0);
+    drawSprite(ctx, this.sprite, 0, 0);
     ctx.restore();
 
     const icon = this.state === 'alert' || this.state === 'chase' ? '!'

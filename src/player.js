@@ -16,9 +16,25 @@ const PICKUP_RADIUS = 30;
 const THROW_SPEED = 720;
 const NOISE_RADIUS_KICK = 260;
 export const FINISH_RANGE = 34;      // distancia (además del radio) para rematar; cubre el empuje del derribo
-// Ejecución de un derribado: el jugador queda clavado EXEC_TIME y el golpe cae en EXEC_HIT.
-const EXEC_TIME = 0.42;
-export const EXEC_HIT = 0.27;
+// Ejecución de un derribado: el jugador queda clavado `time` segundos y el/los golpes caen en `hits` (s).
+// Cada arma tiene su estilo (ver startExecution): el último golpe es el que mata (o daña al jefe); los
+// anteriores solo hieren (sangre, sacudida y sonido) para que se vea un remate brutal y distinto.
+export const EXEC_STYLES = {
+  stomp: { time: 0.42, hits: [0.27] },              // sin arma: pisotón
+  smash: { time: 0.42, hits: [0.27] },              // arma de fuego vacía: culatazo de arriba abajo
+  bat: { time: 0.64, hits: [0.44] },                // bate: swing enorme y lento hacia la cabeza
+  pipe: { time: 0.58, hits: [0.2, 0.4] },           // tubo: dos golpes secos
+  knife: { time: 0.7, hits: [0.17, 0.3, 0.44] },    // cuchillo: tres puñaladas
+  shoot: { time: 0.42, hits: [0.27] },              // pistola: disparo a quemarropa
+  blast: { time: 0.52, hits: [0.32] },              // escopeta: descarga con gran retroceso
+  burst: { time: 0.52, hits: [0.24, 0.31, 0.38] },  // subfusil: ráfaga de tres
+};
+// Retroceso al disparar (segundos que dura, empuje del arma hacia atrás y del cuerpo, y si bombea).
+const RECOIL = {
+  gun: { time: 0.14, kick: 3, lean: 1 },
+  shotgun: { time: 0.5, kick: 6, lean: 3, pump: true },
+  smg: { time: 0.07, kick: 1.5, lean: 0.5 },
+};
 const EXEC_NOISE = 220;       // ruido (radio) de un golpe sordo; con arma de fuego es el de su disparo
 const STEP_INTERVAL = 0.3;
 const KICK_COOLDOWN = 0.35;
@@ -72,6 +88,8 @@ export class Player {
     this.swingDur = 1;
     this.punchSide = 1;
     this.muzzle = 0;
+    this.recoil = 0;      // s restantes del retroceso del arma (ver RECOIL)
+    this.recoilMax = 1;
     this.noAmmoFlash = 0;
     this.stepTimer = 0;
     this.bumpCd = 0;
@@ -145,6 +163,7 @@ export class Player {
 
     this.cooldown -= dt;
     this.swing = Math.max(0, this.swing - dt);
+    this.recoil = Math.max(0, this.recoil - dt);
     this.muzzle = Math.max(0, this.muzzle - dt);
     this.noAmmoFlash = Math.max(0, this.noAmmoFlash - dt);
 
@@ -216,13 +235,18 @@ export class Player {
     return best;
   }
 
-  // Empieza la ejecución: durante EXEC_TIME el jugador se queda clavado, mirando al objetivo, y el
-  // golpe cae en EXEC_HIT. El estilo sale del arma: sin arma pisotón, cuerpo a cuerpo (o pistola
-  // sin balas, a culatazos) golpe de arriba abajo, con balas un disparo a quemarropa.
+  // Empieza la ejecución: el jugador se queda clavado mirando al objetivo. El estilo sale del arma:
+  // sin arma pisotón; bate (swing enorme), tubo (dos golpes), cuchillo (tres puñaladas); con balas pistola
+  // (a quemarropa), escopeta (descarga) y subfusil (ráfaga de tres); un arma de fuego vacía, a culatazos.
   startExecution(game, target) {
-    const def = this.def;
-    const style = !this.weapon ? 'stomp' : def.melee ? 'smash' : this.weapon.ammo > 0 ? 'shoot' : 'smash';
-    this.exec = { target, t: 0, hit: false, style };
+    const w = this.weapon, def = this.def;
+    let style = 'stomp';
+    if (w) {
+      if (def.melee) style = w.type; // bat | pipe | knife
+      else if (w.ammo > 0) style = { gun: 'shoot', shotgun: 'blast', smg: 'burst' }[w.type] || 'shoot';
+      else style = 'smash';
+    }
+    this.exec = { target, t: 0, hit: false, hitIdx: 0, style, spec: EXEC_STYLES[style] };
     target.executing = true; // congela su aturdimiento: no se levanta a mitad del golpe
     this.swing = 0;
     this.moving = false;
@@ -238,39 +262,53 @@ export class Player {
   }
 
   updateExecution(dt, game) {
-    const ex = this.exec, e = ex.target;
+    const ex = this.exec, e = ex.target, hits = ex.spec.hits;
+    this.recoil = Math.max(0, this.recoil - dt);
     this.muzzle = Math.max(0, this.muzzle - dt);
-    // Si el objetivo desaparece antes del golpe (lo mató otra cosa, se reinició...), se aborta limpio.
+    // Si el objetivo desaparece antes del último golpe (lo mató otra cosa, se reinició...), se aborta limpio.
     if (!ex.hit && (!e.alive || e.state !== 'down')) { this.cancelExecution(); return; }
     this.angle = Math.atan2(e.y - this.y, e.x - this.x);
     ex.t += dt;
-    if (!ex.hit && ex.t >= EXEC_HIT) {
-      ex.hit = true;
-      this.landExecution(game, ex);
+    while (this.exec && ex.hitIdx < hits.length && ex.t >= hits[ex.hitIdx]) {
+      const last = ex.hitIdx === hits.length - 1;
+      ex.hitIdx++;
+      if (last) ex.hit = true;
+      this.landExecution(game, ex, last);
     }
-    if (ex.t >= EXEC_TIME) {
+    if (this.exec && ex.t >= ex.spec.time) {
       this.cancelExecution();
       this.cooldown = 0.12;
     }
   }
 
-  // El golpe final: la baja con todo el feedback (hit-stop, sacudida, crujido, charco grande y
-  // puntos de EJECUCIÓN van en `killEnemy`) y, de la parte del jugador, las suelas empapadas.
-  landExecution(game, ex) {
-    const e = ex.target, def = this.def;
+  // Un golpe de la ejecución. Los intermedios (tubo, cuchillo, ráfaga) solo hieren; el último es la baja
+  // con todo el feedback (hit-stop, sacudida, crujido, charco grande y puntos de EJECUCIÓN van en
+  // `killEnemy`) y, de la parte del jugador, las suelas empapadas.
+  landExecution(game, ex, last) {
+    const e = ex.target, def = this.def, style = ex.style;
     const angle = Math.atan2(e.y - this.y, e.x - this.x);
-    if (ex.style === 'shoot') {
+    const cos = Math.cos(this.angle), sin = Math.sin(this.angle);
+    const gun = style === 'shoot' || style === 'blast' || style === 'burst';
+    if (gun) {
       this.weapon.ammo--;
-      const cos = Math.cos(this.angle), sin = Math.sin(this.angle);
-      game.particles.sparks(this.x + cos * 18, this.y + sin * 18, this.angle, 9, 0.5);
+      game.particles.sparks(this.x + cos * 18, this.y + sin * 18, this.angle, style === 'blast' ? 16 : 9, style === 'blast' ? 0.9 : 0.5);
       game.particles.shell(this.x + cos * 6, this.y + sin * 6, this.angle + Math.PI / 2);
       game.sfx.play(def.sound);
       this.muzzle = 0.07;
+      const rc = RECOIL[this.weapon.type];
+      this.recoil = this.recoilMax = rc.time;
       game.makeNoise(this.x, this.y, def.noise);
+      if (style === 'blast') { game.camera.addShake(18); game.fx.kick(0.9); }
     } else {
       game.makeNoise(this.x, this.y, EXEC_NOISE);
+      if (style === 'bat' && last) game.camera.addShake(16);
     }
-    game.particles.dust(e.x, e.y, 8);
+    game.particles.dust(e.x, e.y, last ? 8 : 4);
+    if (!last) {
+      // Golpe intermedio: hiere (no mata). La víctima salpica y el aire se llena de chispas.
+      game.woundEnemy(e, angle, style);
+      return;
+    }
     game.killEnemy(e, angle, 'execution');
     this.wetSoles();
   }
@@ -331,12 +369,16 @@ export class Player {
     for (let i = 0; i < def.pellets; i++) {
       const a = this.angle + (Math.random() - 0.5) * def.spread * this.perks.spreadMul * 2;
       const speed = def.bulletSpeed * this.perks.bulletSpeedMul * (def.pellets > 1 ? 0.85 + Math.random() * 0.3 : 1);
-      game.bullets.push(new Bullet(bx, by, a, speed, 'player', def.range));
+      const bl = new Bullet(bx, by, a, speed, 'player', def.range);
+      bl.src = this.weapon.type; // el jefe distingue el arma (ver Boss.guardKill)
+      game.bullets.push(bl);
     }
     game.particles.sparks(this.x + cos * 22, this.y + sin * 22, this.angle, def.pellets > 1 ? 14 : 7, 0.45);
     game.particles.shell(this.x + cos * 6, this.y + sin * 6, this.angle + Math.PI / 2);
     game.sfx.play(def.sound);
     this.muzzle = 0.05;
+    const rc = RECOIL[this.weapon.type];
+    if (rc) this.recoil = this.recoilMax = rc.time;
     game.camera.addShake(def.shake);
     game.fx.kick(def.pellets > 1 ? 0.45 : 0.25);
     game.makeNoise(this.x, this.y, def.noise);
@@ -383,22 +425,41 @@ export class Player {
     ctx.rotate(this.angle);
     const def = this.def;
     const pose = this.exec ? this.execPose() : null;
+    let bodyLean = 0; // empuje del cuerpo en el ataque normal (swing, retroceso)
     // Sin máscara puesta la lleva en la mano izquierda (el lado -Y), con el puño agarrándola.
     const inHand = () => { if (!this.masked) drawSprite(ctx, maskHead(this.maskId), 11, -8, 0.3); };
 
     if (pose) {
       if (!pose.raised) this.drawExecTool(ctx, pose);
     } else if (this.weapon) {
-      let swingOffset = 0;
+      // Cada arma tiene su gesto: el bate y el tubo barren un arco (el bate arranca lento y acaba
+      // fuerte), el cuchillo puñala hacia delante sin girar, y las de fuego retroceden (la escopeta,
+      // además, bombea). El cuerpo acompaña con un pequeño empuje (`bodyLean`).
+      const type = this.weapon.type;
+      let swingOffset = 0, wx = 10, wy = 6;
       if (def.melee && this.swing > 0) {
         const t = 1 - this.swing / this.swingDur;
-        swingOffset = (t - 0.5) * def.arc * this.punchSide;
+        if (type === 'knife') {
+          const p = Math.sin(t * Math.PI);
+          wx += 11 * p; wy -= 2 * p;
+          swingOffset = 0.12 * this.punchSide * p;
+          bodyLean = 2 * p;
+        } else {
+          const e = type === 'bat' ? Math.pow(t, 1.6) : t;
+          swingOffset = (e - 0.5) * def.arc * this.punchSide;
+          bodyLean = (type === 'bat' ? 3 : 2) * Math.sin(t * Math.PI);
+        }
+      } else if (this.recoil > 0 && RECOIL[type]) {
+        const rc = RECOIL[type], u = this.recoil / this.recoilMax; // 1 → 0
+        wx -= rc.kick * u * u;
+        bodyLean = -rc.lean * u * u;
+        if (rc.pump && u < 0.6) wx -= 3 * Math.sin(((0.6 - u) / 0.6) * Math.PI); // bombeo de la corredera
       }
       ctx.save();
       ctx.rotate(swingOffset);
-      drawSprite(ctx, 'fist', 10, 6);
-      drawWeaponShape(ctx, this.weapon.type, 10, 6, 0, def.maxAmmo > 0 && this.weapon.ammo <= 0);
-      if (this.muzzle > 0) drawSprite(ctx, 'muzzle', 10 + sprites()[this.weapon.type].width * 2, 6);
+      drawSprite(ctx, 'fist', wx, wy);
+      drawWeaponShape(ctx, type, wx, wy, 0, def.maxAmmo > 0 && this.weapon.ammo <= 0);
+      if (this.muzzle > 0) drawSprite(ctx, 'muzzle', wx + sprites()[type].width * 2, wy);
       ctx.restore();
     } else {
       // Puños: el que golpea se adelanta.
@@ -412,52 +473,65 @@ export class Player {
 
     // Cuerpo (con la ropa y la sangre que toquen) y encima la cabeza de la máscara, ya en el eje
     // de apuntado. En la ejecución el cuerpo se echa atrás al cargar y hacia delante al golpear.
-    if (pose) ctx.translate(pose.lean, 0);
+    ctx.translate(pose ? pose.lean : bodyLean, 0);
     drawSprite(ctx, playerBody(this.maskId, this.bloodLevel), 0, 0);
     drawMaskHead(ctx, this.masked ? this.maskId : 'bare', this.bloodLevel);
+    ctx.translate(pose ? -pose.lean : -bodyLean, 0);
     if (pose) {
-      ctx.translate(-pose.lean, 0);
       // Levantada, la herramienta está más cerca de la cámara: va POR ENCIMA del jugador.
       if (pose.raised) this.drawExecTool(ctx, pose);
     }
     ctx.restore();
   }
 
-  // Pose de la ejecución en coordenadas locales (mirando al objetivo, +X), en tres tiempos:
-  // carga (se echa atrás y levanta la herramienta: en vista cenital "arriba" es hacia la cámara,
-  // así que al levantarse se ve al doble de tamaño), golpe de arriba abajo sobre el enemigo y
-  // recogida. Con arma de fuego no se levanta: apunta al derribado, dispara y retrocede.
+  // Pose de la ejecución en coordenadas locales (mirando al objetivo, +X). Cada golpe es un ciclo de
+  // carga (de 0 a 1 hasta que cae) y recogida. En vista cenital "arriba" es hacia la cámara: lo que se
+  // levanta (pisotón, bate, tubo, culatazo) se ve al doble de tamaño y va POR ENCIMA del jugador. El
+  // cuchillo no se levanta: se echa atrás y puñala hacia delante; las armas de fuego apuntan y retroceden.
   execPose() {
-    const ex = this.exec;
+    const ex = this.exec, spec = ex.spec, style = ex.style, hits = spec.hits;
     const d = Math.hypot(ex.target.x - this.x, ex.target.y - this.y);
-    const wind = Math.min(1, ex.t / EXEC_HIT);                                     // 0 → 1 hasta el golpe
-    const rec = ex.hit ? Math.min(1, (ex.t - EXEC_HIT) / (EXEC_TIME - EXEC_HIT)) : 0; // 0 → 1 recogiendo
     const reach = Math.max(10, d - 2);
-    const pose = { style: ex.style, x: 10, y: 6, angle: 0, scale: WORLD_PX, raised: false, lean: 0 };
-    if (!ex.hit) {
-      const k = wind * wind;
-      pose.lean = -3 * k;
-      if (ex.style === 'shoot') {
+    // Ciclo actual: i = golpe que toca; start = cuándo empezó su carga.
+    const i = Math.min(ex.hitIdx, hits.length - 1);
+    const start = i > 0 ? hits[i - 1] : 0;
+    const landed = ex.t >= hits[i];
+    const wind = landed ? 1 : Math.min(1, (ex.t - start) / Math.max(0.001, hits[i] - start));
+    const recTime = i < hits.length - 1 ? 0.05 : Math.max(0.05, spec.time - hits[i]);
+    const rec = landed ? Math.min(1, (ex.t - hits[i]) / recTime) : 0;
+    const k = wind * wind, out = (1 - rec) * (1 - rec);
+    const pose = { style, x: 10, y: 6, angle: 0, scale: WORLD_PX, raised: false, lean: 0 };
+    const gun = style === 'shoot' || style === 'blast' || style === 'burst';
+    if (!landed) {
+      pose.lean = -(style === 'bat' ? 5 : 3) * k;
+      if (gun) {
         pose.x = 10 + 3 * k;
         pose.y = 6 * (1 - k);
+      } else if (style === 'knife') {
+        pose.x = 10 - 7 * k;       // el brazo se echa atrás
+        pose.y = 5 - 3 * k;
+        pose.angle = -0.35 * k;
       } else {
-        // La bota se levanta ADELANTE, sobre la víctima (si no, tapa al jugador); lo demás se echa atrás.
-        pose.x = ex.style === 'stomp' ? 10 + 12 * k : 10 - 8 * k;
-        pose.y = ex.style === 'stomp' ? 0 : 6 - 2 * k;
-        pose.angle = ex.style === 'stomp' ? 0 : -0.9 * k;
+        // La herramienta se levanta ADELANTE, sobre la víctima (si no, tapa al jugador).
+        pose.x = style === 'stomp' ? 10 + 12 * k : 10 - 8 * k;
+        pose.y = style === 'stomp' ? 0 : 6 - 2 * k;
+        pose.angle = style === 'stomp' ? 0 : (style === 'bat' ? -1.3 : -0.9) * k;
         pose.raised = wind > 0.5;
-        if (pose.raised) pose.scale = WORLD_PX * 2;
+        if (pose.raised) pose.scale = WORLD_PX * (style === 'bat' ? 2.4 : 2);
       }
-    } else {
-      const out = (1 - rec) * (1 - rec);
+    } else if (gun) {
+      const rc = RECOIL[this.weapon.type];
+      pose.lean = -rc.lean * out;
+      pose.x = 13 - rc.kick * out;
+      pose.y = 6 * rec;
+    } else if (style === 'knife') {
       pose.lean = 5 * out;
-      if (ex.style === 'shoot') {
-        pose.x = 13 - 4 * out;
-        pose.y = 6 * rec;
-      } else {
-        pose.x = 10 + (reach - 10) * out;
-        pose.y = ex.style === 'stomp' ? 0 : 6 * rec;
-      }
+      pose.x = 10 + (reach - 10) * out;   // la estocada llega hasta la víctima y vuelve
+      pose.y = 2 + 4 * rec;
+    } else {
+      pose.lean = (style === 'bat' ? 7 : 5) * out;
+      pose.x = 10 + (reach - 10) * out;
+      pose.y = style === 'stomp' ? 0 : 6 * rec;
     }
     return pose;
   }
@@ -470,7 +544,9 @@ export class Player {
     }
     drawSprite(ctx, 'fist', pose.x, pose.y, 0, { scale: pose.scale });
     drawWeaponShape(ctx, this.weapon.type, pose.x, pose.y, pose.angle, false, pose.scale);
-    if (pose.style === 'shoot' && this.muzzle > 0) drawSprite(ctx, 'muzzle', pose.x + sprites()[this.weapon.type].width * 2, pose.y);
+    if ((pose.style === 'shoot' || pose.style === 'blast' || pose.style === 'burst') && this.muzzle > 0) {
+      drawSprite(ctx, 'muzzle', pose.x + sprites()[this.weapon.type].width * 2, pose.y);
+    }
   }
 
   // Indicador de apuntado (PC y móvil), en el mundo y en píxeles:

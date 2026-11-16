@@ -109,6 +109,11 @@ export class Menu {
       const cards = this.floorsLayout().cards;
       const hovered = cards.findIndex(inside);
       if (hovered >= 0 && moved) this.floorIndex = hovered;
+      // Tocar los bordes (donde están las flechas < >) desplaza la selección cuando hay más pisos fuera de la ventana.
+      if (input.mousePressed.left && hovered < 0) {
+        if (m.x < 26 && this.floorIndex > 0) this.floorIndex--;
+        else if (m.x > g.scene.width - 26 && this.floorIndex < n - 1) this.floorIndex++;
+      }
       if (this.floorIndex !== prev) g.sfx.play('empty');
       // En táctil, el primer toque en un piso solo lo elige; tocar el ya elegido empieza.
       if (input.touchMode && input.mousePressed.left && hovered >= 0 && hovered !== prev) return;
@@ -164,14 +169,19 @@ export class Menu {
   floorsLayout() {
     const { width: w } = this.game.scene;
     const n = LEVELS.length, gap = 8;
-    const cardW = clamp(Math.floor((w - 16 - gap * (n - 1)) / n), 70, 150);
+    // Con muchos pisos no caben todas las tarjetas: se muestra una ventana que sigue a la selección
+    // (flechas `<` / `>` en los bordes cuando hay más a un lado).
+    const perPage = Math.max(1, Math.min(n, Math.floor((w - 16 + gap) / (70 + gap))));
+    const cardW = clamp(Math.floor((w - 16 - gap * (perPage - 1)) / perPage), 70, 150);
+    const first = clamp(this.floorIndex - Math.floor(perPage / 2), 0, n - perPage);
     const maxMapW = Math.max(...LEVELS.map((l) => l.rows[0].length));
     const maxMapH = Math.max(...LEVELS.map((l) => l.rows.length));
     const thumbScale = clamp(Math.floor((cardW - 10) / maxMapW), 1, 3);
-    const cardH = 8 + maxMapH * thumbScale + 6 + 5 * 11; // 5 líneas: piso, sala, enemigos, rango, puntos
-    const x0 = Math.round((w - (n * cardW + (n - 1) * gap)) / 2);
-    const cards = LEVELS.map((_, i) => ({ x: x0 + i * (cardW + gap), y: 30, w: cardW, h: cardH }));
-    return { cards, thumbScale, bottom: 30 + cardH };
+    const cardH = 8 + maxMapH * thumbScale + 6 + 6 * 11; // 6 líneas: piso, sala, enemigos, armados, rango, puntos
+    const x0 = Math.round((w - (perPage * cardW + (perPage - 1) * gap)) / 2);
+    const cards = LEVELS.map((_, i) => (i >= first && i < first + perPage
+      ? { x: x0 + (i - first) * (cardW + gap), y: 30, w: cardW, h: cardH } : null));
+    return { cards, thumbScale, bottom: 30 + cardH, first, perPage };
   }
 
   // --- Dibujo ------------------------------------------------------------------------------
@@ -298,10 +308,11 @@ export class Menu {
     const title = 'SELECCIONAR PISO';
     drawText(ctx, title, cx, 6, { color: COLORS.wall, scale: g.fitScale(title, w - 12), align: 'center' });
 
-    const { cards, thumbScale, bottom } = this.floorsLayout();
+    const { cards, thumbScale, bottom, first, perPage } = this.floorsLayout();
     const bob = Math.floor(performance.now() / 300) % 2;
     LEVELS.forEach((level, i) => {
       const c = cards[i];
+      if (!c) return; // fuera de la ventana visible
       const n = i + 1;
       const sel = i === this.floorIndex;
       const unlocked = g.floorStats.isUnlocked(n);
@@ -331,15 +342,21 @@ export class Menu {
         drawText(ctx, 'BLOQUEADO', mid, ty + 5, { color: COLORS.blood, align: 'center' });
         return;
       }
-      drawText(ctx, `${info.enemies} ENEM. · ${info.armed} ARM.`, mid, ty, { color: DIM, align: 'center' });
+      // Dos líneas cortas: con seis tarjetas de ~70 px no cabe "11 ENEM. · 6 ARM." en una.
+      drawText(ctx, `${info.enemies} ENEMIGOS`, mid, ty, { color: DIM, align: 'center' });
+      drawText(ctx, `${info.armed} ARMADOS`, mid, ty + 11, { color: DIM, align: 'center' });
       if (stats.bestRank) {
-        drawText(ctx, `RANGO ${stats.bestRank}`, mid, ty + 11, { color: RANK_COLORS[stats.bestRank], align: 'center' });
-        drawText(ctx, `${stats.bestScore.toLocaleString('es')} PTS`, mid, ty + 22, { color: COLORS.text, align: 'center' });
+        drawText(ctx, `RANGO ${stats.bestRank}`, mid, ty + 22, { color: RANK_COLORS[stats.bestRank], align: 'center' });
+        drawText(ctx, `${stats.bestScore.toLocaleString('es')} PTS`, mid, ty + 33, { color: COLORS.text, align: 'center' });
       } else {
-        drawText(ctx, 'SIN COMPLETAR', mid, ty + 11, { color: DIM, align: 'center' });
+        drawText(ctx, 'PENDIENTE', mid, ty + 22, { color: DIM, align: 'center' });
       }
     });
 
+    // Flechas de desplazamiento si hay pisos fuera de la ventana.
+    const arrowY = 30 + Math.round((bottom - 30) / 2);
+    if (first > 0) drawText(ctx, '<', 4 + g.safe.l, arrowY, { color: COLORS.wall, scale: 2 });
+    if (first + perPage < LEVELS.length) drawText(ctx, '>', w - 14 - g.safe.r, arrowY, { color: COLORS.wall, scale: 2 });
     const n = this.floorIndex + 1;
     const floorName = LEVELS[this.floorIndex].name.split(' · ')[0];
     const msg = g.floorStats.isUnlocked(n)
