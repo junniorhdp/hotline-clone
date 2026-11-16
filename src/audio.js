@@ -153,6 +153,17 @@ const SOUNDS = {
     s.noise({ dur: 0.5, gain: 0.22 * v, filter: 'lowpass', freq: 4200, freqTo: 120, q: 0.6 });
     s.noise({ dur: 0.07, gain: 0.14 * v, filter: 'highpass', freq: 1800, delay: 0.5 });
   },
+  // Forcejeo: el golpe seco que lo inicia (frenazo grave + barrido de aire) y el fogonazo del contraataque.
+  scuffleIn(s, v) {
+    s.tone({ type: 'sine', from: 220, to: 36, dur: 0.45, gain: 0.7 * v });
+    s.tone({ type: 'sawtooth', from: 440, to: 55, dur: 0.4, gain: 0.12 * v });
+    s.noise({ dur: 0.35, gain: 0.25 * v, filter: 'lowpass', freq: 5200, freqTo: 200, q: 0.8 });
+  },
+  scuffleWin(s, v) {
+    s.tone({ type: 'sine', from: 140, to: 40, dur: 0.3, gain: 1 * v });
+    s.noise({ dur: 0.12, gain: 0.5 * v, filter: 'bandpass', freq: 1800, freqTo: 600, q: 0.6 });
+    [523.25, 783.99, 1046.5].forEach((f, i) => s.tone({ type: 'square', from: f, dur: 0.16, gain: 0.1 * v, delay: 0.1 + i * 0.07 }));
+  },
   // Fanfarria corta (fin de partida con récord).
   clear(s, v) {
     [523.25, 659.25, 783.99, 1046.5].forEach((f, i) => {
@@ -165,6 +176,9 @@ export class Sfx {
   constructor() {
     this.ctx = null;
     this.muted = false;
+    this.slow = 0;          // 0..1: cuánto ha bajado de tono y de velocidad la música (forcejeo)
+    this.slowTarget = 0;
+    this.lastTick = 0;
     this.musicVol = 1;      // 0..1, ajuste del jugador (settings.js): música y ambiente
     this.sfxVol = 1;        // 0..1: todos los efectos, incluida la moto
     this.musicMode = 'action';  // 'action' | 'empty' | 'menu'
@@ -228,6 +242,17 @@ export class Sfx {
     this.ramp(this.sfxBus.gain, this.sfxVol, 0.04);
     this.applyMusicMode(false);
   }
+
+  // "Cámara lenta analógica" (forcejeo): la música y el ambiente bajan de tono (hasta -40 %) y de velocidad
+  // (hasta -50 %) como una cinta que se frena, y vuelven a la normalidad al soltarla. El planificador
+  // (scheduleMusic) acerca `slow` a `slowTarget` poco a poco, así que la transición es continua. Afecta a
+  // las notas que se programan desde ese momento (lookahead de 0,15 s) y no crea ningún nodo nuevo.
+  setSlowMo(on) {
+    this.slowTarget = on ? 1 : 0;
+    if (!this.ctx) this.slow = this.slowTarget;
+  }
+
+  get pitch() { return 1 - 0.4 * this.slow; }
 
   play(name, volume = 1, arg) {
     if (!this.ctx || this.muted || this.ctx.state !== 'running' || volume <= 0 || this.sfxVol <= 0) return;
@@ -293,6 +318,11 @@ export class Sfx {
     const c = this.ctx;
     // Si la pestaña estuvo en segundo plano, no intentamos "recuperar" las notas perdidas.
     if (this.nextNote < c.currentTime - 0.2) this.nextNote = c.currentTime + 0.05;
+    // Acerca la cámara lenta a su objetivo (≈ 0,35 s de ida y vuelta).
+    const dtTick = Math.min(0.1, Math.max(0, c.currentTime - this.lastTick));
+    this.lastTick = c.currentTime;
+    const stepSlow = dtTick * 3;
+    this.slow += Math.max(-stepSlow, Math.min(stepSlow, this.slowTarget - this.slow));
     while (this.nextNote < c.currentTime + LOOKAHEAD) {
       // En silencio no se crean nodos: el tiempo avanza pero no se programa nada.
       if (!this.muted && c.state === 'running') {
@@ -300,7 +330,7 @@ export class Sfx {
         else if (this.musicMode === 'menu') this.menuStep(this.step, this.nextNote);
         else this.actionStep(this.step, this.nextNote);
       }
-      this.nextNote += STEP_TIME;
+      this.nextNote += STEP_TIME / (1 - 0.5 * this.slow);
       this.step = (this.step + 1) % STEPS;
     }
   }
@@ -384,7 +414,7 @@ export class Sfx {
       for (const detune of [-4, 5]) {
         const osc = c.createOscillator();
         osc.type = i === 2 ? 'triangle' : 'sine';
-        osc.frequency.value = freq;
+        osc.frequency.value = freq * this.pitch;
         osc.detune.value = detune;
         osc.connect(f);
         osc.start(t);
@@ -418,7 +448,7 @@ export class Sfx {
     for (const detune of [-11, 12]) {
       const osc = c.createOscillator();
       osc.type = 'sawtooth';
-      osc.frequency.setValueAtTime(freq, t);
+      osc.frequency.setValueAtTime(freq * this.pitch, t);
       osc.detune.value = detune;
       osc.connect(f);
       osc.start(t);
@@ -427,7 +457,7 @@ export class Sfx {
     const sub = c.createOscillator();
     const sg = c.createGain();
     sub.type = 'sine';
-    sub.frequency.setValueAtTime(freq / 2, t);
+    sub.frequency.setValueAtTime((freq / 2) * this.pitch, t);
     sg.gain.setValueAtTime(0.22, t);
     sg.gain.exponentialRampToValueAtTime(0.0001, t + 0.15);
     sub.connect(sg).connect(this.musicBus);
@@ -451,7 +481,7 @@ export class Sfx {
       for (const detune of [-7, 7]) {
         const osc = c.createOscillator();
         osc.type = 'sawtooth';
-        osc.frequency.value = freq;
+        osc.frequency.value = freq * this.pitch;
         osc.detune.value = detune;
         osc.connect(f);
         osc.start(t);
@@ -643,6 +673,7 @@ export class Sfx {
 
   tone({ type = 'sine', from, to = from, dur, gain = 0.3, delay = 0, at, dest }) {
     const c = this.ctx, t = at ?? c.currentTime + delay;
+    if (dest && (dest === this.musicBus || dest === this.ambientBus) && this.slow > 0) { from *= this.pitch; to *= this.pitch; }
     const osc = c.createOscillator();
     const g = c.createGain();
     osc.type = type;
@@ -660,6 +691,7 @@ export class Sfx {
 
   noise({ dur, gain = 0.3, filter = 'lowpass', freq = 1000, freqTo = freq, q = 1, delay = 0, at, dest }) {
     const c = this.ctx, t = at ?? c.currentTime + delay;
+    if (dest && (dest === this.musicBus || dest === this.ambientBus) && this.slow > 0) { freq *= this.pitch; freqTo *= this.pitch; }
     const src = c.createBufferSource();
     src.buffer = this.noiseBuffer;
     const f = c.createBiquadFilter();

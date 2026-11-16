@@ -225,7 +225,7 @@ export class Enemy {
         if (this.windup >= this.windupTime) {
           this.windup = 0;
           this.attackCd = ATTACK_COOLDOWN;
-          game.killPlayer(angleToPlayer);
+          game.enemyStrike(this, angleToPlayer); // frontal = forcejeo; por la espalda mata
         }
       }
       return;

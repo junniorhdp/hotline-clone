@@ -199,6 +199,7 @@ Correspondencia entre las pantallas conceptuales y los valores reales de `game.s
 | MENU | `'menu'` | subpantallas en `game.menu.screen`: `'title'`, `'floors'`, `'records'` (`menu.js`) |
 | MASK_SELECT | `'masks'` | antes de cada piso; `Esc` vuelve al menú |
 | ARRIVAL | `'arriving'` | cinemática de llegada en moto (saltable); sin combate |
+| FORCEJEO | `'scuffle'` | el golpe frontal de un enemigo melee abre un duelo de aporreo con zoom y cámara lenta; ver "Forcejeo" |
 | PAUSA | (`game.panel`) | no es un estado: menú modal sobre `playing`/`cleared` (Esc o icono de pausa) que congela el juego |
 | PLAYING | `'playing'` · `'dead'` | `playing` incluye fuera del edificio (`inside` false) y dentro con el piso bloqueado; `dead`: `R` reintenta (instantáneo), `Enter` termina la partida |
 | LEVEL_CLEAR | `'cleared'` → `'leaving'` → `'results'` | `cleared` = edificio despejado y puerta abierta, vuelve a la moto; `leaving` = se sube y se va (saltable); `results` = rango/tiempo/puntos |
@@ -442,7 +443,7 @@ cambia de régimen todo el rato y se tiene que poder cortar limpia. Es Web Audio
   rampas a ≤ 0, nodos sin desconectar tras 80 inicios/cortes rápidos).
 
 ## Mecánicas de combate
-- Daño: todo es de un golpe. Lo que cambia es el efecto: **matar** o **derribar** (estado `down`
+- Daño: todo es de un golpe, con una excepción: el golpe **frontal** de un enemigo cuerpo a cuerpo abre un forcejeo (ver "Forcejeo cuerpo a cuerpo"); por la espalda, de bala o del jefe sigue matando al instante. Lo que cambia es el efecto: **matar** o **derribar** (estado `down`
   ~3,2 s, luego se levanta; se remata con una **ejecución**, ver "Ejecuciones").
   Cualquier arma **lanzada** (clic derecho) derriba si va a más de 160 px/s.
 
@@ -499,6 +500,31 @@ Alcance en unidades del mundo (1 casilla = 32). Cadencia = segundos entre ataque
   granate). Cada uno tiene su `sprite`/`corpseSprite` (recolores en `sprites.js`).
 - Si el enemigo pierde la línea de visión, el aviso y la ráfaga se cancelan (cubrirse tras
   esquinas funciona). Al morir o ser derribado suelta su arma.
+
+### Forcejeo cuerpo a cuerpo ("estilo VS", `game.js`: `enemyStrike`, `startScuffle`, `updateScuffle`, `drawScuffleFx/UI`)
+El golpe de un enemigo cuerpo a cuerpo (`grunt` o `runner`; no el pesado, que dispara, ni el jefe, cuyo tajo y embestida siguen siendo letales) ya no
+mata de frente: `Enemy.updateChase` llama a `game.enemyStrike(e, ángulo)`, que mira si el enemigo está **dentro de ~100° de hacia donde miras**
+(`|angleDiff(ángulo+π, p.angle)| < 1,75`) y no estás rematando → **forcejeo**; por la espalda sigue siendo `killPlayer`. Tras un forcejeo hay 0,6 s de
+inmunidad al cuerpo a cuerpo (`scuffleGrace`).
+- **Estado** `'scuffle'` (`this.scuffle = { e, bar, t, mult, surge, … }`): el mundo se congela (solo corre `updateScuffle`, partículas a ×0,35).
+  Se mira a la cara; `Esc` no pausa; `R` reinicia (`reset()` limpia `scuffle`, zoom y audio).
+- **Minijuego** (`SCUFFLE`): barra 0..1 que empieza en 0,5. Cada pulsación nueva (flanco: clic, `Espacio`, `E`, `Enter`, `tapAttack`, es decir el botón
+  ATACAR táctil o un toque del joystick derecho; mantener no cuenta) suma **0,10**; el enemigo la baja a **0,33/s × resistencia**, con un pico ×1,8 durante 0,4 s
+  cada 1,3 s. Llena = **contraataque** (`winScuffle`: remate `killEnemy(…, 'execution')`, sacudida 22, hit-stop 0,14, cartel `¡CONTRAATAQUE!`); a 0, o a
+  los 7,5 s con la barra bajo la mitad = el enemigo te ejecuta (`loseScuffle` → `killPlayer`: pantalla de muerte, **R** = `restartLevel`).
+  La pulsación que llena la barra gana antes de que el empuje la baje.
+- **Fatiga**: `resistencia = min(2,2, 1 + 0,22 × (forcejeos del piso − 1))`, mostrada como `RESISTENCIA X1,7`. `scuffleCount` se reinicia al empezar piso o partida y **se
+  conserva con R** (como la sangre). Medido (pulsaciones/s necesarias): 1.º ≈ 5/s, 3.º ≈ 6-7/s, 8.º ≈ 10/s.
+- **Zoom** (`Camera`: `base` × `mul`, `zoom` es un getter; `mulTarget` 2 y se acerca con `1 − e^(−9dt)`; el seguimiento va más rápido, centrado en el punto medio
+  de los dos). Vuelve a 1 al resolverse. Es un múltiplo exacto (×2), así el pixel art sigue nítido.
+- **Filtro VS** (`drawScuffleFx`, intensidad `scuffleI` suavizada): tinte `overlay` magenta/cian que alterna cada 120 ms, viñeta escalonada de 7 anillos,
+  bandas cian (tú) / magenta (ellos) en los laterales, barras de cine con filos de color y aberración cromática (`fx.kick`). **UI** (`drawScuffleUI`): retratos
+  enfrentados con un gran `VS` con doble sombra, barra de tensión cian/magenta con marcador y chispas, que late más rápido (y se pone roja) por debajo del 30 %,
+  y el aviso `¡APORREA CLIC / ESPACIO!` (`¡APORREA ATACAR!` en táctil). En táctil el botón ATACAR parpadea en rojo/blanco.
+- **Audio en cámara lenta** (`Sfx.setSlowMo`, `slow` 0..1 que `scheduleMusic` acerca a su objetivo ≈ 0,35 s): tono −40 % (`pitch`: lo aplican `tone`, `noise` y los
+  osciladores propios de la música y el ambiente) y velocidad −50 % (`nextNote += STEP_TIME / (1 − 0,5·slow)`), como una cinta que se frena; vuelve solo.
+  Sonidos nuevos `scuffleIn` (frenazo grave) y `scuffleWin`. Sin contexto de audio solo se guarda el objetivo; en silencio no se crean nodos.
+- La puerta/otros: durante el forcejeo no avanzan enemigos, balas ni puertas; `killPlayer` exige `state === 'playing'`, por eso `endScuffle` vuelve a ese estado antes.
 
 ### El jefe: EL EJECUTOR (`boss.js`, piso 6)
 Un matón hiper-acorazado (`Boss extends Enemy`, hitbox 14, **12 de vida**, barra arriba al centro con marcas al 60 % y 30 %). Se queda quieto

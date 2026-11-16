@@ -43,6 +43,9 @@ const COARSE_POINTER = window.matchMedia?.('(pointer: coarse)').matches ?? false
 
 // Hit-stop: segundos que se congela la simulación en cada tipo de impacto. Las bajas cuerpo a
 // cuerpo y los remates (40-60 ms) se notan más que un disparo.
+// Forcejeo (ver enemyStrike): zoom de cámara, empuje por pulsación, fuerza base del enemigo (barra/s), endurecimiento
+// por forcejeo en el piso, tope y tiempo máximo.
+const SCUFFLE = { zoom: 2, push: 0.1, base: 0.33, fatigue: 0.22, maxMult: 2.2, timeout: 7.5 };
 const HITSTOP = { kill: 0.05, melee: 0.055, execution: 0.07, knock: 0.035, doorKnock: 0.07, playerDeath: 0.12 };
 // Cómo se siente cada tipo de baja: `power` = cantidad de sangre y restos, `wide` = semiapertura
 // del salpicado (rad; π = en todas direcciones), `shake` = sacudida de cámara, `stop` = hit-stop
@@ -74,13 +77,17 @@ class Camera {
   constructor() {
     this.x = 0;
     this.y = 0;
-    this.zoom = 1 / WORLD_PX;  // 1 píxel interno = 2 unidades del mundo
+    this.base = 1 / WORLD_PX;  // 1 píxel interno = 2 unidades del mundo
+    this.mul = 1;              // zoom dinámico (forcejeo: ×2); se acerca a `mulTarget` suavemente
+    this.mulTarget = 1;
     this.shake = 0;
     this.ox = 0;
     this.oy = 0;
     this.viewW = 1;
     this.viewH = 1;
   }
+
+  get zoom() { return this.base * this.mul; }
 
   // viewW/H en píxeles internos.
   resize(w, h) {
@@ -114,8 +121,10 @@ class Camera {
   }
 
   update(dt, tx, ty) {
+    this.mul += (this.mulTarget - this.mul) * (1 - Math.exp(-9 * dt));
+    if (Math.abs(this.mulTarget - this.mul) < 0.003) this.mul = this.mulTarget;
     const t = this.clampTarget(tx, ty);
-    const k = 1 - Math.exp(-CAMERA_LERP * dt);
+    const k = 1 - Math.exp(-(this.mulTarget > 1 ? 16 : CAMERA_LERP) * dt);
     this.x += (t.x - this.x) * k;
     this.y += (t.y - this.y) * k;
     this.shake = Math.max(0, this.shake - 40 * dt);
@@ -167,6 +176,10 @@ export class Game {
     this.entryWeapon = null;
     this.cine = null;      // cinemática en curso: { kind: 'arrive' | 'leave', t }
     this.callout = null;   // aviso grande temporal: { text, color, t, max, sub }
+    this.scuffle = null;   // forcejeo en curso: { e, bar, t, mult, ... } (estado 'scuffle')
+    this.scuffleCount = 0; // forcejeos de este piso: cada uno endurece al enemigo (se conserva con R)
+    this.scuffleGrace = 0; // s de inmunidad al cuerpo a cuerpo tras un forcejeo
+    this.scuffleI = 0;     // 0..1: intensidad del filtro "VS" (suaviza la entrada y la salida)
     this.goalAge = 0;      // s desde que el cartel de piso completado se apagó (anima el objetivo)
     this.runId = newRunId();
     this.showRecords = false;
@@ -295,6 +308,7 @@ export class Game {
   goToLevel(index) {
     this.levelIndex = index;
     this.score.startLevel();
+    this.scuffleCount = 0;
     this.gore = 0; // el siguiente piso se empieza limpio: ropa y máscara sin sangre
     this.entered = false;
     this.entryWeapon = null;
@@ -519,6 +533,7 @@ export class Game {
     this.runId = newRunId();
     this.score.newRun(this.history.best());
     this.gore = 0;
+    this.scuffleCount = 0;
     this.levelIndex = index;
     this.entered = false;
     this.entryWeapon = null;
@@ -602,6 +617,10 @@ export class Game {
     this.cine = null;
     this.callout = null;
     this.goalAge = 0;
+    this.scuffle = null;      // si se reinicia en pleno forcejeo: cámara y audio vuelven a la normalidad
+    this.scuffleGrace = 0;
+    this.camera.mul = this.camera.mulTarget = 1;
+    this.sfx.setSlowMo(false);
     this.enemies = level.enemies.map((e) => this.makeEnemy(e));
     this.pickups = level.weapons.map((w) => new Pickup(w.type, w.x, w.y));
     this.doors = level.doors.map((d) => new Door(d.tx, d.ty, d.horizontal, d.main));
@@ -656,6 +675,9 @@ export class Game {
     const input = this.input;
     // Primero los controles táctiles: traducen los dedos a teclas/clics que se leen abajo.
     this.touch.update(dt);
+    // Filtro VS: entra y sale con suavidad (también al resolverse el forcejeo o reiniciar).
+    this.scuffleI += ((this.state === 'scuffle' ? 1 : 0) - this.scuffleI) * (1 - Math.exp(-9 * dt));
+    if (this.scuffleI < 0.005) this.scuffleI = 0;
     // En vertical (táctil) todo queda en pausa hasta que se gire el dispositivo.
     if (this.needsRotate) return;
     // Estas teclas funcionan siempre, incluso durante el hit-stop o muerto.
@@ -696,6 +718,8 @@ export class Game {
       return;
     }
 
+    if (this.state === 'scuffle') { this.updateScuffle(dt); return; }
+
     if (this.state === 'arriving' || this.state === 'leaving') {
       this.updateCine(dt, confirm || input.mousePressed.left);
       return;
@@ -709,6 +733,7 @@ export class Game {
     }
 
     this.bannerTimer = Math.max(0, this.bannerTimer - dt);
+    this.scuffleGrace = Math.max(0, this.scuffleGrace - dt);
     if (this.callout && (this.callout.t -= dt) <= 0) this.callout = null;
     this.goalAge = this.state === 'cleared' && !this.callout ? this.goalAge + dt : 0;
     if (this.state === 'playing' && this.inside) this.time += dt; // el reloj corre dentro del edificio
@@ -846,6 +871,199 @@ export class Game {
   touchingBike() {
     const b = this.bike, p = this.player;
     return Math.abs(p.x - b.park.x) < b.w / 2 + p.r + MOUNT_MARGIN && Math.abs(p.y - b.park.y) < b.h / 2 + p.r + MOUNT_MARGIN;
+  }
+
+  // --- Forcejeo cuerpo a cuerpo ("estilo VS") -----------------------------------------------------
+  // El golpe de un enemigo cuerpo a cuerpo (grunt o corredor) que te alcanza DE FRENTE (dentro de ~100° de
+  // hacia donde miras) ya no mata: empieza un forcejeo. Por la espalda, o si estás rematando, sigue siendo
+  // letal. El mundo se congela, la cámara hace zoom ×2 sobre los dos y la música baja de tono y velocidad
+  // (cinta que se frena). Hay que aporrear ATACAR (clic, Espacio, E, Enter o tocar el botón / el joystick)
+  // para empujar la barra; el enemigo la empuja de vuelta con una fuerza que sube con cada forcejeo del piso
+  // (+22 % cada uno, tope ×2,2) y con picos periódicos. Barra llena: contraataque brutal (remate). Barra a 0
+  // o 7,5 s sin llegar a la mitad: te ejecuta (estado 'dead', R reintenta).
+  enemyStrike(e, angle) {
+    const p = this.player;
+    if (this.state !== 'playing' || !p.alive) return;
+    if (this.scuffleGrace > 0) { e.attackCd = 0.4; return; } // acaba de forcejear: ese golpe no cuenta
+    const frontal = Math.abs(angleDiff(angle + Math.PI, p.angle)) < 1.75;
+    if (frontal && !p.exec && (e.kind === 'grunt' || e.kind === 'runner')) this.startScuffle(e, angle);
+    else this.killPlayer(angle);
+  }
+
+  startScuffle(e, angle) {
+    const p = this.player;
+    this.scuffleCount++;
+    const mult = Math.min(SCUFFLE.maxMult, 1 + SCUFFLE.fatigue * (this.scuffleCount - 1));
+    this.scuffle = { e, angle, bar: 0.5, t: 0, mult, surge: 0, nextSurge: 1.0, presses: 0, shake: 0 };
+    this.state = 'scuffle';
+    p.angle = angle + Math.PI; // se miran a la cara
+    p.swing = 0; p.moving = false;
+    e.angle = angle; e.windup = 0; e.aim = 0;
+    this.camera.mulTarget = SCUFFLE.zoom;
+    this.sfx.setSlowMo(true);
+    this.sfx.play('scuffleIn');
+    this.camera.addShake(10);
+    this.fx.kick(1);
+    this.hitstop = 0;
+    this.touch.haptic([20, 30, 40]);
+  }
+
+  updateScuffle(dt) {
+    const sc = this.scuffle, p = this.player, e = sc.e, input = this.input;
+    if (!sc || !e.alive || !p.alive) { this.endScuffle(); return; }
+    sc.t += dt;
+    // Pulsaciones nuevas este paso (flancos, no mantener): el botón/clic de ataque o sus equivalentes.
+    let n = 0;
+    if (input.tapAttack) n++;
+    if (input.mousePressed.left) n++;
+    for (const k of ['Space', 'KeyE', 'Enter']) if (input.wasPressed(k)) n++;
+    if (n) {
+      sc.bar = Math.min(1, sc.bar + n * SCUFFLE.push);
+      sc.presses += n;
+      sc.shake = 1;
+      this.sfx.play('knock', 0.45);
+      this.particles.dust((p.x + e.x) / 2, (p.y + e.y) / 2, 2);
+      this.touch.haptic(10);
+      if (sc.bar >= 1) { this.winScuffle(); return; } // la pulsación que llena la barra gana, antes de que el empuje la baje
+    }
+    // El enemigo empuja de vuelta; cada ~1,3 s tiene un pico (×1,8 durante 0,4 s).
+    sc.nextSurge -= dt;
+    if (sc.nextSurge <= 0) { sc.surge = 0.4; sc.nextSurge = 1.3; }
+    sc.surge = Math.max(0, sc.surge - dt);
+    sc.bar -= SCUFFLE.base * sc.mult * (sc.surge > 0 ? 1.8 : 1) * dt;
+    sc.shake = Math.max(0, sc.shake - dt * 8);
+    this.fx.kick(0.3);
+    // Cámara sobre el punto medio; la pelea tiembla más cuanto más igualada.
+    const mx = (p.x + e.x) / 2, my = (p.y + e.y) / 2;
+    this.camera.update(dt, mx, my);
+    this.camera.addShake(0.4 + sc.shake * 1.2);
+    this.particles.update(dt * 0.35, this.map, (kind, pt) => this.bake(kind, pt));
+    if (sc.bar >= 1) this.winScuffle();
+    else if (sc.bar <= 0) this.loseScuffle();
+    else if (sc.t >= SCUFFLE.timeout) (sc.bar > 0.5 ? this.winScuffle() : this.loseScuffle());
+  }
+
+  // Sale del forcejeo: cámara y música vuelven a la normalidad (suavemente: ver Camera.update y Sfx.slow).
+  endScuffle() {
+    this.scuffle = null;
+    if (this.state === 'scuffle') this.state = 'playing';
+    this.camera.mulTarget = 1;
+    this.sfx.setSlowMo(false);
+    this.player.cooldown = Math.max(this.player.cooldown, 0.3);
+  }
+
+  winScuffle() {
+    const sc = this.scuffle, e = sc.e, p = this.player;
+    const angle = Math.atan2(e.y - p.y, e.x - p.x);
+    this.endScuffle();
+    this.scuffleGrace = 0.6;
+    p.startSwing(p.def);
+    this.killEnemy(e, angle, 'execution'); // el contraataque es un remate brutal
+    this.sfx.play('scuffleWin');
+    this.camera.addShake(22);
+    this.fx.kick(1);
+    this.hitstop = Math.max(this.hitstop, 0.14);
+    this.showCallout('¡CONTRAATAQUE!', COLORS.player, 1.0);
+    this.touch.haptic([30, 20, 60]);
+  }
+
+  loseScuffle() {
+    const sc = this.scuffle, e = sc.e, p = this.player;
+    const angle = Math.atan2(p.y - e.y, p.x - e.x);
+    this.endScuffle();
+    this.killPlayer(angle); // el enemigo lo ejecuta: R reintenta el piso (restartLevel)
+  }
+
+  // Filtro "VS" sobre la escena (viñeta escalonada de alto contraste, tinte neón agresivo, destellos de color en
+  // los bordes y barras de cine). Todo en bloques de píxeles; entra y sale con `scuffleI`.
+  drawScuffleFx(ctx) {
+    const I = this.scuffleI;
+    if (I <= 0) return;
+    const w = this.scene.width, h = this.scene.height;
+    ctx.save();
+    // Tinte: magenta/cian que alterna con el pulso del forcejeo
+    const beat = Math.floor(performance.now() / 120) % 2;
+    ctx.globalCompositeOperation = 'overlay';
+    ctx.globalAlpha = I * 0.3;
+    ctx.fillStyle = beat ? '#ff2a85' : '#05d9e8';
+    ctx.fillRect(0, 0, w, h);
+    ctx.globalCompositeOperation = 'source-over';
+    // Viñeta escalonada
+    const t = Math.max(3, Math.round(Math.min(w, h) * 0.05));
+    ctx.fillStyle = '#05000f';
+    for (let k = 0; k < 7; k++) {
+      ctx.globalAlpha = I * (0.78 - k * 0.11);
+      ctx.fillRect(0, k * t, w, t);
+      ctx.fillRect(0, h - (k + 1) * t, w, t);
+      ctx.fillRect(0, k * t, t, h - 2 * k * t);
+      ctx.fillRect(w - (k + 1) * t, k * t, t, h - 2 * k * t);
+    }
+    // Bandas de color en los laterales (cian izquierda = tú, magenta derecha = ellos)
+    const bw = Math.round(3 * I);
+    ctx.globalAlpha = I * (0.55 + 0.35 * beat);
+    ctx.fillStyle = '#05d9e8'; ctx.fillRect(0, 0, bw, h);
+    ctx.fillStyle = '#ff2a85'; ctx.fillRect(w - bw, 0, bw, h);
+    // Barras de cine arriba y abajo
+    const bh = Math.round(I * 12);
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = '#05000f';
+    ctx.fillRect(0, 0, w, bh); ctx.fillRect(0, h - bh, w, bh);
+    ctx.fillStyle = '#05d9e8'; ctx.fillRect(0, bh, w, 1);
+    ctx.fillStyle = '#ff2a85'; ctx.fillRect(0, h - bh - 1, w, 1);
+    ctx.restore();
+  }
+
+  // Interfaz del duelo: retratos enfrentados con un gran "VS" central y una barra de tensión (cian = tú,
+  // magenta = enemigo) con marcador, que late más rápido cuanto más cerca está de perderse.
+  drawScuffleUI(ctx) {
+    const sc = this.scuffle;
+    if (this.state !== 'scuffle' || !sc) return;
+    const w = this.scene.width, h = this.scene.height, s = this.safe, cx = Math.round(w / 2);
+    const now = performance.now();
+    const danger = sc.bar < 0.3;
+    const pulse = Math.floor(now / (danger ? 70 : 130)) % 2;
+    ctx.save();
+    // Retratos y VS
+    const topY = 16 + s.t;
+    const frame = (x, color) => {
+      ctx.fillStyle = '#05000f'; ctx.fillRect(x - 2, topY - 2, 40, 40);
+      ctx.fillStyle = color;
+      ctx.fillRect(x - 2, topY - 2, 40, 1); ctx.fillRect(x - 2, topY + 37, 40, 1);
+      ctx.fillRect(x - 2, topY - 2, 1, 40); ctx.fillRect(x + 37, topY - 2, 1, 40);
+    };
+    const px = cx - 78, ex = cx + 42;
+    frame(px, COLORS.player); frame(ex, COLORS.wall);
+    ctx.drawImage(maskIcon(this.mask), px, topY, 36, 36);
+    drawSprite(ctx, sc.e.sprite || 'enemy', ex + 18, topY + 18, 0, { scale: 2 });
+    const vs = 'VS', vsScale = 4;
+    const jx = pulse ? 1 : -1;
+    drawText(ctx, vs, cx - 1 + jx, topY + 2, { color: COLORS.player, scale: vsScale, align: 'center', shadow: null });
+    drawText(ctx, vs, cx + 1 - jx, topY + 3, { color: COLORS.wall, scale: vsScale, align: 'center', shadow: null });
+    drawText(ctx, vs, cx, topY + 2, { color: '#ffffff', scale: vsScale, align: 'center', shadow: null });
+    // Barra de tensión
+    const barW = Math.max(110, Math.min(220, Math.round(w * 0.46))), barH = 9 + (danger && pulse ? 2 : 0);
+    const bx = cx - Math.round(barW / 2), by = h - 52 - s.b;
+    ctx.fillStyle = '#05000f'; ctx.fillRect(bx - 2, by - 2 - (barH - 9) / 2, barW + 4, barH + 4);
+    ctx.fillStyle = danger && pulse ? '#ff2e55' : '#3a2a55';
+    ctx.fillRect(bx - 2, by - 2 - (barH - 9) / 2, barW + 4, 1);
+    ctx.fillRect(bx - 2, by + barH + 1 - (barH - 9) / 2, barW + 4, 1);
+    const fill = Math.round(barW * clamp(sc.bar, 0, 1));
+    ctx.fillStyle = '#ff2a85'; ctx.fillRect(bx, by, barW, 9);
+    ctx.fillStyle = '#05d9e8'; ctx.fillRect(bx, by, fill, 9);
+    ctx.fillStyle = '#ffffff'; ctx.fillRect(bx + fill - 1, by - 3, 3, 15); // marcador del choque
+    ctx.fillStyle = '#05000f'; ctx.fillRect(bx + Math.round(barW / 2), by, 1, 9);
+    // Chispas del choque: puntos que saltan del marcador
+    for (let i = 0; i < 4; i++) {
+      const a = now / 60 + i * 1.7;
+      ctx.fillStyle = i % 2 ? '#ffffff' : '#ffbe0b';
+      ctx.fillRect(bx + fill + Math.round(Math.cos(a) * 5), by + 4 + Math.round(Math.sin(a * 1.3) * 7), 1, 1);
+    }
+    // Texto: urgencia + resistencia del enemigo (sube con cada forcejeo del piso)
+    const label = this.hint('¡APORREA CLIC / ESPACIO!', '¡APORREA ATACAR!');
+    if (pulse || !danger) drawText(ctx, label, cx, by - 26, { color: pulse ? '#ffffff' : COLORS.enemy, scale: this.fitScale(label, w - 40, 2), align: 'center' });
+    const res = 'RESISTENCIA X' + sc.mult.toFixed(1).replace('.', ',');
+    drawText(ctx, res, cx, by + 16, { color: sc.mult > 1.2 ? COLORS.blood : '#9d8fb8', align: 'center' });
+    ctx.restore();
   }
 
   // Etiqueta/acción del botón táctil ATACAR: un derribado a tiro (REMATAR, el mismo objetivo que el
@@ -1394,7 +1612,9 @@ export class Game {
 
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     this.drawStrobe(ctx);
+    this.drawScuffleFx(ctx);
     this.renderHud(ctx);
+    this.drawScuffleUI(ctx);
     this.drawFade(ctx);
 
     this.fx.compose(this.ctx, this.scene, this.frameDt);
