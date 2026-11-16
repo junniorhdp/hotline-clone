@@ -9,11 +9,12 @@ import { TouchControls } from './touch.js';
 import { Settings } from './settings.js';
 import { Boss, drawBossBar } from './boss.js';
 import { bloodyMaskPortrait, villainPortrait, villainDef } from './portraits.js';
+import { weaponCategory } from './weapons.js';
 import { buildOptionsMenu, buildPauseMenu } from './options-menu.js';
 import { Player, bloodLevelFor, FINISH_RANGE } from './player.js';
 import { Enemy } from './enemy.js';
 import { Door, ENEMY_PUSH_SPEED } from './doors.js';
-import { Pickup, Bullet, ENEMY_WEAPONS, segmentPointDistance } from './weapons.js';
+import { Pickup, Bullet, ENEMY_WEAPONS, WEAPON_DEFS, segmentPointDistance } from './weapons.js';
 import { Particles, Footprints, GIB_COLORS } from './particles.js';
 import { Sfx } from './audio.js';
 import { ScreenFx } from './effects.js';
@@ -46,7 +47,7 @@ const COARSE_POINTER = window.matchMedia?.('(pointer: coarse)').matches ?? false
 // cuerpo y los remates (40-60 ms) se notan más que un disparo.
 // Forcejeo (ver enemyStrike): zoom de cámara, empuje por pulsación, fuerza base del enemigo (barra/s), endurecimiento
 // por forcejeo en el piso, tope y tiempo máximo.
-const SCUFFLE = { zoom: 2, push: 0.1, base: 0.33, fatigue: 0.22, maxMult: 2.2, timeout: 7.5, weaponChance: 0.12 };
+const SCUFFLE = { zoom: 2, push: 0.1, base: 0.33, fatigue: 0.22, maxMult: 2.2, timeout: 7.5 };
 const HITSTOP = { kill: 0.05, melee: 0.055, execution: 0.07, knock: 0.035, doorKnock: 0.07, playerDeath: 0.12 };
 // Cómo se siente cada tipo de baja: `power` = cantidad de sangre y restos, `wide` = semiapertura
 // del salpicado (rad; π = en todas direcciones), `shake` = sacudida de cámara, `stop` = hit-stop
@@ -455,7 +456,7 @@ export class Game {
   makeEnemy(e) {
     if (e.kind === 'boss') return new Boss(e.x, e.y);
     const weapon = e.weapon ? { type: e.weapon, ammo: ENEMY_WEAPONS[e.weapon].dropAmmo } : null;
-    return new Enemy(e.x, e.y, e.patrol, weapon, e.kind);
+    return new Enemy(e.x, e.y, e.patrol, weapon, e.kind, e.melee);
   }
 
   // --- Menús modales (options-menu.js): OPCIONES y PAUSA -------------------------------------
@@ -874,32 +875,86 @@ export class Game {
     return Math.abs(p.x - b.park.x) < b.w / 2 + p.r + MOUNT_MARGIN && Math.abs(p.y - b.park.y) < b.h / 2 + p.r + MOUNT_MARGIN;
   }
 
-  // --- Forcejeo cuerpo a cuerpo ("estilo VS") -----------------------------------------------------
-  // El puñetazo de un enemigo desarmado (grunt o corredor) que te alcanza DE FRENTE (dentro de ~100° de hacia
-  // donde miras) estando tú también desarmado ya no mata: empieza un forcejeo. Por la espalda, o si estás rematando, sigue siendo
-  // letal. El mundo se congela, la cámara hace zoom ×2 sobre los dos y la música baja de tono y velocidad
-  // (cinta que se frena). Hay que aporrear ATACAR (clic, Espacio, E, Enter o tocar el botón / el joystick)
-  // para empujar la barra; el enemigo la empuja de vuelta con una fuerza que sube con cada forcejeo del piso
-  // (+22 % cada uno, tope ×2,2) y con picos periódicos. Barra llena: contraataque brutal (remate). Barra a 0
-  // o 7,5 s sin llegar a la mitad: te ejecuta (estado 'dead', R reintenta).
+  // --- Matriz de combate cuerpo a cuerpo y forcejeo ("estilo VS") ------------------------------------
+  // Cuando un enemigo te alcanza con su golpe (`Enemy.updateChase` → `enemyStrike`), el resultado sale de la categoría de
+  // armamento de cada uno (`weaponCategory`: unarmed | blunt | blade | gun; una pistola sin balas cuenta como puños):
+  //
+  //   TÚ \ ÉL        unarmed (puños)        blunt / blade (bate, tubo, cuchillo)
+  //   unarmed        FORCEJEO (puños)        te mata (arma superior)
+  //   blunt / blade  matas tú (superior)     FORCEJEO (choque de armas)
+  //   gun con balas  DISPARO DE PÁNICO       DISPARO DE PÁNICO
+  //
+  // El disparo de pánico abate al enemigo a quemarropa (1 bala, pausa de recuperación 0,5 s). Un golpe por la espalda,
+  // un enemigo con arma de fuego o estar rematando mata siempre. Es determinista: sin probabilidades.
+  // El forcejeo congela el mundo, hace zoom ×2 y baja la música (ver abajo); hay que aporrear ATACAR para empujar la
+  // barra y la resistencia del enemigo sube con cada forcejeo del piso (+22 %, tope ×2,2).
   enemyStrike(e, angle) {
     const p = this.player;
     if (this.state !== 'playing' || !p.alive) return;
     if (this.scuffleGrace > 0) { e.attackCd = 0.4; return; } // acaba de forcejear: ese golpe no cuenta
     const frontal = Math.abs(angleDiff(angle + Math.PI, p.angle)) < 1.75;
-    // Solo es un duelo a puño limpio: el enemigo va desarmado (sin arma de fuego ni cuerpo a cuerpo: un cuchillo o
-    // un bate matan al instante) y el jugador también; con un arma en la mano solo hay un `weaponChance` (12 %).
-    const bareEnemy = (e.kind === 'grunt' || e.kind === 'runner') && !e.weapon && !e.meleeWeapon;
-    const duel = frontal && !p.exec && bareEnemy && (!p.weapon || Math.random() < SCUFFLE.weaponChance);
-    if (duel) this.startScuffle(e, angle);
-    else this.killPlayer(angle);
+    const pc = this.playerCategory(), ec = e.category;
+    if (!frontal || p.exec || ec === 'gun' || e.kind === 'boss') { this.killPlayer(angle); return; }
+    if (pc === 'gun') this.defensiveShot(e);
+    else if (pc === 'unarmed' && ec === 'unarmed') this.startScuffle(e, angle, 'fists');
+    else if (pc !== 'unarmed' && ec !== 'unarmed') this.startScuffle(e, angle, 'clash');
+    else if (pc !== 'unarmed') this.playerCounter(e);   // arma tuya contra sus puños: resuelves tú
+    else this.killPlayer(angle);                        // sus armas contra tus puños: resuelve él
   }
 
-  startScuffle(e, angle) {
+  // Categoría de lo que lleva el jugador. Una pistola/escopeta/subfusil sin balas es un palo: cuenta como puños.
+  playerCategory() {
+    const w = this.player.weapon;
+    if (!w) return 'unarmed';
+    const c = weaponCategory(w.type);
+    return c === 'gun' && w.ammo <= 0 ? 'unarmed' : c;
+  }
+
+  // Disparo instintivo a quemarropa: abate al enemigo que se te echa encima de frente. Gasta 1 bala y deja al
+  // jugador una pausa de recuperación (no puede atacar durante 0,5 s) con el retroceso del arma.
+  defensiveShot(e) {
+    const p = this.player, w = p.weapon, def = p.def;
+    const angle = Math.atan2(e.y - p.y, e.x - p.x);
+    p.angle = angle;
+    w.ammo--;
+    const cos = Math.cos(angle), sin = Math.sin(angle);
+    this.particles.sparks(p.x + cos * 18, p.y + sin * 18, angle, 9, 0.5);
+    this.particles.shell(p.x + cos * 6, p.y + sin * 6, angle + Math.PI / 2);
+    this.sfx.play(def.sound);
+    p.muzzle = 0.07;
+    p.recoil = p.recoilMax = 0.3;
+    p.cooldown = Math.max(p.cooldown, 0.5);
+    this.makeNoise(p.x, p.y, def.noise);
+    this.killEnemy(e, angle, 'bullet');
+    this.camera.addShake(10);
+    this.fx.kick(0.6);
+    this.showCallout('¡DISPARO DE PÁNICO!', COLORS.enemy, 0.8);
+    this.touch.haptic([20, 20, 30]);
+  }
+
+  // Tu arma (bate, tubo o cuchillo) contra sus puños: te adelantas y lo abates antes de que acabe de golpear.
+  playerCounter(e) {
+    const p = this.player;
+    const angle = Math.atan2(e.y - p.y, e.x - p.x);
+    p.angle = angle;
+    p.startSwing(p.def);
+    this.sfx.play('swing');
+    this.killEnemy(e, angle, 'melee');
+    this.camera.addShake(8);
+    p.cooldown = Math.max(p.cooldown, 0.25);
+  }
+
+  startScuffle(e, angle, mode = 'fists') {
     const p = this.player;
     this.scuffleCount++;
     const mult = Math.min(SCUFFLE.maxMult, 1 + SCUFFLE.fatigue * (this.scuffleCount - 1));
-    this.scuffle = { e, angle, bar: 0.5, t: 0, mult, surge: 0, nextSurge: 1.0, presses: 0, shake: 0 };
+    // mode 'fists' = puño contra puño; 'clash' = choque de armas (chispas de metal si hay un cuchillo, astillas si son
+    // contundentes). `label` es el titular de la pantalla VS.
+    const pt = p.weapon && p.weapon.type, et = e.meleeWeapon;
+    const names = (t) => (WEAPON_DEFS[t] ? WEAPON_DEFS[t].name : 'PUÑOS');
+    const label = mode === 'clash' ? `${names(pt)} CONTRA ${names(et)}` : 'PUÑO CONTRA PUÑO';
+    const metal = mode === 'clash' && (weaponCategory(pt) === 'blade' || weaponCategory(et) === 'blade');
+    this.scuffle = { e, angle, mode, label, metal, bar: 0.5, t: 0, mult, surge: 0, nextSurge: 1.0, presses: 0, shake: 0 };
     this.state = 'scuffle';
     p.angle = angle + Math.PI; // se miran a la cara
     p.swing = 0; p.moving = false;
@@ -907,6 +962,7 @@ export class Game {
     this.camera.mulTarget = SCUFFLE.zoom;
     this.sfx.setSlowMo(true);
     this.sfx.play('scuffleIn');
+    if (mode === 'clash') this.sfx.play(metal ? 'ricochet' : 'hit');
     this.camera.addShake(10);
     this.fx.kick(1);
     this.hitstop = 0;
@@ -926,8 +982,15 @@ export class Game {
       sc.bar = Math.min(1, sc.bar + n * SCUFFLE.push);
       sc.presses += n;
       sc.shake = 1;
-      this.sfx.play('knock', 0.45);
-      this.particles.dust((p.x + e.x) / 2, (p.y + e.y) / 2, 2);
+      const mx0 = (p.x + e.x) / 2, my0 = (p.y + e.y) / 2;
+      if (sc.mode === 'clash') {
+        // Choque de armas: chispas de metal (cuchillo) o astillas y golpe seco (bate, tubo).
+        if (sc.metal) { this.particles.sparks(mx0, my0, rand(0, TAU), 10, Math.PI); this.sfx.play('ricochet', 0.5); }
+        else { this.particles.splinters(mx0, my0, rand(0, TAU), 6); this.sfx.play('hit', 0.45); }
+      } else {
+        this.sfx.play('knock', 0.45);
+        this.particles.dust(mx0, my0, 2);
+      }
       this.touch.haptic(10);
       if (sc.bar >= 1) { this.winScuffle(); return; } // la pulsación que llena la barra gana, antes de que el empuje la baje
     }
@@ -1054,6 +1117,8 @@ export class Game {
     drawText(ctx, vs, cx - 1 + jx, topY + 6, { color: COLORS.player, scale: vsScale, align: 'center', shadow: null });
     drawText(ctx, vs, cx + 1 - jx, topY + 7, { color: vdef.frame, scale: vsScale, align: 'center', shadow: null });
     drawText(ctx, vs, cx, topY + 6, { color: '#ffffff', scale: vsScale, align: 'center', shadow: null });
+    // Titular del duelo (quién contra quién)
+    drawText(ctx, sc.label, cx, topY + 56, { color: sc.mode === 'clash' ? COLORS.enemy : '#ffffff', align: 'center' });
     // Barra de tensión
     const barW = Math.max(110, Math.min(220, Math.round(w * 0.46))), barH = 9 + (danger && pulse ? 2 : 0);
     const bx = cx - Math.round(barW / 2), by = h - 52 - s.b;
@@ -1248,11 +1313,19 @@ export class Game {
   }
 
   dropWeapon(e) {
-    if (!e.weapon) return;
-    const p = new Pickup(e.weapon.type, e.x, e.y, e.weapon.ammo);
-    p.throwAt(rand(0, TAU), 120);
-    this.pickups.push(p);
-    e.weapon = null;
+    if (e.weapon) {
+      const p = new Pickup(e.weapon.type, e.x, e.y, e.weapon.ammo);
+      p.throwAt(rand(0, TAU), 120);
+      this.pickups.push(p);
+      e.weapon = null;
+    }
+    if (e.meleeWeapon) {
+      const p = new Pickup(e.meleeWeapon, e.x, e.y, 0);
+      p.throwAt(rand(0, TAU), 120);
+      this.pickups.push(p);
+      e.meleeWeapon = null;
+      e.refreshMelee();
+    }
   }
 
   // `cause` es el estilo de la baja para la puntuación (ver STYLE en score.js).

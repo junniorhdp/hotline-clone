@@ -1,5 +1,5 @@
-import { moveAndSlide, lineOfSight, thickLineClear, castRay, findPath, tileKey } from './map.js';
-import { ENEMY_WEAPONS, drawWeaponShape } from './weapons.js';
+import { moveAndSlide, lineOfSight, thickLineClear, castRay, findPath, tileKey, isSolidAt } from './map.js';
+import { ENEMY_WEAPONS, ENEMY_MELEE, WEAPON_DEFS, drawWeaponShape, weaponCategory } from './weapons.js';
 import { COLORS, TAU, angleDiff, clamp } from './utils.js';
 import { drawSprite, pixelRect, WORLD_PX } from './sprites.js';
 import { drawText } from './pixelfont.js';
@@ -32,7 +32,7 @@ export class Enemy {
   // weapon: null (cuerpo a cuerpo) o { type: 'gun', ammo } para el enemigo armado
   // kind: 'grunt' (el de siempre) | 'runner' (corredor ágil, cuerpo a cuerpo) | 'heavy' (guardia pesado con
   // escopeta) | el jefe es una subclase (boss.js).
-  constructor(x, y, patrol, weapon = null, kind = 'grunt') {
+  constructor(x, y, patrol, weapon = null, kind = 'grunt', meleeWeapon = null) {
     this.x = x;
     this.y = y;
     this.r = kind === 'heavy' ? 11 : 10;
@@ -44,7 +44,14 @@ export class Enemy {
     // Pesado: más lento y robusto (hitbox mayor), dispara una escopeta con mucho aviso.
     this.speedMul = kind === 'runner' ? 1.16 : kind === 'heavy' ? 0.88 : 1;
     this.patrolMul = kind === 'runner' ? 1.5 : 1;
-    this.windupTime = kind === 'runner' ? 0.12 : WINDUP;
+    this.meleeWeapon = meleeWeapon; // 'bat' | 'pipe' | 'knife' | null (ver ENEMY_MELEE)
+    this.swingT = 0;        // s restantes del gesto del golpe (para dibujarlo)
+    this.noPanic = 0;       // s sin poder entrar en pánico (tras acorralarlo)
+    this.panicT = 0;
+    this.cornered = 0;
+    this.fleeTarget = null;
+    this.fleeRepath = 0;
+    this.refreshMelee();
     this.sprite = kind === 'runner' ? 'enemyRunner' : kind === 'heavy' ? 'enemyHeavy' : (weapon ? 'enemyArmed' : 'enemy');
     this.corpseSprite = kind === 'runner' ? 'runnerCorpse' : kind === 'heavy' ? 'heavyCorpse' : (weapon ? 'armedCorpse' : 'enemyCorpse');
     this.gunDef = weapon ? ENEMY_WEAPONS[weapon.type] : null;
@@ -70,6 +77,22 @@ export class Enemy {
     this.angle = Math.atan2(first.y - y, first.x - x) || 0;
   }
 
+  // Alcance y preparación del golpe según lo que lleve (puños, bate, tubo o cuchillo); el corredor es más rápido.
+  refreshMelee() {
+    const m = ENEMY_MELEE[this.meleeWeapon];
+    this.reach = m ? m.reach : ATTACK_REACH;
+    this.windupTime = (m ? m.windup : WINDUP) * (this.kind === 'runner' ? 0.7 : 1);
+  }
+
+  get isUnarmed() {
+    return !this.weapon && !this.meleeWeapon;
+  }
+
+  // Categoría de su armamento (matriz de combate): 'unarmed' | 'blunt' | 'blade' | 'gun'.
+  get category() {
+    return this.weapon ? 'gun' : this.meleeWeapon ? weaponCategory(this.meleeWeapon) : 'unarmed';
+  }
+
   get standing() {
     return this.alive && this.state !== 'down';
   }
@@ -83,7 +106,7 @@ export class Enemy {
   }
 
   hear(x, y) {
-    if (this.state === 'chase' || this.state === 'alert' || this.state === 'down') return;
+    if (this.state === 'chase' || this.state === 'alert' || this.state === 'down' || this.state === 'panic') return;
     this.target = { x, y };
     this.state = 'investigate';
     this.path = null;
@@ -116,13 +139,26 @@ export class Enemy {
     this.sees = p.alive && this.canSee(p, game.map);
     if (this.sees) {
       this.target = { x: p.x, y: p.y };
-      if (this.state !== 'alert' && this.state !== 'chase') {
+      if (this.state !== 'alert' && this.state !== 'chase' && this.state !== 'panic') {
         this.state = 'alert';
         this.timer = REACTION_TIME;
         game.playAt('alert', this.x, this.y);
       }
     }
     this.attackCd = Math.max(0, this.attackCd - dt);
+    this.swingT = Math.max(0, this.swingT - dt);
+    // PÁNICO: un enemigo desarmado (nunca tuvo arma o la perdió) que te ve con CUALQUIER arma en la mano no se lanza
+    // a puñetazos: retrocede, busca un arma del suelo o se cubre. Vuelve a atacar al recoger una o si te quedas sin arma.
+    this.noPanic = Math.max(0, this.noPanic - dt);
+    if (this.isUnarmed && p.alive && p.weapon && this.noPanic <= 0 && this.state !== 'panic' && (this.sees || this.state === 'chase')) {
+      this.state = 'panic';
+      this.panicT = 0;
+      this.cornered = 0;
+      this.fleeTarget = null;
+      this.fleeRepath = 0;
+      this.windup = 0;
+      game.playAt('alert', this.x, this.y);
+    }
     if (this.doorWait > 0) {
       this.doorWait -= dt;
       if (this.doorWait <= 0) this.doorPushTime = DOOR_PUSH_WINDOW;
@@ -138,6 +174,7 @@ export class Enemy {
         if (this.timer <= 0) this.state = 'chase';
         break;
       case 'chase': this.updateChase(dt, game); break;
+      case 'panic': this.updatePanic(dt, game); break;
       case 'investigate':
         if (this.goTo(this.target.x, this.target.y, INVESTIGATE_SPEED * this.speedMul, dt, game.map)) this.startSearch();
         break;
@@ -218,13 +255,14 @@ export class Enemy {
       return;
     }
 
-    if (d < this.r + p.r + ATTACK_REACH) {
+    if (d < this.r + p.r + this.reach) {
       this.turnTowards(angleToPlayer, 16, dt);
       if (this.attackCd <= 0) {
         this.windup += dt;
         if (this.windup >= this.windupTime) {
           this.windup = 0;
           this.attackCd = ATTACK_COOLDOWN;
+          this.swingT = 0.15;
           game.enemyStrike(this, angleToPlayer); // frontal = forcejeo; por la espalda mata
         }
       }
@@ -232,6 +270,76 @@ export class Enemy {
     }
     this.windup = 0;
     this.goTo(p.x, p.y, CHASE_SPEED * this.speedMul, dt, game.map);
+  }
+
+  // --- Pánico ---------------------------------------------------------------------------------------
+  // 1) Si hay un arma usable en el suelo cerca (y no pegada a ti), corre a por ella y se arma. 2) Si no, huye: de
+  // 16 rumbos elige el punto que más lo aleja de ti, mejor si queda fuera de tu línea de visión. 3) Si lo
+  // acorralas (< 42 u durante 1 s) se rinde a pelear con los puños (`noPanic` 4 s). Si te quedas sin arma, vuelve a atacar.
+  updatePanic(dt, game) {
+    const p = game.player;
+    if (!p.alive || !p.weapon || !this.isUnarmed) { this.state = 'chase'; this.target = { x: p.x, y: p.y }; this.attackCd = 0.3; return; }
+    this.panicT += dt;
+    const d = Math.hypot(p.x - this.x, p.y - this.y);
+    const pk = this.nearestWeapon(game);
+    if (pk) {
+      if (Math.hypot(pk.x - this.x, pk.y - this.y) < 14) { this.takeWeapon(pk, game); return; }
+      this.goTo(pk.x, pk.y, CHASE_SPEED * 1.05, dt, game.map);
+      return;
+    }
+    this.cornered = d < 42 ? this.cornered + dt : Math.max(0, this.cornered - dt);
+    if (this.cornered > 1) { this.noPanic = 4; this.state = 'chase'; this.target = { x: p.x, y: p.y }; this.attackCd = 0.2; return; }
+    this.fleeRepath -= dt;
+    if (!this.fleeTarget || this.fleeRepath <= 0 || Math.hypot(this.fleeTarget.x - this.x, this.fleeTarget.y - this.y) < 10) {
+      this.fleeTarget = this.pickFlee(game);
+      this.fleeRepath = 0.5;
+    }
+    if (this.fleeTarget) this.goTo(this.fleeTarget.x, this.fleeTarget.y, CHASE_SPEED, dt, game.map);
+  }
+
+  // El arma suelta más cercana que merece la pena: cuerpo a cuerpo o de fuego con balas, a ≤ 360 u, alcanzable
+  // en línea recta o por ruta, y no pegada al jugador.
+  nearestWeapon(game) {
+    const p = game.player;
+    let best = null, bestD = 360;
+    for (const k of game.pickups) {
+      if (!k.alive || k.flying) continue;
+      const def = WEAPON_DEFS[k.type];
+      if (!def || (!def.melee && !(k.ammo > 0))) continue;
+      if (Math.hypot(k.x - p.x, k.y - p.y) < 40) continue;
+      const d = Math.hypot(k.x - this.x, k.y - this.y);
+      if (d >= bestD) continue;
+      if (!thickLineClear(game.map, this.x, this.y, k.x, k.y, this.r) && !findPath(game.map, this.x, this.y, k.x, k.y)) continue;
+      best = k; bestD = d;
+    }
+    return best;
+  }
+
+  takeWeapon(k, game) {
+    k.alive = false;
+    const def = WEAPON_DEFS[k.type];
+    if (def.melee) { this.meleeWeapon = k.type; this.refreshMelee(); }
+    else { this.weapon = { type: k.type, ammo: k.ammo }; this.gunDef = ENEMY_WEAPONS[k.type]; this.armed = true; }
+    this.state = 'chase';
+    this.attackCd = 0.5; // un respiro antes de usarla
+    this.windup = this.aim = 0;
+    game.playAt('pickup', this.x, this.y);
+  }
+
+  pickFlee(game) {
+    const p = game.player, map = game.map;
+    const away = Math.atan2(this.y - p.y, this.x - p.x);
+    let best = null, bestScore = -Infinity;
+    for (let i = 0; i < 16; i++) {
+      const a = (i / 16) * TAU;
+      for (const len of [90, 150, 220]) {
+        const tx = this.x + Math.cos(a) * len, ty = this.y + Math.sin(a) * len;
+        if (isSolidAt(map, tx, ty) || !thickLineClear(map, this.x, this.y, tx, ty, this.r)) continue;
+        const score = Math.hypot(tx - p.x, ty - p.y) + (lineOfSight(map, tx, ty, p.x, p.y) ? 0 : 140) - Math.abs(angleDiff(a, away)) * 20;
+        if (score > bestScore) { bestScore = score; best = { x: tx, y: ty }; }
+      }
+    }
+    return best;
   }
 
   // Va hacia (tx, ty): en línea recta si el cuerpo cabe, si no siguiendo una ruta BFS.
@@ -302,8 +410,10 @@ export class Enemy {
       ctx.restore();
     }
 
+    // Pánico: tiembla (1 px) y suda.
+    const trem = this.state === 'panic' ? (Math.floor(time * 30) % 2 ? WORLD_PX : -WORLD_PX) : 0;
     ctx.save();
-    ctx.translate(this.x, this.y);
+    ctx.translate(this.x + trem, this.y);
     ctx.save();
     ctx.rotate(this.angle);
     // Puños; durante la preparación del golpe el brazo se echa hacia atrás.
@@ -311,6 +421,12 @@ export class Enemy {
     if (this.weapon) {
       drawSprite(ctx, 'fist', 10, 6);
       drawWeaponShape(ctx, this.weapon.type, 10, 6, 0);
+    } else if (this.meleeWeapon) {
+      // Arma en la mano: se levanta al prepararse y barre hacia delante al golpear.
+      const ang = this.swingT > 0 ? 0.9 * (this.swingT / 0.15) : -1.1 * wind;
+      drawSprite(ctx, 'fist', 10 - wind * 6, 8);
+      drawWeaponShape(ctx, this.meleeWeapon, 10 - wind * 6, 8, ang);
+      drawSprite(ctx, 'fist', 10, -8);
     } else {
       drawSprite(ctx, 'fist', 10 - wind * 8, 8);
       drawSprite(ctx, 'fist', 10, -8);
@@ -318,11 +434,18 @@ export class Enemy {
     drawSprite(ctx, this.sprite, 0, 0);
     ctx.restore();
 
-    const icon = this.state === 'alert' || this.state === 'chase' ? '!'
+    if (this.state === 'panic') {
+      ctx.fillStyle = '#9ff6ff';
+      for (let i = 0; i < 2; i++) {
+        const f = (time * 3 + i * 0.5) % 1;
+        pixelRect(ctx, (i ? 7 : -9) , -this.r - 4 - f * 8, 1, 2);
+      }
+    }
+    const icon = this.state === 'panic' ? '!' : this.state === 'alert' || this.state === 'chase' ? '!'
       : this.state === 'investigate' || this.state === 'search' ? '?' : '';
     if (icon) {
       const bob = Math.round(Math.sin(time * 10)) * WORLD_PX;
-      drawText(ctx, icon, 0, -this.r - 22 + bob, { color: icon === '!' ? COLORS.blood : COLORS.enemy, scale: WORLD_PX, align: 'center' });
+      drawText(ctx, icon, 0, -this.r - 22 + bob, { color: this.state === 'panic' ? '#9ff6ff' : icon === '!' ? COLORS.blood : COLORS.enemy, scale: WORLD_PX, align: 'center' });
     }
     ctx.restore();
   }

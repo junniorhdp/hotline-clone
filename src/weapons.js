@@ -26,6 +26,21 @@ export const ENEMY_WEAPONS = {
   shotgun: { range: 250, windup: 0.55, cooldown: 1.2, bulletSpeed: 640, spread: 0.06, burst: 1, burstInterval: 0, dropAmmo: 2, sound: 'shotgun', pellets: 5, fan: 0.3, bulletRange: 270 },
 };
 
+// Categorías de armamento (matriz de combate, ver Game.enemyStrike): `unarmed` (puños), `blunt` (bate, tubo),
+// `blade` (cuchillo) y `gun` (pistola, escopeta, subfusil). `null`/undefined = puños.
+const CATEGORY = { bat: 'blunt', pipe: 'blunt', knife: 'blade', gun: 'gun', shotgun: 'gun', smg: 'gun' };
+export function weaponCategory(type) {
+  return CATEGORY[type] || 'unarmed';
+}
+
+// Armas cuerpo a cuerpo que pueden llevar los enemigos: alcance extra sobre el hueco normal (`reach`) y tiempo
+// de preparación del golpe (`windup`, la ventana para esquivar o adelantarse). El bate llega más lejos y tarda más.
+export const ENEMY_MELEE = {
+  bat: { reach: 22, windup: 0.28 },
+  pipe: { reach: 19, windup: 0.22 },
+  knife: { reach: 12, windup: 0.16 },
+};
+
 const THROW_DECEL = 900;      // px/s² de frenado del arma lanzada
 const HURT_THROW_SPEED = 160; // por encima de esto, el arma lanzada derriba
 

@@ -444,7 +444,7 @@ cambia de régimen todo el rato y se tiene que poder cortar limpia. Es Web Audio
   rampas a ≤ 0, nodos sin desconectar tras 80 inicios/cortes rápidos).
 
 ## Mecánicas de combate
-- Daño: todo es de un golpe, con una excepción: el golpe **frontal** de un enemigo cuerpo a cuerpo abre un forcejeo (ver "Forcejeo cuerpo a cuerpo"); por la espalda, de bala o del jefe sigue matando al instante. Lo que cambia es el efecto: **matar** o **derribar** (estado `down`
+- Daño: todo es de un golpe, con una excepción: el choque cuerpo a cuerpo de frente se resuelve con la matriz de combate (forcejeo, disparo de pánico o muerte según las armas; ver "Matriz de combate"); por la espalda, de bala o del jefe sigue matando al instante. Lo que cambia es el efecto: **matar** o **derribar** (estado `down`
   ~3,2 s, luego se levanta; se remata con una **ejecución**, ver "Ejecuciones").
   Cualquier arma **lanzada** (clic derecho) derriba si va a más de 160 px/s.
 
@@ -496,19 +496,40 @@ Alcance en unidades del mundo (1 casilla = 32). Cadencia = segundos entre ataque
 | Subfusil | 280 | 0,45 s | ráfaga de 4 (cada 0,09 s) | 0,95 s | subfusil con 12 balas |
 | Escopeta (guardia pesado) | 250 | 0,55 s | 5 perdigones en abanico ±0,3 rad (alcance 270) | 1,2 s | escopeta con 2 balas |
 
+- **Armas de los enemigos** (`ENEMY_MIX` en `map.js`, sorteado con el `rng` del piso: R no lo cambia): además de las pistolas/subfusiles/escopetas, los enemigos desarmados
+  (grunt y corredor) pueden llevar **bate, tubo o cuchillo** (`e.meleeWeapon`; `ENEMY_MELEE`: bate alcance +22 y preparación 0,28 s, tubo +19 y 0,22 s, cuchillo +12 y 0,16 s;
+  el corredor ×0,7 de preparación) con probabilidad por piso 0,5 · 0,6 · 0,65 · 0,8 (Club) · 0,55 · 0,6, y un grunt de cada 10-30 % lleva pistola (`arm`). Dibujan el arma
+  (se levanta al prepararse, barre al golpear) y la **sueltan** al morir o caer derribados (`Game.dropWeapon`), para que el jugador pueda recogerla.
+- **IA de pánico** (`Enemy.updatePanic`, estado `'panic'`): un enemigo **desarmado** (nunca tuvo arma o la perdió, p. ej. por un lanzamiento) que te ve con **cualquier arma** en la
+  mano no corre a pegarte: tiembla (1 px), suda (gotas cian) y muestra un `!` cian. 1) Si hay un arma **usable** en el suelo a ≤ 360 u (cuerpo a cuerpo, o de fuego con balas;
+  alcanzable y a > 40 u de ti) corre a por ella (`nearestWeapon`) y se arma (`takeWeapon`: vuelve a `chase` con 0,5 s de respiro); 2) si no, **huye** (`pickFlee`: de 16 rumbos
+  y 3 distancias elige el punto más lejano de ti, mejor si queda fuera de tu línea de visión); 3) si lo **acorralas** (< 42 u durante 1 s) se rinde a pelear con los puños
+  (`noPanic` 4 s). Si te quedas sin arma o muere el jugador, vuelve a `chase`. Los armados, el jefe y los forcejeos no entran en pánico.
 - **Variantes de enemigo** (`Enemy(kind)`, letra del mapa): **corredor** `R` (sprite rosa; patrulla ×1,5 y persigue ×1,16 ≈ 223 u/s,
   aún por debajo del jugador; golpea tras 0,12 s en vez de 0,17 s) y **guardia pesado** `H` (hitbox 11, ×0,88 de velocidad, escopeta; sprite
   granate). Cada uno tiene su `sprite`/`corpseSprite` (recolores en `sprites.js`).
 - Si el enemigo pierde la línea de visión, el aviso y la ráfaga se cancelan (cubrirse tras
   esquinas funciona). Al morir o ser derribado suelta su arma.
 
-### Forcejeo cuerpo a cuerpo ("estilo VS", `game.js`: `enemyStrike`, `startScuffle`, `updateScuffle`, `drawScuffleFx/UI`)
-El puñetazo de un enemigo **desarmado** (`grunt` o `runner`; no el pesado ni los armados, que disparan, ni el jefe, cuyo tajo y embestida siguen siendo letales) ya no
-mata de frente **si tú también vas a puño limpio**: `Enemy.updateChase` llama a `game.enemyStrike(e, ángulo)`, que mira si el enemigo está **dentro de ~100° de hacia donde miras**
-(`|angleDiff(ángulo+π, p.angle)| < 1,75`) y no estás rematando → **forcejeo** si no llevas arma; **con un arma en la mano solo con un 12 %** (`SCUFFLE.weaponChance`) y si no
-mata al instante. Un enemigo con arma (de fuego, o cuerpo a cuerpo si algún día la lleva: `e.meleeWeapon`) mata siempre al instante, igual que por la espalda (`killPlayer`).
-Así el forcejeo queda reservado a los duelos a puño limpio. Tras un forcejeo hay 0,6 s de
-inmunidad al cuerpo a cuerpo (`scuffleGrace`).
+### Matriz de combate cuerpo a cuerpo y forcejeo ("estilo VS", `game.js`: `enemyStrike`, `startScuffle`, `updateScuffle`, `drawScuffleFx/UI`)
+Cuando un enemigo te alcanza con su golpe, `Enemy.updateChase` llama a `game.enemyStrike(e, ángulo)`. El resultado es **determinista** y sale de la **categoría de
+armamento** de cada uno (`weaponCategory` en `weapons.js`: `unarmed` puños · `blunt` bate y tubo · `blade` cuchillo · `gun` pistola, escopeta y subfusil; una arma de
+fuego **sin balas cuenta como puños**, `Game.playerCategory`; la del enemigo es `Enemy.category`):
+
+| Tú \ Él | unarmed | blunt / blade |
+|---|---|---|
+| **unarmed** | **FORCEJEO** de puños (`PUÑO CONTRA PUÑO`) | te mata (su arma es superior) |
+| **blunt / blade** | matas tú, al instante (`playerCounter`) | **FORCEJEO** = choque de armas (`BATE CONTRA TUBO`…) |
+| **gun** con balas | **DISPARO DE PÁNICO** (`defensiveShot`) | **DISPARO DE PÁNICO** |
+
+- Bate/tubo/cuchillo entre sí son el mismo escalón (cualquier combinación melee contra melee es un choque de armas). Un golpe **por la espalda** (fuera de ~100° de hacia
+  donde miras: `|angleDiff(ángulo+π, p.angle)| < 1,75`), estar **rematando**, un enemigo con **arma de fuego** y el **jefe** matan siempre al instante (`killPlayer`).
+- **Disparo de pánico**: tiro instintivo a quemarropa: abate al enemigo, gasta 1 bala, retroceso del arma, pausa de recuperación de 0,5 s (`p.cooldown`) y cartel
+  `¡DISPARO DE PÁNICO!`. Con la pistola vacía el enemigo sí te golpea (o forcejeas si va con puños).
+- **Iniciativa** (`Player.attack`): quien golpea primero gana. Un enemigo que ya prepara su golpe o su disparo (`windup`/`aim` > 0) se alcanza con un arco ×1,3 (tope 216°)
+  y +6 u de alcance, así que tu golpe conecta antes de que complete el suyo; tus disparos son instantáneos. Tras un forcejeo hay 0,6 s de inmunidad (`scuffleGrace`).
+- **Choque de armas**: igual que el forcejeo de puños pero con efectos propios: en cada pulsación saltan chispas de metal y suena `ricochet` si hay un cuchillo, o astillas
+  (`particles.splinters`) y un golpe seco si son contundentes; el titular de la pantalla VS dice quién contra quién (`sc.label`, nombres de `WEAPON_DEFS`).
 - **Estado** `'scuffle'` (`this.scuffle = { e, bar, t, mult, surge, … }`): el mundo se congela (solo corre `updateScuffle`, partículas a ×0,35).
   Se mira a la cara; `Esc` no pausa; `R` reinicia (`reset()` limpia `scuffle`, zoom y audio).
 - **Minijuego** (`SCUFFLE`): barra 0..1 que empieza en 0,5. Cada pulsación nueva (flanco: clic, `Espacio`, `E`, `Enter`, `tapAttack`, es decir el botón

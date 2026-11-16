@@ -343,7 +343,10 @@ export class Player {
       let hit = false;
       for (const e of game.enemies) {
         if (!e.alive || e.state === 'down') continue;
-        if (inMeleeArc(this.x, this.y, this.angle, def, e) && lineOfSight(game.map, this.x, this.y, e.x, e.y)) {
+        // INICIATIVA: quien golpea primero gana. Un enemigo que ya prepara su golpe o su disparo (windup/aim) se alcanza
+        // con un arco más amplio y 6 u más de alcance: tu golpe conecta antes de que él lo complete.
+        const reachDef = e.windup > 0 || e.aim > 0 ? { ...def, range: def.range + 6, arc: Math.min(Math.PI * 1.2, def.arc * 1.3) } : def;
+        if (inMeleeArc(this.x, this.y, this.angle, reachDef, e) && lineOfSight(game.map, this.x, this.y, e.x, e.y)) {
           // Con la máscara OSO los puños también matan al instante.
           if (def.knockdown && !this.perks.meleeLethal) game.knockDown(e, this.angle, 'fists');
           else game.killEnemy(e, this.angle, 'melee');

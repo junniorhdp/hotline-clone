@@ -497,6 +497,15 @@ const ENEMY_CHARS = {
   X: { armed: false, axis: 'none', kind: 'boss' },     // jefe del piso (se queda en su sitio hasta verte)
 };
 
+// Reparto de armas entre los enemigos por piso (en el orden de LEVELS): `melee` = probabilidad de que un
+// enemigo desarmado (grunt/corredor) lleve un arma cuerpo a cuerpo (bate, tubo o cuchillo) y `arm` = de que un
+// grunt lleve pistola. Sorteado con el `rng` del piso: R no lo cambia.
+const ENEMY_MIX = [
+  { melee: 0.5, arm: 0.1 }, { melee: 0.6, arm: 0.15 }, { melee: 0.65, arm: 0.2 },
+  { melee: 0.8, arm: 0.1 }, { melee: 0.55, arm: 0.3 }, { melee: 0.6, arm: 0.15 },
+];
+const MELEE_TYPES = ['bat', 'pipe', 'knife'];
+
 // `rng` (0..1) decide las armas aleatorias; el juego pasa uno con semilla por partida y piso.
 export function loadLevel(index = 0, rng = Math.random) {
   const def = LEVELS[index];
@@ -569,6 +578,9 @@ export function loadLevel(index = 0, rng = Math.random) {
   for (const e of enemies) {
     e.patrol = e.axis === 'none' ? [{ x: e.x, y: e.y }] : autoPatrol(map, e.tx, e.ty, e.axis);
     e.kind = e.kind || 'grunt';
+    const mix = ENEMY_MIX[index] || ENEMY_MIX[0];
+    if (!e.armed && e.kind === 'grunt' && e.kind !== 'boss' && rng() < mix.arm) e.armed = true; // más pistolas
+    e.melee = !e.armed && (e.kind === 'grunt' || e.kind === 'runner') && rng() < mix.melee ? MELEE_TYPES[Math.floor(rng() * MELEE_TYPES.length)] : null;
     e.weapon = e.kind === 'heavy' ? 'shotgun' : e.armed ? (rng() < def.smgChance ? 'smg' : 'gun') : null;
   }
   // Huecos aleatorios barajados: los primeros reciben las armas garantizadas.
