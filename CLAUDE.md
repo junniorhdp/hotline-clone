@@ -641,14 +641,14 @@ Colores centralizados en `COLORS` (`src/utils.js`) y `PALETTE` (`src/sprites.js`
   y muestra "GIRA EL DISPOSITIVO".
 - **Configuración** (`TOUCH_CONFIG` en `touch.js`; `TouchControls.config` / `setConfig(patch)`): `joystickRadius` (px CSS, 56),
   `buttonScale` (1), `buttonOpacity` (1), `aimAssist` (0 / 0,5 / 1, por defecto 1), `autoFire` (false), `hapticsEnabled` (true), `moveDeadzone` (0,12),
-  `aimDeadzone` (0,15), `fireThreshold` (0,6). Todo el dibujo y la detección de toques leen de ahí. **La persistencia y el menú
+  `aimDeadzone` (0,15), `fireThreshold` (0,85; > 1 = el joystick nunca dispara). Todo el dibujo y la detección de toques leen de ahí. **La persistencia y el menú
   los lleva `settings.js`** (ver "Ajustes y menús"): escribe en `config` al arrancar y al cambiar una opción. La antigua clave
   `neonrush.touch.v1` ya no se usa.
 - **Controles** (`touch.js`, solo en `playing`/`cleared`):
   - Joystick izquierdo flotante → `input.moveAxis` analógico con **zona muerta reescalada** (la velocidad arranca de
     cero justo al salir de ella) y **seguimiento**: si el dedo se sale del círculo, el círculo se desplaza con él.
   - Joystick derecho flotante → **arrastrarlo solo apunta** (`input.aimActive/aimAngle`); llevarlo al borde
-    (más allá de `fireThreshold`, marcado con un anillo de puntos) ataca a la cadencia del arma (`input.aimFiring`, con
+    (más allá de `fireThreshold`, marcado con un anillo de puntos; **0,85 por defecto**: con 0,6 apuntar con precisión, que lleva el dedo lejos del centro, disparaba sin querer) ataca a la cadencia del arma (`input.aimFiring`, con
     histéresis de 0,1 al volver hacia dentro). Un toque rápido (< 0,25 s) sin disparar = un ataque (`tapAttack`).
     Ya no dispara por mantener el dedo quieto (cambio respecto a la versión anterior: ATACAR cubre el "mantener").
   - **Aim-assist en tres niveles** (`config.aimAssist`: 0 OFF · 0,5 SUAVE · 1 ALTO, por defecto ALTO; `ASSIST_LEVELS` en `touch.js`).
@@ -721,7 +721,7 @@ Colores centralizados en `COLORS` (`src/utils.js`) y `PALETTE` (`src/sprites.js`
   con `sanitize`: JSON corrupto, tipos o valores fuera de rango → valor por defecto; escritura con try/catch). `set`/`adjust`
   guardan y llaman a `apply`; `applyAll` (al final del constructor de `Game`) aplica lo guardado; `reset` restaura.
 - **Opciones actuales**: AUDIO `musicVolume`, `sfxVolume` (0–100 % de 10 en 10) · JUEGO `goreEnabled` · TÁCTIL `buttonScale`
-  (PEQUEÑO 0,85 / NORMAL 1 / GRANDE 1,2), `buttonOpacity` (BAJA 0,5 / MEDIA 0,75 / ALTA 1), `autoFire` (DISPARO AUTOMÁTICO), `hapticsEnabled`,
+  (PEQUEÑO 0,85 / NORMAL 1 / GRANDE 1,2), `buttonOpacity` (BAJA 0,5 / MEDIA 0,75 / ALTA 1), `stickFire` (DISPARO CON JOYSTICK: BORDE 0,85 / FÁCIL 0,6 / NO = solo apunta; escribe `fireThreshold`), `autoFire` (DISPARO AUTOMÁTICO), `hapticsEnabled`,
   `aimAssist` (OFF / SUAVE / ALTO; el antiguo sí/no se migra: true → SUAVE, false → OFF). Las táctiles escriben en `touch.setConfig`.
 - **Audio** (`audio.js`): `sfx.setVolumes({ music, sfx })`. Hay un `sfxBus` nuevo entre todos los efectos (y la moto) y el master;
   `musicBus`/`ambientBus` escalan su nivel por `musicVol` (`applyMusicMode`). `M` sigue silenciando el master por encima de ambos.

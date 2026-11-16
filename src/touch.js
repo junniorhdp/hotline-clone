@@ -38,7 +38,7 @@ export const TOUCH_CONFIG = {
   hapticsEnabled: true, // vibración breve en botones, disparos, ejecuciones y muerte
   moveDeadzone: 0.12,   // fracción del radio: por debajo no hay movimiento
   aimDeadzone: 0.15,    // fracción del radio: por debajo no se cambia la mirada
-  fireThreshold: 0.6,   // fracción del radio: más allá (borde exterior) ataca
+  fireThreshold: 0.85,  // fracción del radio: más allá (borde exterior) ataca; > 1 = el joystick nunca dispara
 };
 
 const BUTTON_CSS_HEIGHT = 48;
@@ -460,7 +460,7 @@ export class TouchControls {
     // Joysticks: si no se están usando, un círculo tenue indica dónde poner el pulgar.
     this.drawStick(ctx, this.move, L.left + R + 6, L.bottom - R - 6, R, COLORS.player, false);
     this.drawStick(ctx, this.aim, Math.min(rightBase, L.right - R), L.bottom - R - 6, R,
-      g.input.aimFiring ? COLORS.blood : COLORS.wall, g.input.aimFiring, this.config.fireThreshold);
+      g.input.aimFiring ? COLORS.blood : COLORS.wall, g.input.aimFiring, this.config.fireThreshold <= 1 ? this.config.fireThreshold : 0);
 
     const act = this.action;
     const blink = Math.floor(now / 110) % 2;

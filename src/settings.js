@@ -31,6 +31,12 @@ export const OPTIONS = [
   { id: 'buttonOpacity', section: 'TÁCTIL', label: 'OPACIDAD BOTONES', type: 'choice', default: 1,
     choices: [{ label: 'BAJA', value: 0.5 }, { label: 'MEDIA', value: 0.75 }, { label: 'ALTA', value: 1 }],
     apply: (g, v) => g.touch.setConfig({ buttonOpacity: v }) },
+  // Joystick derecho: apuntar y disparar comparten el dedo, así que el disparo solo ocurre al llevarlo al
+  // borde (`fireThreshold`): BORDE (0,85, lo más seguro para apuntar), FÁCIL (0,6) o NO (el joystick solo
+  // apunta; se dispara con ATACAR, tocando el joystick o con DISPARO AUTOMÁTICO).
+  { id: 'stickFire', section: 'TÁCTIL', label: 'DISPARO CON JOYSTICK', type: 'choice', default: 0.85,
+    choices: [{ label: 'BORDE', value: 0.85 }, { label: 'FÁCIL', value: 0.6 }, { label: 'NO', value: 2 }],
+    apply: (g, v) => g.touch.setConfig({ fireThreshold: v }) },
   // Disparo automático: mientras apuntas (joystick derecho) a un enemigo a tiro, ataca solo; no hace falta
   // llegar al borde del joystick. Pensado para quien le cuesta disparar; funciona con cualquier nivel de asistencia.
   { id: 'autoFire', section: 'TÁCTIL', label: 'DISPARO AUTOMÁTICO', type: 'toggle', default: false,
