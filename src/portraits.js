@@ -212,3 +212,10 @@ export function drawAgentPreview(ctx, r, maskId, gender, t) {
     ctx.fillRect(r.x + ox + (ox ? 0 : 4), r.y + oy + (oy ? 4 : 0), 2, 2);
   }
 }
+
+// Candado de píxeles (7×8) para las máscaras bloqueadas; `scale` en píxeles de escena por píxel del icono.
+export function drawPadlock(ctx, x, y, color, scale = 2) {
+  const rows = ['..###..', '.#...#.', '.#...#.', '#######', '#######', '###.###', '###.###', '#######'];
+  ctx.fillStyle = color;
+  rows.forEach((row, j) => { for (let i = 0; i < row.length; i++) if (row[i] === '#') ctx.fillRect(x + i * scale, y + j * scale, scale, scale); });
+}

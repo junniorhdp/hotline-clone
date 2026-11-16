@@ -1,4 +1,5 @@
 import { clamp } from './utils.js';
+import { MASKS } from './masks.js';
 
 // Ajustes del jugador: una lista DECLARATIVA (`OPTIONS`) + un gestor (`Settings`) que la guarda en
 // localStorage (`neonrush.settings.v1`) con lectura defensiva y valores por defecto.
@@ -12,6 +13,9 @@ import { clamp } from './utils.js';
 // `apply` se llama al cambiar la opción y una vez al arrancar (`applyAll`) para que el valor guardado
 // surta efecto. Quien necesite el valor en caliente puede leerlo con `game.settings.get(id)`.
 export const SETTINGS_KEY = 'neonrush.settings.v1';
+// Máscaras desbloqueadas (`unlockedMasks` dentro de neonrush.settings.v1): NEON y BRUTE de serie; STRIKE, BLADE y GHOST se ganan
+// abatiendo a su portador (pisos 2, 3 y 4). Nunca se pierden (ni con RESTAURAR). Lectura defensiva: solo ids válidos y las de serie siempre.
+export const DEFAULT_UNLOCKED = MASKS.filter((m) => !m.lockFloor).map((m) => m.id);
 
 export const OPTIONS = [
   // --- Audio: se conectan a los buses de audio.js (el mute rápido M sigue funcionando por encima) ---
@@ -84,6 +88,7 @@ export class Settings {
     this.game = game;
     this.values = {};
     for (const o of OPTIONS) this.values[o.id] = o.default;
+    this.unlocked = new Set(DEFAULT_UNLOCKED);
     this.load();
   }
 
@@ -91,17 +96,31 @@ export class Settings {
     return this.values[id];
   }
 
+  isMaskUnlocked(id) {
+    return this.unlocked.has(id);
+  }
+
+  // Desbloquea una máscara de forma permanente. Devuelve true si era nueva.
+  unlockMask(id) {
+    if (this.unlocked.has(id) || !MASKS.some((m) => m.id === id)) return false;
+    this.unlocked.add(id);
+    this.save();
+    return true;
+  }
+
   load() {
     try {
       const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || 'null');
       const src = saved && typeof saved === 'object' && saved.values && typeof saved.values === 'object' ? saved.values : {};
       for (const o of OPTIONS) if (o.id in src) this.values[o.id] = sanitize(o, src[o.id]);
-      this.game.keys.load(saved && saved.keys); // controles de PC (keybinds.js); sin nada guardado = valores por defecto
+      this.game.keys.load(saved && saved.keys);
+      const ids = new Set(MASKS.map((m) => m.id));
+      if (saved && Array.isArray(saved.unlockedMasks)) for (const id of saved.unlockedMasks) if (ids.has(id)) this.unlocked.add(id); // controles de PC (keybinds.js); sin nada guardado = valores por defecto
     } catch { /* sin acceso o JSON corrupto: valores por defecto */ }
   }
 
   save() {
-    try { localStorage.setItem(SETTINGS_KEY, JSON.stringify({ version: 1, values: this.values, keys: this.game.keys.toJSON() })); } catch { /* cuota o modo privado */ }
+    try { localStorage.setItem(SETTINGS_KEY, JSON.stringify({ version: 1, values: this.values, keys: this.game.keys.toJSON(), unlockedMasks: [...this.unlocked] })); } catch { /* cuota o modo privado */ }
   }
 
   // Aplica todos los ajustes (arranque y restaurar).

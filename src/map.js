@@ -505,6 +505,9 @@ const ENEMY_MIX = [
   { melee: 0.8, arm: 0.1 }, { melee: 0.55, arm: 0.3 }, { melee: 0.6, arm: 0.15 },
 ];
 const MELEE_TYPES = ['bat', 'pipe', 'knife'];
+// Enemigo portador de máscara por piso (índice en LEVELS): lleva puesta una máscara bloqueada y su ventaja (ver Enemy.setCarrier). Solo
+// aparece si la máscara aún no está desbloqueada (lo decide Game.makeEnemy). Se escoge al más alejado de la entrada (hay que ir a por él).
+const CARRIERS = { 1: 'guepardo', 2: 'tiburon', 3: 'buho' };
 
 // `rng` (0..1) decide las armas aleatorias; el juego pasa uno con semilla por partida y piso.
 export function loadLevel(index = 0, rng = Math.random) {
@@ -582,6 +585,22 @@ export function loadLevel(index = 0, rng = Math.random) {
     if (!e.armed && e.kind === 'grunt' && e.kind !== 'boss' && rng() < mix.arm) e.armed = true; // más pistolas
     e.melee = !e.armed && (e.kind === 'grunt' || e.kind === 'runner') && rng() < mix.melee ? MELEE_TYPES[Math.floor(rng() * MELEE_TYPES.length)] : null;
     e.weapon = e.kind === 'heavy' ? 'shotgun' : e.armed ? (rng() < def.smgChance ? 'smg' : 'gun') : null;
+  }
+  const carrierMask = CARRIERS[index];
+  if (carrierMask) {
+    const ghost = carrierMask === 'buho';
+    let pool = enemies.filter((e) => (e.kind === 'grunt' || e.kind === 'runner') && (ghost || !e.armed));
+    if (ghost && pool.some((e) => e.kind === 'grunt')) pool = pool.filter((e) => e.kind === 'grunt'); // GHOST: un grunt con pistola (no un corredor)
+    if (!pool.length) pool = enemies.filter((e) => e.kind === 'grunt');
+    if (pool.length) {
+      const far = (e) => Math.hypot(e.x - player.x, e.y - player.y);
+      const e = pool.reduce((best, c) => (far(c) > far(best) ? c : best));
+      e.carrier = carrierMask;
+      // STRIKE corre desarmado; BLADE lleva cuchillo; GHOST, pistola (su ventaja es disparar mejor).
+      if (carrierMask === 'guepardo') { e.armed = false; e.weapon = null; e.melee = null; }
+      if (carrierMask === 'tiburon') { e.armed = false; e.weapon = null; e.melee = 'knife'; }
+      if (ghost) { e.armed = true; e.weapon = 'gun'; e.melee = null; }
+    }
   }
   // Huecos aleatorios barajados: los primeros reciben las armas garantizadas.
   for (let i = randomSlots.length - 1; i > 0; i--) {

@@ -58,6 +58,7 @@ export const MASKS = [
   {
     id: 'guepardo',
     name: 'STRIKE',
+    lockFloor: 2, // bloqueada: la lleva un enemigo portador en este piso (ver Game.dropMask)
     passive: ['VELOCIDAD DE MOVIMIENTO', '+30%.'],
     effects: { speedMul: 1.3 },
     palette: { o: '#ffb23f', O: '#c47a1a', w: '#fff1d0' },
@@ -79,6 +80,7 @@ export const MASKS = [
   {
     id: 'tiburon',
     name: 'BLADE',
+    lockFloor: 3,
     passive: ['EMPIEZAS CADA PISO', 'CON UN CUCHILLO.'],
     effects: { startWeapon: 'knife' },
     palette: { g: '#6c7fa8', G: '#45557a', w: '#f5f3ff' },
@@ -100,6 +102,7 @@ export const MASKS = [
   {
     id: 'buho',
     name: 'GHOST',
+    lockFloor: 4,
     passive: ['TUS BALAS: +20% VELOCIDAD', 'Y MÁS PRECISIÓN.'],
     effects: { bulletSpeedMul: 1.2, spreadMul: 0.5 },
     palette: { u: '#6b4a8a', U: '#4a3066', e: '#ffd166', y: '#ff8a3d' },

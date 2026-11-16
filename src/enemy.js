@@ -1,7 +1,7 @@
 import { moveAndSlide, lineOfSight, thickLineClear, castRay, findPath, tileKey, isSolidAt } from './map.js';
 import { ENEMY_WEAPONS, ENEMY_MELEE, WEAPON_DEFS, drawWeaponShape, weaponCategory } from './weapons.js';
 import { COLORS, TAU, angleDiff, clamp } from './utils.js';
-import { drawSprite, pixelRect, WORLD_PX } from './sprites.js';
+import { drawSprite, pixelRect, pixelDisc, maskHead, WORLD_PX } from './sprites.js';
 import { drawText } from './pixelfont.js';
 
 export const VIEW_DIST = 340;
@@ -28,6 +28,9 @@ const DOOR_PAUSE = 0.45;        // patrullando / investigando
 const DOOR_PAUSE_CHASE = 0.25;  // persiguiendo
 const DOOR_PUSH_WINDOW = 1.2;   // s durante los que puede empujar tras la pausa
 
+// Portadores de máscara: color del aura neón de cada una.
+const CARRIER_AURA = { guepardo: '#ff9d2e', tiburon: '#9fb0d6', buho: '#b36bff' };
+
 export class Enemy {
   // weapon: null (cuerpo a cuerpo) o { type: 'gun', ammo } para el enemigo armado
   // kind: 'grunt' (el de siempre) | 'runner' (corredor ágil, cuerpo a cuerpo) | 'heavy' (guardia pesado con
@@ -40,6 +43,9 @@ export class Enemy {
     this.weapon = weapon;
     this.armed = !!weapon;  // el sprite con chaleco se mantiene aunque suelte el arma
     this.kind = kind;
+    this.carrier = null;    // id de la máscara bloqueada que lleva (portador; ver setCarrier)
+    this.aura = null;
+    this.scuffleBonus = 1;  // multiplica su resistencia en los forcejeos (BLADE)
     // Corredor: patrulla y persigue más rápido (aún un poco por debajo del jugador) y golpea antes.
     // Pesado: más lento y robusto (hitbox mayor), dispara una escopeta con mucho aviso.
     this.speedMul = kind === 'runner' ? 1.16 : kind === 'heavy' ? 0.88 : 1;
@@ -81,7 +87,7 @@ export class Enemy {
   refreshMelee() {
     const m = ENEMY_MELEE[this.meleeWeapon];
     this.reach = m ? m.reach : ATTACK_REACH;
-    this.windupTime = (m ? m.windup : WINDUP) * (this.kind === 'runner' ? 0.7 : 1);
+    this.windupTime = (m ? m.windup : WINDUP) * (this.kind === 'runner' ? 0.7 : 1) * (this.carrier === 'tiburon' ? 0.6 : 1);
   }
 
   get isUnarmed() {
@@ -91,6 +97,18 @@ export class Enemy {
   // Categoría de su armamento (matriz de combate): 'unarmed' | 'blunt' | 'blade' | 'gun'.
   get category() {
     return this.weapon ? 'gun' : this.meleeWeapon ? weaponCategory(this.meleeWeapon) : 'unarmed';
+  }
+
+  // Convierte al enemigo en PORTADOR de una máscara bloqueada: la lleva puesta (cabeza + aura neón) y tiene su ventaja, como élite:
+  //   STRIKE (guepardo): +30 % de velocidad al patrullar, investigar y perseguir.
+  //   BLADE (tiburón): golpes cuerpo a cuerpo un 40 % más rápidos de preparar y +30 % de fuerza en los forcejeos (scuffleBonus).
+  //   GHOST (búho): sus balas van un 25 % más rápidas y con la mitad de dispersión.
+  setCarrier(maskId) {
+    this.carrier = maskId;
+    this.aura = CARRIER_AURA[maskId] || '#ffffff';
+    if (maskId === 'guepardo') { this.speedMul *= 1.3; this.patrolMul *= 1.3; }
+    if (maskId === 'tiburon') { this.windupTime *= 0.6; this.scuffleBonus = 1.3; }
+    if (maskId === 'buho' && this.gunDef) this.gunDef = { ...this.gunDef, bulletSpeed: this.gunDef.bulletSpeed * 1.25, spread: this.gunDef.spread * 0.5 };
   }
 
   get standing() {
@@ -147,6 +165,7 @@ export class Enemy {
     }
     this.attackCd = Math.max(0, this.attackCd - dt);
     this.swingT = Math.max(0, this.swingT - dt);
+    if (this.carrier && Math.random() < 0.07) game.particles.neon(this.x, this.y, Math.random() * TAU, 1, 3.14);
     // PÁNICO: un enemigo desarmado (nunca tuvo arma o la perdió) que te ve con CUALQUIER arma en la mano no se lanza
     // a puñetazos: retrocede, busca un arma del suelo o se cubre. Vuelve a atacar al recoger una o si te quedas sin arma.
     this.noPanic = Math.max(0, this.noPanic - dt);
@@ -410,6 +429,18 @@ export class Enemy {
       ctx.restore();
     }
 
+    // Aura neón del portador: halo aditivo que late, bajo el enemigo.
+    if (this.carrier) {
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      const k = 0.5 + 0.5 * Math.sin(time * 6);
+      ctx.fillStyle = this.aura;
+      ctx.globalAlpha = 0.12 + 0.1 * k;
+      pixelDisc(ctx, this.x, this.y, 12 + Math.round(k * 2), WORLD_PX);
+      ctx.globalAlpha = 0.22 + 0.12 * k;
+      pixelDisc(ctx, this.x, this.y, 8, WORLD_PX);
+      ctx.restore();
+    }
     // Pánico: tiembla (1 px) y suda.
     const trem = this.state === 'panic' ? (Math.floor(time * 30) % 2 ? WORLD_PX : -WORLD_PX) : 0;
     ctx.save();
@@ -432,6 +463,8 @@ export class Enemy {
       drawSprite(ctx, 'fist', 10, -8);
     }
     drawSprite(ctx, this.sprite, 0, 0);
+    // Portador: lleva puesta la máscara bloqueada sobre la cabeza.
+    if (this.carrier) drawSprite(ctx, maskHead(this.carrier), 2, 0, 0, { ox: 3, oy: 3 });
     ctx.restore();
 
     if (this.state === 'panic') {

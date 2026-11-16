@@ -9,7 +9,8 @@ import { TouchControls } from './touch.js';
 import { Settings } from './settings.js';
 import { KeyBinds } from './keybinds.js';
 import { Boss, drawBossBar } from './boss.js';
-import { bloodyMaskPortrait, villainPortrait, villainDef, AGENTS, drawGenderIcon, drawAgentPreview } from './portraits.js';
+import { bloodyMaskPortrait, villainPortrait, villainDef, AGENTS, drawGenderIcon, drawAgentPreview, drawPadlock } from './portraits.js';
+import { Ads } from './ads.js';
 import { weaponCategory } from './weapons.js';
 import { buildOptionsMenu, buildPauseMenu } from './options-menu.js';
 import { Player, bloodLevelFor, FINISH_RANGE } from './player.js';
@@ -200,8 +201,11 @@ export class Game {
     this.menu = new Menu(this);
     this.touch = new TouchControls(this);
     this.keys = new KeyBinds(this.input); // controles de PC reasignables (keybinds.js); los guarda Settings
+    this.carrierColors = { guepardo: '#ff9d2e', tiburon: '#9fb0d6', buho: '#b36bff' };
     this.settings = new Settings(this); // ajustes guardados (settings.js); `applyAll` los aplica al final del constructor
     this.keys.onChange = () => this.settings.save();
+    this.ads = new Ads(this); // gestor de pausa para un SDK de anuncios (ads.js); sin SDK no hace nada
+    this.maskDrops = [];   // máscaras caídas de un portador: { x, y, mask, t } (ver dropMask)
     this.panel = null;   // menú modal abierto (OPCIONES / PAUSA, options-menu.js): congela el juego
     this.toast = null;
     // Elemento invisible que lee las zonas seguras CSS (env(safe-area-inset-*)).
@@ -289,6 +293,8 @@ export class Game {
     const frame = Math.min((now - this.last) / 1000, MAX_FRAME);
     this.last = now;
     this.frameDt = frame;
+    // Anuncio en pantalla (ads.js): la simulación NO avanza (y el audio está silenciado); se sigue dibujando el último fotograma.
+    if (this.ads.active) { this.acc = 0; this.render(); requestAnimationFrame(this.loop); return; }
     this.acc += frame;
     while (this.acc >= STEP) {
       // update() devuelve false durante el hit-stop: las pulsaciones se conservan para el
@@ -333,6 +339,7 @@ export class Game {
   }
 
   confirmMask() {
+    if (!this.isMaskUnlocked(MASKS[this.maskIndex])) this.maskIndex = MASKS.findIndex((m) => this.isMaskUnlocked(m));
     this.mask = MASKS[this.maskIndex];
     this.reset({ arrival: true });
     this.beginArrival();
@@ -365,6 +372,22 @@ export class Game {
     const prevW = 64, descW = clamp(w - 16 - prevW - 10, 130, 222);
     const bx = Math.round((w - (prevW + 10 + descW)) / 2);
     return { cards, iconScale, bottom: cardsTop + cardH, genders, bandTop, preview: { x: bx, y: bandTop, w: prevW, h: bandH }, descCx: Math.round(bx + prevW + 10 + descW / 2) };
+  }
+
+  // ¿Se puede usar la máscara? (STRIKE, BLADE y GHOST hasta abatir a su portador; ver settings.unlockMask)
+  isMaskUnlocked(mask) {
+    return this.settings.isMaskUnlocked(mask.id);
+  }
+
+  maskLockHint(mask) {
+    return `BUSCA AL PORTADOR EN PISO ${mask.lockFloor}`;
+  }
+
+  // Intentar empezar con una máscara bloqueada: sacudida, sonido y la pista en rojo (no se entra al piso).
+  deniedMask() {
+    this.maskDenied = performance.now();
+    this.sfx.play('empty');
+    this.camera.addShake(2);
   }
 
   pickGender(id) {
@@ -403,6 +426,7 @@ export class Game {
     if (input.wasPressed('Space') || input.wasPressed('Enter') || input.wasPressed('NumpadEnter')
       || (input.mousePressed.left && hovered >= 0)) {
       if (hovered >= 0 && input.mousePressed.left) this.maskIndex = hovered;
+      if (!this.isMaskUnlocked(MASKS[this.maskIndex])) { this.deniedMask(); return; } // bloqueada: se puede mirar pero no elegir
       this.transition(() => this.confirmMask());
     }
   }
@@ -492,7 +516,10 @@ export class Game {
   makeEnemy(e) {
     if (e.kind === 'boss') return new Boss(e.x, e.y);
     const weapon = e.weapon ? { type: e.weapon, ammo: ENEMY_WEAPONS[e.weapon].dropAmmo } : null;
-    return new Enemy(e.x, e.y, e.patrol, weapon, e.kind, e.melee);
+    const en = new Enemy(e.x, e.y, e.patrol, weapon, e.kind, e.melee);
+    // Portador: solo si su máscara aún no está desbloqueada (si no, es un enemigo normal).
+    if (e.carrier && !this.settings.isMaskUnlocked(e.carrier)) en.setCarrier(e.carrier);
+    return en;
   }
 
   // Agente (JACK = 'male' / VEX = 'female'): SOLO cosmético. Cambia el sprite del jugador, su retrato en el duelo VS y el tono de su voz
@@ -526,14 +553,19 @@ export class Game {
 
   // Reintenta el piso actual (R): los puntos vuelven a los que había al entrar.
   restartLevel() {
-    this.score.restartLevel();
-    this.reset();
+    const retry = () => { this.score.restartLevel(); this.reset(); };
+    // PUNTO DE ANUNCIO: tras X muertes (ads.js). Sin SDK conectado es instantáneo; con SDK el anuncio sale antes del reintento.
+    if (this.state === 'dead' && this.ads.countDeath()) this.ads.triggerInterstitial(retry);
+    else retry();
   }
 
   // Tras la pantalla de resultados: siguiente piso, o fin de partida si era el último.
   advance() {
-    if (this.levelIndex + 1 < LEVELS.length) this.goToLevel(this.levelIndex + 1);
-    else this.endRun(true);
+    // PUNTO DE ANUNCIO: entre pisos (ads.js). Sin SDK conectado continúa al instante.
+    this.ads.triggerInterstitial(() => {
+      if (this.levelIndex + 1 < LEVELS.length) this.goToLevel(this.levelIndex + 1);
+      else this.endRun(true);
+    });
   }
 
   // --- Partidas y Top 5 --------------------------------------------------------------------
@@ -851,6 +883,7 @@ export class Game {
     this.callout = null;
     this.goalAge = 0;
     this.floatingTexts.length = 0;
+    this.maskDrops.length = 0;
     this.scuffle = null;      // si se reinicia en pleno forcejeo: cámara y audio vuelven a la normalidad
     this.scuffleGrace = 0;
     this.camera.mul = this.camera.mulTarget = 1;
@@ -974,6 +1007,7 @@ export class Game {
     this.goalAge = this.state === 'cleared' && !this.callout ? this.goalAge + dt : 0;
     if (this.state === 'playing' && this.inside) this.time += dt; // el reloj corre dentro del edificio
     this.score.update(dt, this.state === 'playing');
+    this.updateMaskDrops(dt);
     for (const f of this.floatingTexts) f.t -= dt;
     this.floatingTexts = this.floatingTexts.filter((f) => f.t > 0);
     if (this.player.alive) this.player.update(dt, this);
@@ -1188,7 +1222,7 @@ export class Game {
   startScuffle(e, angle, mode = 'fists') {
     const p = this.player;
     this.scuffleCount++;
-    const mult = Math.min(SCUFFLE.maxMult, 1 + SCUFFLE.fatigue * (this.scuffleCount - 1));
+    const mult = Math.min(SCUFFLE.maxMult, 1 + SCUFFLE.fatigue * (this.scuffleCount - 1)) * (e.scuffleBonus || 1);
     // mode 'fists' = puño contra puño; 'clash' = choque de armas (chispas de metal si hay un cuchillo, astillas si son
     // contundentes). `label` es el titular de la pantalla VS.
     const pt = p.weapon && p.weapon.type, et = e.meleeWeapon;
@@ -1577,6 +1611,7 @@ export class Game {
     e.alive = false;
     this.addScore(cause, e);
     this.dropWeapon(e);
+    if (e.carrier) this.dropMask(e);
     e.corpse = { x: e.x + Math.cos(angle) * 8, y: e.y + Math.sin(angle) * 8 }; // donde se estampa el cadáver
     this.bleed(e.x, e.y, angle, feel.power, feel.wide);
     this.stainPlayer(feel.power, angle);
@@ -1640,6 +1675,48 @@ export class Game {
       // El multiplicador activo sube junto al enemigo: más caliente cuanto más alto.
       const c = this.score.combo;
       this.addFloat(e.x + 12, e.y - 4, `x${c}`, c >= 5 ? COLORS.blood : c >= 3 ? COLORS.enemy : COLORS.player, c >= 4 ? 2 : 1);
+    }
+  }
+
+  // Recompensa del PORTADOR: al abatirlo su máscara cae al suelo con un brillo neón y se DESBLOQUEA de forma permanente (se guarda al
+  // instante en settings: no hace falta recogerla; recogerla solo da el último destello). Texto flotante, ráfaga de neón y sonido.
+  dropMask(e) {
+    const mask = MASKS.find((m) => m.id === e.carrier);
+    if (!mask) return;
+    const isNew = this.settings.unlockMask(mask.id);
+    this.maskDrops.push({ x: e.x, y: e.y, mask, t: 0 });
+    this.particles.neon(e.x, e.y, 0, 24, Math.PI);
+    this.sfx.play('clear');
+    this.camera.addShake(6);
+    if (isNew) this.addFloat(e.x, e.y - 34, `¡MÁSCARA ${mask.name} DESBLOQUEADA!`, e.aura || COLORS.enemy, 1, 2.8);
+  }
+
+  updateMaskDrops(dt) {
+    const p = this.player;
+    for (const d of this.maskDrops) {
+      d.t += dt;
+      if (!d.taken && p.alive && Math.hypot(p.x - d.x, p.y - d.y) < 20) {
+        d.taken = true;
+        this.particles.neon(d.x, d.y, 0, 18, Math.PI);
+        this.sfx.play('pickup');
+      }
+    }
+    this.maskDrops = this.maskDrops.filter((d) => !d.taken);
+  }
+
+  drawMaskDrops(ctx) {
+    for (const d of this.maskDrops) {
+      const k = 0.5 + 0.5 * Math.sin(d.t * 6), bob = Math.round(Math.sin(d.t * 3) * 2);
+      const col = (this.carrierColors || {})[d.mask.id] || '#ff9d2e';
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.fillStyle = col;
+      ctx.globalAlpha = 0.15 + 0.15 * k;
+      pixelDisc(ctx, d.x, d.y, 11, WORLD_PX);
+      ctx.globalAlpha = 0.3 + 0.2 * k;
+      pixelDisc(ctx, d.x, d.y, 7, WORLD_PX);
+      ctx.restore();
+      ctx.drawImage(maskIcon(d.mask), Math.round(d.x - 12), Math.round(d.y - 12 + bob), 24, 24);
     }
   }
 
@@ -1944,6 +2021,7 @@ export class Game {
     this.drawExecuteMarks(ctx);
     this.drawLockMark(ctx);
     for (const p of this.pickups) p.draw(ctx, this.time);
+    this.drawMaskDrops(ctx);
     for (const b of this.bullets) b.draw(ctx);
     for (const e of this.enemies) if (e.standing) e.draw(ctx, this.time, this);
     if (this.player.alive) {
@@ -2314,11 +2392,24 @@ export class Game {
       ctx.restore();
       ctx.fillStyle = sel ? '#2a0d3a' : '#1a0d2e';
       ctx.fillRect(c.x + 1, y + 1, c.w - 2, c.h - 2);
-      const size = 12 * iconScale;
-      ctx.globalAlpha = sel ? 1 : 0.55;
+      const size = 12 * iconScale, locked = !this.isMaskUnlocked(mask);
+      ctx.globalAlpha = locked ? 0.18 : sel ? 1 : 0.55;
       ctx.drawImage(maskIcon(mask), Math.round(c.x + (c.w - size) / 2), y + 6, size, size);
       ctx.globalAlpha = 1;
-      drawText(ctx, mask.name, c.x + c.w / 2, y + 10 + size, { color: sel ? COLORS.text : '#7d6f98', align: 'center' });
+      if (locked) {
+        // Oscurecida + candado neón (parpadea al intentar elegirla)
+        ctx.fillStyle = 'rgba(5, 0, 15, 0.45)';
+        ctx.fillRect(c.x + 1, y + 1, c.w - 2, c.h - 2);
+        const denied = performance.now() - (this.maskDenied || -9999) < 500 && sel;
+        const lc = denied && Math.floor(performance.now() / 80) % 2 ? COLORS.blood : COLORS.player;
+        ctx.save();
+        ctx.shadowColor = lc;
+        ctx.shadowBlur = 6;
+        const ls = iconScale >= 3 ? 3 : 2;
+        drawPadlock(ctx, Math.round(c.x + c.w / 2 - 3.5 * ls), Math.round(y + 6 + size / 2 - 4 * ls), lc, ls);
+        ctx.restore();
+      }
+      drawText(ctx, mask.name, c.x + c.w / 2, y + 10 + size, { color: locked ? '#4a3d66' : sel ? COLORS.text : '#7d6f98', align: 'center' });
     });
 
     // Selector de agente: cada botón lleva su símbolo (♂ / ♀) y su neón (JACK cian, VEX magenta) cuando está activo.
@@ -2338,13 +2429,27 @@ export class Game {
     // Vista previa en vivo (agente + máscara elegidos) y la ficha de la máscara a su derecha.
     const mask = MASKS[this.maskIndex], now = performance.now() / 1000;
     drawAgentPreview(ctx, preview, mask.id, this.gender, now);
+    if (!this.isMaskUnlocked(mask)) {
+      ctx.fillStyle = 'rgba(5, 0, 15, 0.7)';
+      ctx.fillRect(preview.x + 1, preview.y + 1, preview.w - 2, preview.h - 2);
+      drawPadlock(ctx, Math.round(preview.x + preview.w / 2 - 10), Math.round(preview.y + preview.h / 2 - 12), COLORS.player, 3);
+    }
     drawText(ctx, AGENTS[this.gender].name, preview.x + 5, preview.y + preview.h - 11, { color: AGENTS[this.gender].color }); // rótulo dentro del visor
     let y = preview.y + 2;
-    drawText(ctx, mask.name, descCx, y, { color: COLORS.player, scale: 2, align: 'center' });
+    const maskLocked = !this.isMaskUnlocked(mask);
+    drawText(ctx, mask.name, descCx, y, { color: maskLocked ? '#7d6f98' : COLORS.player, scale: 2, align: 'center' });
     y += 22;
-    for (const line of mask.passive) {
-      drawText(ctx, line, descCx, y, { color: COLORS.text, align: 'center' });
-      y += 11;
+    if (maskLocked) {
+      // Pista clara de dónde conseguirla
+      const denied = performance.now() - (this.maskDenied || -9999) < 500 && Math.floor(performance.now() / 80) % 2;
+      drawText(ctx, 'BLOQUEADA', descCx, y, { color: COLORS.blood, align: 'center' });
+      drawText(ctx, this.maskLockHint(mask), descCx, y + 11, { color: denied ? COLORS.blood : COLORS.enemy, align: 'center' });
+      drawText(ctx, 'ABATE AL ENEMIGO QUE LA LLEVA', descCx, y + 22, { color: '#9d8fb8', align: 'center' });
+    } else {
+      for (const line of mask.passive) {
+        drawText(ctx, line, descCx, y, { color: COLORS.text, align: 'center' });
+        y += 11;
+      }
     }
     if (Math.floor(performance.now() / 400) % 2 === 0) {
       drawText(ctx, this.hint('FLECHAS: MÁSCARA · Q/E: AGENTE · ESPACIO / ENTER: EMPEZAR', 'TOCA UNA MÁSCARA: ELEGIR · OTRA VEZ: EMPEZAR'),

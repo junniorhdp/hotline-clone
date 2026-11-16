@@ -60,6 +60,7 @@ HTML5 Canvas, JavaScript Vanilla (ES Modules) y Vite. Sin frameworks ni librerí
   - `pixelfont.js` — fuente bitmap 5×7 propia (con tildes y Ñ) y `drawText`; cachea cada texto renderizado.
   - `input.js` — teclado, ratón y dedos (Pointer Events); distingue "mantenido" de "pulsado este paso".
   - `keybinds.js` — controles de PC reasignables (`KEY_CONFIG`, `KeyBinds`, `keyLabel`). Ver "Controles de PC reasignables".
+  - `ads.js` — gestor de pausa para un SDK de anuncios (Poki / CrazyGames): `triggerInterstitial` / `triggerRewarded`. Ver "Anuncios (ads.js)".
   - `settings.js` — ajustes del jugador: lista declarativa `OPTIONS` + gestor `Settings` (`localStorage`). Ver "Ajustes y menús".
   - `options-menu.js` — menús modales de lista `ListMenu` (OPCIONES y PAUSA) con estética neón.
   - `touch.js` — controles táctiles: joysticks flotantes, botones, aim-assist y háptica; `TOUCH_CONFIG` parametriza todo; traduce dedos a la entrada del juego.
@@ -346,6 +347,25 @@ siguiente piso (`goToLevel`) … tras el último → `gameover` → `menu` o par
   de ella pelo violeta por arriba y los lados, una coleta con goma rosa que cuelga a la derecha, cuello y hombros estrechos de la bomber con raya rosa bajo la máscara.
 - **Voz** (`sfx.voice`: 1 hombre, 1,22 mujer; `setGender`): escala los tonos de los sonidos del jugador `death`, `scuffleIn` y `scuffleWin` y el nuevo gruñido de esfuerzo `grunt` (sierra con formantes
   que baja de tono + soplo de ruido; se oye al empezar el forcejeo, al contraatacar y al morir). Más grave en `male`, algo más agudo en `female`.
+
+### Máscaras bloqueadas y enemigos portadores
+- **Estado** (`unlockedMasks` dentro de `neonrush.settings.v1`, `Settings.isMaskUnlocked/unlockMask`; lectura defensiva: solo ids válidos): **NEON y BRUTE** vienen desbloqueadas; **STRIKE, BLADE y GHOST** llevan `lockFloor` 2, 3 y 4 en `masks.js`.
+  Nunca se pierden (ni con RESTAURAR).
+- **ELIGE TU MÁSCARA**: las bloqueadas salen oscurecidas con un **candado neón** (`drawPadlock`) y su nombre apagado; se pueden mirar pero **no elegir** (Espacio / Enter / clic / segundo toque → `deniedMask`: sacudida, sonido, candado
+  y pista parpadean en rojo). La ficha y el visor muestran `BLOQUEADA` · `BUSCA AL PORTADOR EN PISO n` · `ABATE AL ENEMIGO QUE LA LLEVA`.
+- **Portador** (`CARRIERS` en `map.js`: piso 2 → STRIKE, 3 → BLADE, 4 → GHOST; `Game.makeEnemy` → `Enemy.setCarrier`, **solo si la máscara aún no está desbloqueada**): un enemigo élite, el más alejado de la entrada, que lleva
+  la máscara puesta (cabeza de la máscara sobre su sprite) y un **aura neón** pulsante del color de la máscara (naranja / acero / violeta) con chispas. Su ventaja es la de la máscara:
+  STRIKE grunt desarmado **+30 % de velocidad** (patrulla, investigación y persecución) · BLADE grunt con **cuchillo**, golpe **−40 % de preparación** y **+30 % de resistencia en forcejeos** (`scuffleBonus`) · GHOST grunt con **pistola**
+  de balas **+25 % más rápidas y la mitad de dispersión**. Con la máscara ya desbloqueada, el enemigo es normal (aunque conserve el reparto de armas del portador).
+- **Recompensa** (`Game.dropMask`, al abatirlo con cualquier causa): la máscara **se desbloquea al instante y se guarda**, cae al suelo con un brillo neón aditivo y un icono que flota (`maskDrops`; se recoge por proximidad con
+  otra ráfaga de neón y `pickup`; solo es el último destello, no hace falta para desbloquear), sale el texto flotante `¡MÁSCARA <NOMBRE> DESBLOQUEADA!` (2,8 s), ráfaga de neón, sacudida y sonido. Con `R` el enemigo ya no es portador.
+
+### Anuncios (`ads.js`)
+- `game.ads` (`Ads`): `triggerInterstitial(onComplete)` y `triggerRewarded(onReward, onCancel)`. **Sin SDK conectado (`enabled = false`, lo actual) son instantáneos y no pausan nada.** Con `ads.connect(adaptador)`
+  (`{ interstitial(done), rewarded(done(true|false)) }`, con ejemplos de Poki y CrazyGames en el propio archivo) `pause()` detiene el bucle (`Game.loop` no avanza la simulación mientras `ads.active`, solo redibuja), limpia la entrada y llama a
+  `sfx.setAdSilence(true)` (**master a 0 y `AudioContext.suspend()`**: tampoco corre la música; respeta el silencio manual `M`); `resume()` lo restaura sin salto de tiempo. Red de seguridad: reanuda sola a los 45 s.
+- **Puntos de anuncio marcados**: entre pisos (`Game.advance()`) y tras X muertes (`Game.restartLevel()` cuando `ads.countDeath()` llega a `AD_EVERY_N_DEATHS` = 3, solo desde la pantalla de muerte; R sigue siendo instantáneo sin SDK).
+  `triggerRewarded` queda listo para, p. ej., continuar tras morir.
 
 ### Sangre en el personaje
 El jugador se va manchando con las bajas **del piso** y la máscara también.

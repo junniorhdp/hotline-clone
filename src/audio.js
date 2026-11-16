@@ -187,6 +187,7 @@ export class Sfx {
   constructor() {
     this.ctx = null;
     this.muted = false;
+    this.adMuted = false;   // silencio total por un anuncio (setAdSilence)
     this.slow = 0;          // 0..1: cuánto ha bajado de tono y de velocidad la música (forcejeo)
     this.slowTarget = 0;
     this.lastTick = 0;
@@ -239,9 +240,18 @@ export class Sfx {
     this.startMusic();
   }
 
+  // Silencio TOTAL mientras hay un anuncio (ads.js): master a 0 y el AudioContext suspendido (la música, que se programa con el
+  // reloj de audio, también se detiene). Al terminar se restaura el volumen (respetando M) y se reanuda el contexto.
+  setAdSilence(on) {
+    this.adMuted = !!on;
+    if (this.master) this.master.gain.value = this.adMuted || this.muted ? 0 : MASTER_VOLUME;
+    if (this.ctx) { try { if (on) this.ctx.suspend(); else this.ctx.resume(); } catch { /* sin contexto */ } }
+    if (on) this.stopMoto(0.03);
+  }
+
   toggleMute() {
     this.muted = !this.muted;
-    if (this.master) this.master.gain.value = this.muted ? 0 : MASTER_VOLUME;
+    if (this.master) this.master.gain.value = this.muted || this.adMuted ? 0 : MASTER_VOLUME;
     if (this.muted) this.stopMoto(0.03);
   }
 
@@ -267,7 +277,7 @@ export class Sfx {
   get pitch() { return 1 - 0.4 * this.slow; }
 
   play(name, volume = 1, arg) {
-    if (!this.ctx || this.muted || this.ctx.state !== 'running' || volume <= 0 || this.sfxVol <= 0) return;
+    if (!this.ctx || this.muted || this.adMuted || this.ctx.state !== 'running' || volume <= 0 || this.sfxVol <= 0) return;
     SOUNDS[name](this, volume, arg);
   }
 
