@@ -809,6 +809,23 @@ export class Game {
     return Math.abs(p.x - b.park.x) < b.w / 2 + p.r + MOUNT_MARGIN && Math.abs(p.y - b.park.y) < b.h / 2 + p.r + MOUNT_MARGIN;
   }
 
+  // Acción contextual del botón táctil PATEAR/REMATAR/MOTO (la tecla E y algo más): un derribado a
+  // tiro (REMATAR, el mismo objetivo que el indicador), la moto con el edificio limpio (MOTO) o,
+  // por defecto, patear la puerta de enfrente (PATEAR; `ready` indica si hay puerta a tiro).
+  touchAction() {
+    const p = this.player;
+    if (!p.alive || p.exec) return { id: 'kick', label: 'PATEAR', ready: false };
+    if (p.executionTarget(this)) return { id: 'execute', label: 'REMATAR', ready: true };
+    if (this.state === 'cleared' && this.bike) {
+      const b = this.bike, m = MOUNT_MARGIN * 3;
+      if (Math.abs(p.x - b.park.x) < b.w / 2 + p.r + m && Math.abs(p.y - b.park.y) < b.h / 2 + p.r + m) {
+        return { id: 'mount', label: 'MOTO', ready: true };
+      }
+    }
+    const door = this.doors.some((d) => d.inKickRange(p.x, p.y, p.angle));
+    return { id: 'kick', label: 'PATEAR', ready: door };
+  }
+
   // Edificio despejado y de vuelta en la moto: se sube y se va; al salir de la pantalla, los resultados.
   startLeaving() {
     const p = this.player;
@@ -1395,7 +1412,7 @@ export class Game {
     if (!e) return;
     const s = this.camera.worldToScreen(e.x, e.y + 22); // debajo: los popups de puntos flotan por encima
     const blink = Math.floor(performance.now() / 130) % 2;
-    drawText(ctx, this.hint('E · CLIC', 'ATACAR'), s.x, s.y, { color: blink ? COLORS.text : COLORS.enemyBullet, align: 'center' });
+    drawText(ctx, this.hint('E · CLIC', 'REMATAR'), s.x, s.y, { color: blink ? COLORS.text : COLORS.enemyBullet, align: 'center' });
   }
 
   drawPopups(ctx) {

@@ -57,7 +57,7 @@ HTML5 Canvas, JavaScript Vanilla (ES Modules) y Vite. Sin frameworks ni librerí
     `playerBody`, `pixelRect`, `pixelDisc`, `snap`.
   - `pixelfont.js` — fuente bitmap 5×7 propia (con tildes y Ñ) y `drawText`; cachea cada texto renderizado.
   - `input.js` — teclado, ratón y dedos (Pointer Events); distingue "mantenido" de "pulsado este paso".
-  - `touch.js` — controles táctiles: joysticks flotantes y botones; traduce dedos a la entrada del juego.
+  - `touch.js` — controles táctiles: joysticks flotantes, botones, aim-assist y háptica; `TOUCH_CONFIG` parametriza todo; traduce dedos a la entrada del juego.
   - `utils.js` — paleta de colores y helpers matemáticos/geométricos.
 - Game loop con paso fijo a 60 FPS: `requestAnimationFrame` + acumulador de `deltaTime`;
   `update(dt)` siempre recibe `1/60`. El render ocurre una vez por frame.
@@ -515,7 +515,7 @@ en lugar de un golpe instantáneo. Sustituye al antiguo remate instantáneo (`fi
 - **Indicador** (`game.drawExecuteMarks` + `drawExecutePrompt`): corchetes neón rojo/blanco sobre el
   objetivo (más tenues sobre los otros derribados al alcance), que parpadean más rápido si está a
   punto de levantarse (`timer` < 0,9 s) y se cierran sobre él durante la carga, y la etiqueta
-  `E · CLIC` (`ATACAR` en táctil, con `game.hint`) debajo del enemigo para no chocar con los
+  `E · CLIC` (`REMATAR` en táctil, con `game.hint`) debajo del enemigo para no chocar con los
   popups de puntos, que flotan por encima.
 - **Secuencia** (`Player.exec = { target, t, hit, style }`, `EXEC_TIME` 0,42 s, golpe en
   `EXEC_HIT` 0,27 s): el jugador queda **clavado** (sin movimiento, ataque ni recoger/lanzar:
@@ -630,17 +630,34 @@ Colores centralizados en `COLORS` (`src/utils.js`) y `PALETTE` (`src/sprites.js`
   y se desactiva al usar ratón o teclado. Sin modo táctil no se dibuja ni se procesa nada táctil.
 - **Orientación**: apaisado obligatorio. En vertical con táctil, `game.needsRotate` pausa el juego
   y muestra "GIRA EL DISPOSITIVO".
-- **Controles** (`touch.js`, solo en `playing`/`cleared`): joystick izquierdo flotante (mitad
-  izquierda) → `input.moveAxis` analógico; joystick derecho flotante (mitad derecha) → apunta y ataca:
-  mantenido, `input.aimFiring` = ataca con cualquier arma a su cadencia (al instante si se arrastra
-  más del 30% del radio, o tras `HOLD_FIRE_DELAY` 0,1 s con el dedo quieto); un toque rápido que se
-  levanta antes de disparar → `input.tapAttack` = un ataque. No exigir arrastre para atacar: en el
-  móvil lo natural es tocar o mantener (fue un bug real).
-  Botón **ATACAR** (el principal: más grande, esquina inferior derecha): tocar = `input.tapAttack`
-  (un ataque), mantener = `input.attackHeld` (ataque continuo a la cadencia). Sin botón de patada:
-  un golpe cuerpo a cuerpo sin enemigo delante ya patea la puerta de enfrente (`kickDoor`). Con un derribado a tiro, ATACAR lo ejecuta (ver "Ejecuciones"; no hay botón de E).
-  LANZAR (= clic derecho) encima de ATACAR y REINICIAR (= R) bajo la máscara.
-  Tamaños en píxeles CSS (`STICK_CSS_RADIUS`, `BUTTON_CSS_HEIGHT`) para que midan lo mismo que un dedo.
+- **Configuración** (`TOUCH_CONFIG` en `touch.js`, guardada en `localStorage` clave `neonrush.touch.v1` con
+  lectura defensiva y rangos en `RANGES`; `TouchControls.config` / `setConfig(patch)`): `joystickRadius` (px CSS, 56),
+  `buttonScale` (1), `buttonOpacity` (1), `aimAssist` (0..1, 0,5), `hapticsEnabled` (true), `moveDeadzone` (0,12),
+  `aimDeadzone` (0,15), `fireThreshold` (0,6). Todo el dibujo y la detección de toques leen de ahí: un futuro menú de
+  opciones solo tiene que llamar a `setConfig`.
+- **Controles** (`touch.js`, solo en `playing`/`cleared`):
+  - Joystick izquierdo flotante → `input.moveAxis` analógico con **zona muerta reescalada** (la velocidad arranca de
+    cero justo al salir de ella) y **seguimiento**: si el dedo se sale del círculo, el círculo se desplaza con él.
+  - Joystick derecho flotante → **arrastrarlo solo apunta** (`input.aimActive/aimAngle`); llevarlo al borde
+    (más allá de `fireThreshold`, marcado con un anillo de puntos) ataca a la cadencia del arma (`input.aimFiring`, con
+    histéresis de 0,1 al volver hacia dentro). Un toque rápido (< 0,25 s) sin disparar = un ataque (`tapAttack`).
+    Ya no dispara por mantener el dedo quieto (cambio respecto a la versión anterior: ATACAR cubre el "mantener").
+  - **Aim-assist** (`assistAngle`): con un enemigo vivo (no derribado) a la vista y a ≤ 360 u dentro de un cono
+    (7°..28° según `aimAssist`, algo más estrecho de lejos), el ángulo se inclina hacia él (tirón máx. 0,7·fuerza, mayor
+    cuanto más centrado). Siempre parte del ángulo crudo del dedo, así no se acumula ni salta de objetivo.
+  - Botones en arco junto al pulgar derecho: **ATACAR** (el principal, grande, esquina) · **PATEAR/REMATAR/MOTO** encima
+    · **LANZAR** (clic derecho: recoger/lanzar) el más alto y pequeño, desplazado a la izquierda (más lejos = menos
+    toques sin querer) · **REINICIAR** (R) bajo la máscara.
+  - Botón contextual (`id: 'act'`, `game.touchAction()`): derribado a tiro → `REMATAR` (rojo/blanco parpadeante, mismo
+    objetivo que el indicador) y envía `E`; puerta de enfrente → `PATEAR` (apagado si no hay puerta a tiro); `cleared`
+    y cerca de la moto (borde + 3·`MOUNT_MARGIN`) → `MOTO` (cian), que llama a `startLeaving()`. Si el arma aún está en
+    cadencia, la pulsación se guarda 0,25 s (`ACT_BUFFER`) y se reintenta al acabar el cooldown.
+  - **Feedback**: al tocar un botón crece hasta 2 px y se ilumina (`PRESS_FLASH` 0,15 s) y vibra 12 ms; ATACAR
+    mantenido/disparo continuo vibra 8 ms cada 0,12 s; empezar una ejecución 30 ms; morir `[40,30,90]`. Todo vía
+    `TouchControls.haptic()`, que respeta `hapticsEnabled` y falla en silencio sin `navigator.vibrate` (iOS).
+  - Los botones son independientes de los joysticks: cada dedo tiene su rol por `pointerId`, así que se puede mover,
+    apuntar y pulsar un botón a la vez (comprobado con tres dedos simultáneos).
+  Tamaños en píxeles CSS (`joystickRadius`, `BUTTON_CSS_HEIGHT` × `buttonScale`) para que midan lo mismo que un dedo.
 - **Fuera de la partida** un toque = clic en ese punto (menús, tarjetas). Antes se comprueban los
   **botones táctiles de pantalla** (`game.screenButtons()`, solo en modo táctil), que "pulsan" la
   tecla equivalente para reutilizar la lógica del teclado:
