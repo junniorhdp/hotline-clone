@@ -31,6 +31,10 @@ export const OPTIONS = [
   { id: 'buttonOpacity', section: 'TÁCTIL', label: 'OPACIDAD BOTONES', type: 'choice', default: 1,
     choices: [{ label: 'BAJA', value: 0.5 }, { label: 'MEDIA', value: 0.75 }, { label: 'ALTA', value: 1 }],
     apply: (g, v) => g.touch.setConfig({ buttonOpacity: v }) },
+  // Disparo automático: mientras apuntas (joystick derecho) a un enemigo a tiro, ataca solo; no hace falta
+  // llegar al borde del joystick. Pensado para quien le cuesta disparar; funciona con cualquier nivel de asistencia.
+  { id: 'autoFire', section: 'TÁCTIL', label: 'DISPARO AUTOMÁTICO', type: 'toggle', default: false,
+    apply: (g, v) => g.touch.setConfig({ autoFire: v }) },
   { id: 'hapticsEnabled', section: 'TÁCTIL', label: 'VIBRACIÓN', type: 'toggle', default: true,
     apply: (g, v) => g.touch.setConfig({ hapticsEnabled: v }) },
   // Asistencia de apuntado: OFF = manual puro · SUAVE = ligero magnetismo · ALTO = soft lock-on con marcador

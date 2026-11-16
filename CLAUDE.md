@@ -640,7 +640,7 @@ Colores centralizados en `COLORS` (`src/utils.js`) y `PALETTE` (`src/sprites.js`
 - **Orientación**: apaisado obligatorio. En vertical con táctil, `game.needsRotate` pausa el juego
   y muestra "GIRA EL DISPOSITIVO".
 - **Configuración** (`TOUCH_CONFIG` en `touch.js`; `TouchControls.config` / `setConfig(patch)`): `joystickRadius` (px CSS, 56),
-  `buttonScale` (1), `buttonOpacity` (1), `aimAssist` (0 / 0,5 / 1, por defecto 1), `hapticsEnabled` (true), `moveDeadzone` (0,12),
+  `buttonScale` (1), `buttonOpacity` (1), `aimAssist` (0 / 0,5 / 1, por defecto 1), `autoFire` (false), `hapticsEnabled` (true), `moveDeadzone` (0,12),
   `aimDeadzone` (0,15), `fireThreshold` (0,6). Todo el dibujo y la detección de toques leen de ahí. **La persistencia y el menú
   los lleva `settings.js`** (ver "Ajustes y menús"): escribe en `config` al arrancar y al cambiar una opción. La antigua clave
   `neonrush.touch.v1` ya no se usa.
@@ -657,6 +657,10 @@ Colores centralizados en `COLORS` (`src/utils.js`) y `PALETTE` (`src/sprites.js`
     magnetismo). **ALTO** (soft lock-on): cono 0,7 rad (~40°), tirón 0,9, alcance 440 u (casi se alinea del todo). El cono se estrecha un
     40 % con la distancia y el tirón baja un poco si el enemigo está en el borde del cono. Siempre parte del ángulo crudo del dedo (no
     se acumula) y el objetivo ya fijado tiene prioridad (+20 % de cono) para no saltar entre enemigos.
+  - **Disparo automático** (`config.autoFire`, opción `DISPARO AUTOMÁTICO`, desactivado por defecto): mientras el joystick derecho apunta
+    (más allá de la zona muerta) y hay un enemigo fijado a tiro, `input.aimFiring` se activa solo, sin llegar al borde (`autoFireWants`).
+    "A tiro" = cuerpo a cuerpo: dentro del alcance del arma; de fuego: hasta 440 u y con munición (no gasta el aviso SIN MUNICIÓN). Con la
+    asistencia en OFF sigue detectando el objetivo con el cono SUAVE pero sin mover la mira; apuntar a otro lado o soltar el joystick lo corta.
   - **Marca de objetivo fijado** (`touch.lock` → `game.drawLockMark`): solo en táctil y mientras el joystick derecho apunta; anillo de neón
     con cuatro segmentos que gira bajo el enemigo más cuatro marcas fijas (cian/rosa; rojo mientras se ataca). Se dibuja entre las marcas de
     remate y los pickups, dentro de la cámara.
@@ -717,7 +721,7 @@ Colores centralizados en `COLORS` (`src/utils.js`) y `PALETTE` (`src/sprites.js`
   con `sanitize`: JSON corrupto, tipos o valores fuera de rango → valor por defecto; escritura con try/catch). `set`/`adjust`
   guardan y llaman a `apply`; `applyAll` (al final del constructor de `Game`) aplica lo guardado; `reset` restaura.
 - **Opciones actuales**: AUDIO `musicVolume`, `sfxVolume` (0–100 % de 10 en 10) · JUEGO `goreEnabled` · TÁCTIL `buttonScale`
-  (PEQUEÑO 0,85 / NORMAL 1 / GRANDE 1,2), `buttonOpacity` (BAJA 0,5 / MEDIA 0,75 / ALTA 1), `hapticsEnabled`,
+  (PEQUEÑO 0,85 / NORMAL 1 / GRANDE 1,2), `buttonOpacity` (BAJA 0,5 / MEDIA 0,75 / ALTA 1), `autoFire` (DISPARO AUTOMÁTICO), `hapticsEnabled`,
   `aimAssist` (OFF / SUAVE / ALTO; el antiguo sí/no se migra: true → SUAVE, false → OFF). Las táctiles escriben en `touch.setConfig`.
 - **Audio** (`audio.js`): `sfx.setVolumes({ music, sfx })`. Hay un `sfxBus` nuevo entre todos los efectos (y la moto) y el master;
   `musicBus`/`ambientBus` escalan su nivel por `musicVol` (`applyMusicMode`). `M` sigue silenciando el master por encima de ambos.

@@ -34,6 +34,7 @@ export const TOUCH_CONFIG = {
   buttonScale: 1,       // multiplica el alto de los botones (0,7..1,6)
   buttonOpacity: 1,     // multiplica su opacidad (0,3..1)
   aimAssist: 1,         // 0 = OFF, 0,5 = SUAVE, 1 = ALTO (soft lock-on; ver `assistAngle`)
+  autoFire: false,      // dispara solo mientras el joystick derecho apunta a un enemigo a tiro (ver `autoFireWants`)
   hapticsEnabled: true, // vibración breve en botones, disparos, ejecuciones y muerte
   moveDeadzone: 0.12,   // fracción del radio: por debajo no hay movimiento
   aimDeadzone: 0.15,    // fracción del radio: por debajo no se cambia la mirada
@@ -272,7 +273,10 @@ export class TouchControls {
   }
 
   assistAngle(raw) {
-    const L = this.assistLevel();
+    // Con disparo automático y sin asistencia se sigue detectando el objetivo (cono SUAVE) para saber a quién
+    // disparar, pero sin mover la mira (`pull` solo se aplica si hay asistencia).
+    const assist = this.assistLevel();
+    const L = assist || (this.config.autoFire ? ASSIST_LEVELS.soft : null);
     const g = this.game, p = g.player;
     this.pendingLock = null;
     if (!L || !p || !p.alive) return raw;
@@ -291,7 +295,18 @@ export class TouchControls {
     }
     if (!best) return raw;
     this.pendingLock = best;
+    if (!assist) return raw;
     return raw + bestDiff * clamp(L.pull * (1 - 0.35 * Math.abs(bestDiff) / L.cone), 0, 0.95);
+  }
+
+  // ¿Hay que disparar solo? Hay un enemigo fijado, a tiro del arma (cuerpo a cuerpo: a su alcance; de fuego:
+  // hasta 440 u) y, con arma de fuego, queda munición (no se gasta el "SIN MUNICIÓN" en vano).
+  autoFireWants() {
+    const e = this.lock, p = this.game.player;
+    if (!e || !e.alive || !p.alive || p.exec) return false;
+    const def = p.def, d = Math.hypot(e.x - p.x, e.y - p.y);
+    if (def.melee) return d <= def.range + e.r + 4;
+    return d <= Math.min(def.range ?? 440, 440) + 10 && p.weapon && p.weapon.ammo > 0;
   }
 
   // Se llama al principio de cada paso de simulación, antes de que el juego lea la entrada.
@@ -397,8 +412,10 @@ export class TouchControls {
       } else this.lock = null;
       const limit = this.aim.firing ? cfg.fireThreshold - HOLD_FIRE_HYSTERESIS : cfg.fireThreshold;
       this.aim.firing = v.len > limit;
-      input.aimFiring = this.aim.firing;
-      if (this.aim.firing) this.aim.fired = true;
+      // Disparo automático: apuntar a un enemigo fijado a tiro dispara sin llegar al borde del joystick.
+      const auto = cfg.autoFire && v.len > cfg.aimDeadzone && this.autoFireWants();
+      input.aimFiring = this.aim.firing || auto;
+      if (input.aimFiring) this.aim.fired = true;
     } else {
       input.aimActive = input.aimFiring = false;
       this.lock = null;
