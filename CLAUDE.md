@@ -516,7 +516,7 @@ cambia de régimen todo el rato y se tiene que poder cortar limpia. Es Web Audio
 ### Estadísticas del intento (`game.stats`, `statsSummary`, `drawStatsPanel`)
 - Se cuentan por **intento de piso** (`newStats()` en `reset()`, así que R las reinicia): `attacks` (golpes cuerpo a cuerpo —sin patadas a puertas ni ejecuciones— y disparos, `recordAttack`), `hits` (golpes que conectan y disparos
   cuyas balas alcanzan a alguien, `recordShotHit` por `b.shot`; el disparo defensivo y el contraataque cuentan como acierto), `kills` (cada `killEnemy`) y `uses` por arma (puños = `fists`). Resumen: `TIEMPO: m:ss` (`game.time`), `PRECISIÓN: hits/attacks`
-  (`--` sin ataques), `BAJAS` y `ARMA` favorita (la más usada, con su nombre de `WEAPON_DEFS`).
+  (`--` sin ataques), `BAJAS` y `ARMA MÁS USADA` (la que más veces se ha usado en el intento, con su nombre de `WEAPON_DEFS`; no la de más bajas, porque en un piso se cambia de arma).
 - Un **mini panel flotante** (marco neón, 4 líneas) sale en los **resultados** (a la izquierda del bloque en pantallas de ≥ 400 px; en estrechas, una línea `BAJAS · PRECISIÓN · ARMA`; la instantánea queda en `results.stats`) y en la **pantalla de muerte**, bajo la franja `HAS MUERTO`.
 
 ### Ritmo: el jugador y la IA

@@ -1720,7 +1720,7 @@ export class Game {
 
   // Mini panel flotante (marco neón, 4 líneas) en (x, y); devuelve su alto.
   drawStatsPanel(ctx, x, y, sum) {
-    const w = 128, h = 53;
+    const w = 156, h = 53;
     ctx.fillStyle = 'rgba(13, 2, 33, 0.9)';
     ctx.fillRect(x, y, w, h);
     ctx.fillStyle = COLORS.player;
@@ -1728,7 +1728,7 @@ export class Game {
     ctx.fillStyle = COLORS.wall;
     ctx.fillRect(x, y, 1, h); ctx.fillRect(x + w - 1, y, 1, h);
     drawText(ctx, 'ESTADÍSTICAS', x + w / 2, y + 4, { color: '#9d8fb8', align: 'center' });
-    const rows = [['TIEMPO', sum.time], ['PRECISIÓN', sum.accuracy], ['BAJAS', String(sum.kills)], ['ARMA', sum.favorite]];
+    const rows = [['TIEMPO', sum.time], ['PRECISIÓN', sum.accuracy], ['BAJAS', String(sum.kills)], ['ARMA MÁS USADA', sum.favorite]];
     rows.forEach(([label, value], i) => {
       const ry = y + 15 + i * 9;
       drawText(ctx, `${label}:`, x + 6, ry, { color: '#9d8fb8' });
@@ -2319,7 +2319,7 @@ export class Game {
     if (r.stats) {
       if (w >= 400) this.drawStatsPanel(ctx, Math.max(6, cx - 215) + this.safe.l, top + 14, r.stats);
       else {
-        drawText(ctx, `BAJAS ${r.stats.kills} · PRECISIÓN ${r.stats.accuracy} · ${r.stats.favorite}`, cx, y, { color: '#9d8fb8', align: 'center' });
+        drawText(ctx, `BAJAS ${r.stats.kills} · PRECISIÓN ${r.stats.accuracy} · MÁS USADA: ${r.stats.favorite}`, cx, y, { color: '#9d8fb8', align: 'center' });
         y += 12;
       }
     }
@@ -2784,7 +2784,7 @@ export class Game {
       drawText(ctx, 'HAS MUERTO', cx, Math.round(h / 2) - 22, { color: COLORS.blood, scale: this.fitScale('HAS MUERTO', w - 12, 3), align: 'center' });
       if (!touch) drawText(ctx, 'R REINTENTAR PISO · ENTER TERMINAR PARTIDA · T RÉCORDS', cx, Math.round(h / 2) + 10, { color: COLORS.text, align: 'center' });
       if (this.showRecords) this.drawRecordsOverlay(ctx, w, h);
-      else this.drawStatsPanel(ctx, Math.round(cx - 64), Math.round(h / 2) - 26 + bandH + 6, this.statsSummary());
+      else this.drawStatsPanel(ctx, Math.round(cx - 78), Math.round(h / 2) - 26 + bandH + 6, this.statsSummary());
       this.touch.drawScreenButtons(ctx);
     }
     this.touch.draw(ctx);
