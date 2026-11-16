@@ -7,6 +7,7 @@ import { ScoreHistory, FloorStats, MAX_ENTRIES, newRunId, formatDate } from './s
 import { Menu } from './menu.js';
 import { TouchControls } from './touch.js';
 import { Settings } from './settings.js';
+import { KeyBinds } from './keybinds.js';
 import { Boss, drawBossBar } from './boss.js';
 import { bloodyMaskPortrait, villainPortrait, villainDef } from './portraits.js';
 import { weaponCategory } from './weapons.js';
@@ -197,7 +198,9 @@ export class Game {
     this.floorStats = new FloorStats();
     this.menu = new Menu(this);
     this.touch = new TouchControls(this);
+    this.keys = new KeyBinds(this.input); // controles de PC reasignables (keybinds.js); los guarda Settings
     this.settings = new Settings(this); // ajustes guardados (settings.js); `applyAll` los aplica al final del constructor
+    this.keys.onChange = () => this.settings.save();
     this.panel = null;   // menú modal abierto (OPCIONES / PAUSA, options-menu.js): congela el juego
     this.toast = null;
     // Elemento invisible que lee las zonas seguras CSS (env(safe-area-inset-*)).
@@ -976,8 +979,7 @@ export class Game {
     // Pulsaciones nuevas este paso (flancos, no mantener): el botón/clic de ataque o sus equivalentes.
     let n = 0;
     if (input.tapAttack) n++;
-    if (input.mousePressed.left) n++;
-    for (const k of ['Space', 'KeyE', 'Enter']) if (input.wasPressed(k)) n++;
+    for (const a of ['attack', 'kick', 'execute']) if (this.keys.pressed(a)) n++; // ATACAR, PATEAR y REMATAR valen
     if (n) {
       sc.bar = Math.min(1, sc.bar + n * SCUFFLE.push);
       sc.presses += n;
@@ -1138,7 +1140,7 @@ export class Game {
       ctx.fillRect(bx + fill + Math.round(Math.cos(a) * 5), by + 4 + Math.round(Math.sin(a * 1.3) * 7), 1, 1);
     }
     // Texto: urgencia + resistencia del enemigo (sube con cada forcejeo del piso)
-    const label = this.hint('¡APORREA CLIC / ESPACIO!', '¡APORREA ATACAR!');
+    const label = this.hint(`¡APORREA ${this.keys.label('attack')} / ${this.keys.label('kick')}!`, '¡APORREA ATACAR!');
     if (pulse || !danger) drawText(ctx, label, cx, by - 26, { color: pulse ? '#ffffff' : COLORS.enemy, scale: this.fitScale(label, w - 40, 2), align: 'center' });
     const res = 'RESISTENCIA X' + sc.mult.toFixed(1).replace('.', ',');
     drawText(ctx, res, cx, by + 16, { color: sc.mult > 1.2 ? COLORS.blood : '#9d8fb8', align: 'center' });
@@ -1824,7 +1826,7 @@ export class Game {
     if (!e) return;
     const s = this.camera.worldToScreen(e.x, e.y + 22); // debajo: los popups de puntos flotan por encima
     const blink = Math.floor(performance.now() / 130) % 2;
-    drawText(ctx, this.hint('E · CLIC', 'REMATAR'), s.x, s.y, { color: blink ? COLORS.text : COLORS.enemyBullet, align: 'center' });
+    drawText(ctx, this.hint(`${this.keys.label('execute')} · ${this.keys.label('attack')}`, 'REMATAR'), s.x, s.y, { color: blink ? COLORS.text : COLORS.enemyBullet, align: 'center' });
   }
 
   drawPopups(ctx) {
@@ -2247,8 +2249,11 @@ export class Game {
 
     // En táctil esa zona es de los joysticks: la ayuda de teclado no se muestra.
     if (!this.input.touchMode) {
-      drawText(ctx, 'WASD MOVER · CLIC IZQ ATACAR · CLIC DER RECOGER/LANZAR', 6, h - 24, { color: '#7d6f98' });
-      drawText(ctx, 'E PATADA · R REINICIAR · F1 DEBUG · M SONIDO · V EFECTOS', 6, h - 13, { color: '#7d6f98' });
+      // Ayuda de controles con las teclas ACTUALES (se pueden cambiar en OPCIONES > CONTROLES).
+      const k = this.keys, mv = ['moveUp', 'moveLeft', 'moveDown', 'moveRight'].map((a) => k.label(a));
+      const moves = mv.every((l) => l.length === 1) ? mv.join('') : mv.join('/');
+      drawText(ctx, `${moves} MOVER · ${k.label('attack')} ATACAR · ${k.label('throw')} RECOGER/LANZAR`, 6, h - 24, { color: '#7d6f98' });
+      drawText(ctx, `${k.label('kick')} PATEAR · ${k.label('execute')} REMATAR · R REINICIAR · ESC PAUSA · M SONIDO`, 6, h - 13, { color: '#7d6f98' });
     }
 
     if (this.debug) {

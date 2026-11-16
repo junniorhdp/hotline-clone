@@ -13,8 +13,13 @@ export class Input {
     this.canvas = canvas;
     this.keys = new Set();
     this.pressed = new Set();
-    this.mouse = { x: 0, y: 0, left: false, right: false };
-    this.mousePressed = { left: false, right: false };
+    this.mouse = { x: 0, y: 0, left: false, right: false, middle: false };
+    this.mousePressed = { left: false, right: false, middle: false };
+    // Acciones "pulsadas" por los controles táctiles (`virtualPress('kick')`…): se limpian con endStep() y las lee
+    // KeyBinds.pressed junto a las teclas, así el táctil funciona sea cual sea la asignación de PC.
+    this.vpressed = new Set();
+    // Teclas cuya acción por defecto del navegador se anula (scroll con Espacio o flechas…); KeyBinds añade las asignadas.
+    this.blocked = new Set(BLOCKED_DEFAULTS);
 
     this.touches = new Map();
     // Modo táctil: activo de entrada en pantallas cuyo puntero principal es un dedo; cambia
@@ -28,7 +33,7 @@ export class Input {
     this.attackHeld = false;  // botón ATACAR mantenido: ataque continuo
 
     window.addEventListener('keydown', (e) => {
-      if (BLOCKED_DEFAULTS.has(e.code)) e.preventDefault();
+      if (this.blocked.has(e.code)) e.preventDefault();
       if (!e.repeat) this.pressed.add(e.code);
       this.keys.add(e.code);
       this.touchMode = false;
@@ -36,7 +41,7 @@ export class Input {
     window.addEventListener('keyup', (e) => this.keys.delete(e.code));
     window.addEventListener('blur', () => {
       this.keys.clear();
-      this.mouse.left = this.mouse.right = false;
+      this.mouse.left = this.mouse.right = this.mouse.middle = false;
       for (const t of this.touches.values()) t.ended = true;
     });
     // Evita que F1 abra la ayuda del navegador.
@@ -53,10 +58,12 @@ export class Input {
       this.setMouse(e);
       this.touchMode = false;
       if (e.button === 0) { this.mouse.left = true; this.mousePressed.left = true; }
+      if (e.button === 1) { e.preventDefault(); this.mouse.middle = true; this.mousePressed.middle = true; }
       if (e.button === 2) { this.mouse.right = true; this.mousePressed.right = true; }
     });
     window.addEventListener('mouseup', (e) => {
       if (e.button === 0) this.mouse.left = false;
+      if (e.button === 1) this.mouse.middle = false;
       if (e.button === 2) this.mouse.right = false;
     });
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
@@ -108,6 +115,14 @@ export class Input {
     this.mouse.y = p.y;
   }
 
+  virtualPress(action) {
+    this.vpressed.add(action);
+  }
+
+  block(code) {
+    this.blocked.add(code);
+  }
+
   down(code) {
     return this.keys.has(code);
   }
@@ -118,7 +133,8 @@ export class Input {
 
   endStep() {
     this.pressed.clear();
-    this.mousePressed.left = this.mousePressed.right = false;
+    this.vpressed.clear();
+    this.mousePressed.left = this.mousePressed.right = this.mousePressed.middle = false;
     this.tapAttack = false;
     for (const [id, t] of this.touches) {
       if (t.ended) this.touches.delete(id);

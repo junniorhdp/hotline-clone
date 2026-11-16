@@ -107,10 +107,12 @@ export class Player {
   update(dt, game) {
     const { input, map } = game;
     let mx = 0, my = 0;
-    if (input.down('KeyA') || input.down('ArrowLeft')) mx -= 1;
-    if (input.down('KeyD') || input.down('ArrowRight')) mx += 1;
-    if (input.down('KeyW') || input.down('ArrowUp')) my -= 1;
-    if (input.down('KeyS') || input.down('ArrowDown')) my += 1;
+    // Controles de PC reasignables (keybinds.js): se pregunta al mapa vigente, nunca a códigos fijos.
+    const keys = game.keys;
+    if (keys.down('moveLeft')) mx -= 1;
+    if (keys.down('moveRight')) mx += 1;
+    if (keys.down('moveUp')) my -= 1;
+    if (keys.down('moveDown')) my += 1;
     // Teclado: dirección normalizada (velocidad completa). Joystick: analógico, la velocidad
     // es proporcional a cuánto se empuja.
     let mag = 1;
@@ -172,17 +174,18 @@ export class Player {
     // rápido en él o en el botón ATACAR (`tapAttack`) da un único ataque; ATACAR mantenido
     // (`attackHeld`) ataca de forma continua.
     const wantsAttack = input.aimFiring || input.tapAttack || input.attackHeld
-      || (this.def.melee || this.def.auto ? input.mouse.left : input.mousePressed.left);
+      || (this.def.melee || this.def.auto ? keys.down('attack') : keys.pressed('attack'));
     if (wantsAttack && this.cooldown <= 0) {
       this.attack(game);
       input.tapAttack = false;
     }
-    if (input.mousePressed.right) this.throwOrPickup(game);
-    // E: remata a un derribado en rango o, si no hay ninguno, patada a la puerta.
-    if (input.wasPressed('KeyE') && this.cooldown <= 0) {
+    if (keys.pressed('throw')) this.throwOrPickup(game);
+    // REMATAR: remata a un derribado en rango. PATEAR/INTERACTUAR: lo mismo si hay uno a tiro y, si no, patada a la puerta.
+    const kickKey = keys.pressed('kick'), execKey = keys.pressed('execute');
+    if ((kickKey || execKey) && this.cooldown <= 0) {
       const target = this.executionTarget(game);
       if (target) this.startExecution(game, target);
-      else this.kick(game);
+      else if (kickKey) this.kick(game);
     }
   }
 

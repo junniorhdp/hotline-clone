@@ -59,6 +59,7 @@ HTML5 Canvas, JavaScript Vanilla (ES Modules) y Vite. Sin frameworks ni librerí
     `playerBody`, `pixelRect`, `pixelDisc`, `snap`.
   - `pixelfont.js` — fuente bitmap 5×7 propia (con tildes y Ñ) y `drawText`; cachea cada texto renderizado.
   - `input.js` — teclado, ratón y dedos (Pointer Events); distingue "mantenido" de "pulsado este paso".
+  - `keybinds.js` — controles de PC reasignables (`KEY_CONFIG`, `KeyBinds`, `keyLabel`). Ver "Controles de PC reasignables".
   - `settings.js` — ajustes del jugador: lista declarativa `OPTIONS` + gestor `Settings` (`localStorage`). Ver "Ajustes y menús".
   - `options-menu.js` — menús modales de lista `ListMenu` (OPCIONES y PAUSA) con estética neón.
   - `touch.js` — controles táctiles: joysticks flotantes, botones, aim-assist y háptica; `TOUCH_CONFIG` parametriza todo; traduce dedos a la entrada del juego.
@@ -532,7 +533,7 @@ fuego **sin balas cuenta como puños**, `Game.playerCategory`; la del enemigo es
   (`particles.splinters`) y un golpe seco si son contundentes; el titular de la pantalla VS dice quién contra quién (`sc.label`, nombres de `WEAPON_DEFS`).
 - **Estado** `'scuffle'` (`this.scuffle = { e, bar, t, mult, surge, … }`): el mundo se congela (solo corre `updateScuffle`, partículas a ×0,35).
   Se mira a la cara; `Esc` no pausa; `R` reinicia (`reset()` limpia `scuffle`, zoom y audio).
-- **Minijuego** (`SCUFFLE`): barra 0..1 que empieza en 0,5. Cada pulsación nueva (flanco: clic, `Espacio`, `E`, `Enter`, `tapAttack`, es decir el botón
+- **Minijuego** (`SCUFFLE`): barra 0..1 que empieza en 0,5. Cada pulsación nueva (flanco de **ATACAR, PATEAR o REMATAR** con las teclas que estén asignadas, o `tapAttack`, es decir el botón
   ATACAR táctil o un toque del joystick derecho; mantener no cuenta) suma **0,10**; el enemigo la baja a **0,33/s × resistencia**, con un pico ×1,8 durante 0,4 s
   cada 1,3 s. Llena = **contraataque** (`winScuffle`: remate `killEnemy(…, 'execution')`, sacudida 22, hit-stop 0,14, cartel `¡CONTRAATAQUE!`); a 0, o a
   los 7,5 s con la barra bajo la mitad = el enemigo te ejecuta (`loseScuffle` → `killPlayer`: pantalla de muerte, **R** = `restartLevel`).
@@ -591,7 +592,7 @@ cuenta igual: el piso se despeja al caer todos, jefe incluido.
     `PLAYER_PUSH_SPEED` (9 rad/s, por encima de `KNOCK_SPEED` 6 → derriba a quien esté detrás) y
     activa `playerLock` (0,4 s) durante el cual ningún enemigo puede cambiar el giro. El jugador
     nunca es derribado ni empujado hacia atrás por un enemigo a través de una puerta.
-  - **Patada**: `E`, golpe cuerpo a cuerpo sin enemigo delante o botón ATACAR en táctil
+  - **Patada**: la acción PATEAR/INTERACTUAR (`Espacio` o `F` por defecto), golpe cuerpo a cuerpo sin enemigo delante o botón ATACAR en táctil
     (`game.kickDoor`) → `KICK_SPEED` 14 rad/s en sentido contrario al jugador + `playerLock`.
   - **Golpe de la hoja** (`sweptHits`): con la puerta girando rápido hacia un enemigo, se
     comprueba todo el arco barrido desde el paso anterior con margen `KNOCK_MARGIN` (7), no solo
@@ -612,16 +613,16 @@ Un enemigo derribado (estado `down`, ~3,2 s) se remata con una **ejecución**: u
 en lugar de un golpe instantáneo. Sustituye al antiguo remate instantáneo (`finisher`).
 - **Detección** (`Player.executionTarget(game)`): el derribado más cercano a `FINISH_RANGE` (34 u
   más su radio), **a la vista** (`lineOfSight`: una pared o una puerta no se atraviesan) y que no
-  esté ya siendo rematado. Es la única fuente de verdad: la usan el ataque, la tecla E y el
+  esté ya siendo rematado. Es la única fuente de verdad: la usan el ataque, las teclas PATEAR/REMATAR y el
   indicador, así que lo marcado en pantalla es exactamente a quien se golpea. Con dos derribados
   juntos se ejecuta primero el más cercano y el otro sigue con su aturdimiento.
 - **Disparador**: clic izquierdo / botón ATACAR en táctil (en `attack()`, antes que cualquier
-  golpe al aire) o la tecla **E** (que antes solo daba la patada a la puerta: ahora remata si hay
+  golpe al aire) o las teclas **REMATAR** (`E`) y **PATEAR** (`Espacio`/`F`) (esta última patea la puerta y, si hay
   un derribado a tiro y, si no, patea).
 - **Indicador** (`game.drawExecuteMarks` + `drawExecutePrompt`): corchetes neón rojo/blanco sobre el
   objetivo (más tenues sobre los otros derribados al alcance), que parpadean más rápido si está a
   punto de levantarse (`timer` < 0,9 s) y se cierran sobre él durante la carga, y la etiqueta
-  `E · CLIC` (`REMATAR` en táctil, con `game.hint`) debajo del enemigo para no chocar con los
+  `E · CLIC IZQ` (las teclas asignadas a REMATAR y ATACAR, `keys.label`; `REMATAR` en táctil, con `game.hint`) debajo del enemigo para no chocar con los
   popups de puntos, que flotan por encima.
 - **Secuencia** (`Player.exec = { target, t, hit, hitIdx, style, spec }`; `EXEC_STYLES[style] = { time, hits[] }`): el jugador queda
   **clavado** (sin movimiento, ataque ni recoger/lanzar: `update` sale pronto), mirando al objetivo. Cada golpe es un ciclo de carga y
@@ -779,15 +780,15 @@ Colores centralizados en `COLORS` (`src/utils.js`) y `PALETTE` (`src/sprites.js`
   - **Iconos** (`ICONS` en `touch.js`): cuadrículas de 11×11 (`#` = rojo neón `ICON_COLOR`, `o` = blanco) dibujadas por
     `drawIcon` a **escala entera** (≈60 % del lado menor del botón) y en posiciones enteras, así salen nítidas en cualquier
     pantalla. Al pulsar el icono se vuelve blanco. Un botón con `icon` en `drawTouchButton` no pinta texto.
-  - **Botón superior** (`contextAction`, `id: 'act'`): la tecla E según `game.touchAction()`: derribado a tiro → remata (borde
+  - **Botón superior** (`contextAction`, `id: 'act'`): la pulsación virtual `kick`/`execute` según `game.touchAction()`: derribado a tiro → remata (borde
     rojo/blanco parpadeante), puerta delante → patea (borde rosa), `cleared` junto a la moto → `startLeaving()`; apagado si no hay nada
-    que hacer. El `E` se guarda 0,25 s (`ACT_BUFFER`) si el arma está en cadencia.
+    que hacer. La pulsación virtual se guarda 0,25 s (`ACT_BUFFER`) si el arma está en cadencia.
   - **ATACAR también es inteligente** (misma lógica que el botón superior, sin cambiar de aspecto) y
     lo mismo hace el toque rápido del joystick derecho (`TouchControls.smartAttack`): derribado a tiro → `REMATAR`
     (rojo/blanco parpadeante; atacar ya ejecuta, mismo objetivo que el indicador); puerta de enfrente → `PATEAR`
-    (con arma cuerpo a cuerpo atacar ya patea; con arma de fuego envía `E` en vez de disparar); `cleared` y cerca de la
+    (con arma cuerpo a cuerpo atacar ya patea; con arma de fuego envía la pulsación virtual `kick` en vez de disparar); `cleared` y cerca de la
     moto (borde + 3·`MOUNT_MARGIN`) → `MOTO` (cian), que llama a `startLeaving()`. El dedo que patea o monta se marca
-    `button:used` y no cuenta como ATACAR mantenido (si no, dispararía a la vez). Si el arma está en cadencia, el `E`
+    `button:used` y no cuenta como ATACAR mantenido (si no, dispararía a la vez). Si el arma está en cadencia, la pulsación
     se guarda 0,25 s (`ACT_BUFFER`). Mantener el joystick en el borde sigue atacando (no patea).
   - **Feedback**: al tocar un botón crece hasta 2 px y se ilumina (`PRESS_FLASH` 0,15 s) y vibra 12 ms; ATACAR
     mantenido/disparo continuo vibra 8 ms cada 0,12 s; empezar una ejecución 30 ms; morir `[40,30,90]`. Todo vía
@@ -850,6 +851,27 @@ Colores centralizados en `COLORS` (`src/utils.js`) y `PALETTE` (`src/sprites.js`
   SALIR AL MENÚ) se abre con **Esc** en `playing`/`cleared` o con el icono de pausa táctil (dos barras, bajo REINICIAR; pulsa Esc).
   Opciones abierta desde la pausa vuelve a la pausa; desde el título, al título. Cerrar el panel da 0,25 s de cooldown al jugador.
 
+## Controles de PC reasignables (`keybinds.js`)
+- **Estructura** (`KEY_CONFIG`): cada acción tiene **dos casillas** (principal y secundaria) con un código de `KeyboardEvent.code` (`KeyW`, `Space`…) o un botón del
+  ratón (`Mouse0` izquierdo, `Mouse1` central, `Mouse2` derecho). Por defecto: mover `W/↑ · S/↓ · A/← · D/→`; **ATACAR** `Mouse0`; **LANZAR/RECOGER** `Mouse2`;
+  **PATEAR/INTERACTUAR** `Espacio` y `F`; **REMATAR** `E`. Patear también remata si hay un derribado a tiro (por eso Espacio sirve para ambas cosas); `E` solo remata.
+  (La petición mencionaba E para lanzar y Espacio para rematar: se dejaron así para que ninguna tecla tenga dos significados distintos por defecto.)
+- **Lectura**: el juego no compara códigos fijos para estas acciones: `game.keys.down(acción)` / `pressed(acción)` (`KeyBinds`) miran el mapa vigente.
+  `Player.update` lo usa para mover, atacar, lanzar, patear y rematar; el forcejeo cuenta pulsaciones de ATACAR, PATEAR y REMATAR. Los controles táctiles escriben
+  **pulsaciones virtuales** (`input.virtualPress('throw'|'kick'|'execute')`, se limpian en `endStep`), que `pressed` también ve: el táctil funciona sea cual sea la asignación.
+  `input.js` registra además el botón central (`mouse.middle`) y anula la acción por defecto del navegador de las teclas asignadas (`input.block`).
+- **Fijos** (no reasignables): Esc (pausa/volver), Enter y Espacio en los menús, `R` reintentar, `M` silencio, `V` efectos, `T` récords y `F1` debug; por eso
+  `RESERVED` rechaza Esc, Enter, F1, R, M, V y T en una acción (Espacio sí vale).
+- **Persistencia**: dentro de `neonrush.settings.v1` (`{ version, values, keys }`); `Settings.load/save` llaman a `keys.load/toJSON`; `game.keys.onChange` guarda al instante.
+  Lectura defensiva (`KeyBinds.load`): códigos inválidos o reservados → valor por defecto; si queda una tecla repetida entre acciones o una principal vacía, se vuelve a los valores por defecto.
+- **Menú** (OPCIONES → `CONTROLES (PC)`, `buildControlsMenu`; filas `kind: 'bind'` de `ListMenu`): una fila por acción con dos casillas `[ W ] [ FL.ARRIBA ]`
+  (`keyLabel` da el texto). Izquierda/derecha (o el puntero) eligen casilla; **Enter o clic** entra en el **modo de escucha**: la casilla parpadea `PULSA...` y la siguiente tecla o botón
+  del ratón se asigna al momento y se guarda. **Esc cancela** sin tocar nada; **Supr/Retroceso** quita la secundaria (la principal nunca se queda vacía). Si la entrada ya estaba en otra acción se
+  **intercambian** (la otra recibe la anterior; su casilla parpadea en rojo y un aviso lo dice); si el intercambio dejaría vacía una principal, se rechaza (`blocked`); una repetida en la misma
+  acción también (`dup`). El botón **RESTAURAR CONTROLES** vuelve a `KEY_CONFIG`. En táctil las filas solo avisan "CONECTA UN TECLADO".
+- **Avisos de pantalla dinámicos**: el marcador de remate (`E · CLIC IZQ`), el `¡APORREA …!` del forcejeo y la ayuda de controles de la esquina inferior (`WASD MOVER · … ATACAR · … RECOGER/LANZAR`,
+  `… PATEAR · … REMATAR`) usan `keys.label(acción)` y muestran las teclas actuales.
+
 ## Debug
 - `F1` activa/desactiva el modo debug: hitboxes, conos de visión (cortados por puertas),
   líneas de visión, rutas BFS, estados de la IA (incluido aim/windup y temporizador de
@@ -861,8 +883,8 @@ Colores centralizados en `COLORS` (`src/utils.js`) y `PALETTE` (`src/sprites.js`
   `renderHud` lo reinicia al empezar.
 
 ## Controles
-`WASD` mover · ratón apuntar · clic izquierdo atacar/disparar/ejecutar · clic derecho recoger/lanzar arma ·
-`E` patada a puerta o ejecutar a un derribado en rango · `R` reintentar piso (reaparece dentro, sin repetir la llegada) ·
+`WASD` (o flechas) mover · ratón apuntar · clic izquierdo atacar/disparar · clic derecho recoger/lanzar arma (reasignables en OPCIONES → CONTROLES) ·
+`Espacio`/`F` patear (o rematar si hay un derribado a tiro) · `E` rematar · `R` reintentar piso (reaparece dentro, sin repetir la llegada) ·
 `Espacio`/`Enter`/clic saltan las cinemáticas de llegada y fuga y continúan en resultados ·
 `T` mejores partidas (selección de máscara y muerte) · `Enter` en la muerte: terminar partida ·
 `Esc` pausa (con OPCIONES) · `F1` debug · `M` silenciar sonido y música · `V` efectos CRT on/off

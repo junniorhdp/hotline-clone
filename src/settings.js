@@ -91,11 +91,12 @@ export class Settings {
       const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || 'null');
       const src = saved && typeof saved === 'object' && saved.values && typeof saved.values === 'object' ? saved.values : {};
       for (const o of OPTIONS) if (o.id in src) this.values[o.id] = sanitize(o, src[o.id]);
+      this.game.keys.load(saved && saved.keys); // controles de PC (keybinds.js); sin nada guardado = valores por defecto
     } catch { /* sin acceso o JSON corrupto: valores por defecto */ }
   }
 
   save() {
-    try { localStorage.setItem(SETTINGS_KEY, JSON.stringify({ version: 1, values: this.values })); } catch { /* cuota o modo privado */ }
+    try { localStorage.setItem(SETTINGS_KEY, JSON.stringify({ version: 1, values: this.values, keys: this.game.keys.toJSON() })); } catch { /* cuota o modo privado */ }
   }
 
   // Aplica todos los ajustes (arranque y restaurar).

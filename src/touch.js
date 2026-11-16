@@ -157,6 +157,7 @@ export class TouchControls {
     this.flash = {};    // botón → segundos de resaltado tras pulsarlo
     this.action = { id: 'attack', label: 'ATACAR', ready: false }; // acción contextual vigente
     this.actBuffer = 0;
+    this.actAction = 'kick'; // acción que se reintenta con el buffer (kick | execute)
     this.lock = null;        // enemigo fijado por la asistencia (se marca en pantalla)
     this.pendingLock = null;
     this.hapticTimer = 0;
@@ -228,7 +229,7 @@ export class TouchControls {
     this.haptic(12);
     // Si el toque patea o sube a la moto no cuenta como ATACAR mantenido (si no, dispararía a la vez).
     if (id === 'attack' && this.smartAttack()) this.roles.set(touchId, 'button:used');
-    if (id === 'throw') input.mousePressed.right = true;
+    if (id === 'throw') input.virtualPress('throw');
     if (id === 'act') this.contextAction();
     if (id === 'retry') input.pressed.add('KeyR');
     if (id === 'pause') input.pressed.add('Escape');
@@ -240,7 +241,8 @@ export class TouchControls {
     const g = this.game, a = g.touchAction();
     if (a.id === 'mount') { g.startLeaving(); return; }
     if (a.id === 'execute') this.haptic(28);
-    g.input.pressed.add('KeyE');
+    this.actAction = a.id === 'execute' ? 'execute' : 'kick';
+    g.input.virtualPress(this.actAction);
     this.actBuffer = ACT_BUFFER; // si el arma sigue en cadencia, se reintenta en cuanto acabe
   }
 
@@ -252,7 +254,8 @@ export class TouchControls {
     const g = this.game, input = g.input, a = g.touchAction();
     if (a.id === 'mount') { g.startLeaving(); return true; }
     if (a.id === 'kick' && a.ready && !g.player.def.melee) {
-      input.pressed.add('KeyE');
+      this.actAction = 'kick';
+      input.virtualPress('kick');
       this.actBuffer = ACT_BUFFER; // si el arma sigue en cadencia, se reintenta en cuanto acabe
       return true;
     }
@@ -430,8 +433,8 @@ export class TouchControls {
     const p = g.player;
     if (this.actBuffer > 0) {
       this.actBuffer -= dt;
-      if (p.alive && !p.exec && p.cooldown <= 0 && !input.wasPressed('KeyE')) {
-        input.pressed.add('KeyE');
+      if (p.alive && !p.exec && p.cooldown <= 0 && !input.vpressed.has(this.actAction)) {
+        input.virtualPress(this.actAction);
         this.actBuffer = 0;
       }
     }
