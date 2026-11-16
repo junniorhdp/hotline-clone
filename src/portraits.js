@@ -1,4 +1,4 @@
-import { buildSprite } from './sprites.js';
+import { buildSprite, drawSprite, playerBody, drawMaskHead } from './sprites.js';
 import { maskIcon } from './masks.js';
 import { COLORS, seededRandom, hashString } from './utils.js';
 
@@ -145,4 +145,70 @@ export function villainPortrait(kind) {
   const def = villainDef(kind), key = VILLAINS[kind] ? kind : 'grunt';
   if (!villainCache.has(key)) villainCache.set(key, buildSprite(def.rows, def.palette));
   return villainCache.get(key);
+}
+
+// --- Agentes (JACK / VEX) y su vista previa --------------------------------------------------------
+// Los dos agentes son una variante SOLO cosmética del personaje (`'male'` / `'female'` en el ajuste playerGender): cambian la silueta, la chaqueta,
+// la coleta, el retrato VS y la voz. Las ventajas jugables son de las 5 máscaras. Cada uno tiene su color neón (JACK cian, VEX magenta).
+export const AGENTS = {
+  male: { name: 'JACK', color: '#05d9e8', tint: '#062a30' },
+  female: { name: 'VEX', color: '#ff2a85', tint: '#3a0d28' },
+};
+
+// Símbolo ♂ / ♀ de píxeles (9×9) para los botones del selector.
+export function drawGenderIcon(ctx, x, y, gender, color) {
+  const px = [];
+  const ring = (cx, cy) => {
+    for (let j = 0; j < 9; j++) for (let i = 0; i < 9; i++) { const d = Math.hypot(i - cx, j - cy); if (d > 1.7 && d < 2.9) px.push([i, j]); }
+  };
+  if (gender === 'male') {
+    ring(3.5, 5.5);
+    px.push([5, 3], [6, 2], [7, 1], [8, 0], [5, 0], [6, 0], [7, 0], [8, 1], [8, 2], [8, 3]); // flecha hacia arriba a la derecha
+  } else {
+    ring(4, 3);
+    px.push([4, 6], [4, 7], [4, 8], [3, 7], [5, 7]); // cruz hacia abajo
+  }
+  ctx.fillStyle = color;
+  for (const [i, j] of px) ctx.fillRect(x + i, y + j, 1, 1);
+}
+
+// Visor de vista previa en vivo: el agente elegido con la máscara elegida, en guardia, con una respiración suave (vaivén de un píxel, los
+// puños que suben y bajan, la mirada que barre unos grados y, en VEX, la coleta que se balancea). Dibuja con el mismo sprite que el
+// juego (`playerBody`, `drawMaskHead`, `ponytail`), así que muestra exactamente la combinación que se va a jugar.
+export function drawAgentPreview(ctx, r, maskId, gender, t) {
+  const ag = AGENTS[gender] || AGENTS.male;
+  // Fondo con rejilla tenue y barrido de luz
+  ctx.fillStyle = '#0d0221';
+  ctx.fillRect(r.x, r.y, r.w, r.h);
+  ctx.fillStyle = '#1a0f2e';
+  for (let k = 8; k < r.w; k += 8) ctx.fillRect(r.x + k, r.y + 1, 1, r.h - 2);
+  for (let k = 8; k < r.h; k += 8) ctx.fillRect(r.x + 1, r.y + k, r.w - 2, 1);
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(r.x + 1, r.y + 1, r.w - 2, r.h - 2);
+  ctx.clip();
+  // Agente
+  const cx = r.x + r.w / 2, cy = r.y + r.h / 2 - 3 + Math.round(Math.sin(t * 2.4) * 1.5);
+  ctx.translate(cx, cy);
+  ctx.scale(1.5, 1.5);
+  ctx.rotate(-0.45 + Math.sin(t * 0.9) * 0.09);
+  const guard = Math.sin(t * 2.4) * 1.2;
+  drawSprite(ctx, 'fist', 10 + guard, 8);
+  drawSprite(ctx, 'fist', 10 - guard, -8);
+  drawSprite(ctx, playerBody(maskId, 0, gender), 0, 0);
+  if (gender === 'female') drawSprite(ctx, 'ponytail', -3, 0, Math.sin(t * 2.4 + 1) * 0.3, { ox: 10, oy: 2.5 });
+  drawMaskHead(ctx, maskId, 0);
+  ctx.restore();
+  // Barrido de luz que sube por el visor
+  const sweep = Math.floor(((t * 22) % (r.h + 16)) - 8);
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.07)';
+  ctx.fillRect(r.x + 1, r.y + r.h - 1 - sweep, r.w - 2, 2);
+  // Marco neón del color del agente + esquinas reforzadas
+  ctx.fillStyle = ag.color;
+  ctx.fillRect(r.x, r.y, r.w, 1); ctx.fillRect(r.x, r.y + r.h - 1, r.w, 1);
+  ctx.fillRect(r.x, r.y, 1, r.h); ctx.fillRect(r.x + r.w - 1, r.y, 1, r.h);
+  for (const [ox, oy] of [[0, 0], [r.w - 6, 0], [0, r.h - 6], [r.w - 6, r.h - 6]]) {
+    ctx.fillRect(r.x + ox, r.y + oy, 6, 2); ctx.fillRect(r.x + ox, r.y + oy, 2, 6);
+    ctx.fillRect(r.x + ox + (ox ? 0 : 4), r.y + oy + (oy ? 4 : 0), 2, 2);
+  }
 }

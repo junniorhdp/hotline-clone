@@ -28,7 +28,7 @@ HTML5 Canvas, JavaScript Vanilla (ES Modules) y Vite. Sin frameworks ni librerí
     armas, nivel de sangre del personaje y suelas manchadas (huellas).
   - `enemy.js` — IA de enemigos (patrulla, visión, persecución, búsqueda, derribado, `executing`
     mientras los rematan), tipo armado y las variantes `runner` (corredor) y `heavy` (guardia pesado).
-  - `portraits.js` — retratos de la pantalla VS del forcejeo: máscara con la sangre del personaje (y pelo/chaqueta si es mujer) y rostros de villanos.
+  - `portraits.js` — retratos de la pantalla VS del forcejeo: máscara con la sangre del personaje (y pelo/chaqueta si es VEX) y rostros de villanos; además los agentes JACK / VEX (`AGENTS`, icono ♂/♀ y vista previa de ELIGE TU MÁSCARA).
   - `boss.js` — `Boss` (subclase de `Enemy`): el jefe del piso 6, EL EJECUTOR, y su barra de vida (`drawBossBar`).
   - `doors.js` — puertas batientes: física de la hoja, empuje, patada y derribo; la puerta principal
     del edificio (`main`) se bloquea (`lock`: se cierra de golpe) y se desbloquea (`unlock`).
@@ -276,11 +276,18 @@ siguiente piso (`goToLevel`) … tras el último → `gameover` → `menu` o par
   `id` (`MASKS.find`), así las partidas guardadas con un nombre antiguo (OSO, GUEPARDO…) salen
   con el nuevo; `maskName` solo es el respaldo si el `id` ya no existe. Este juego es de un solo
   golpe y no tiene vida, por eso ninguna máscara da "resistencia".
-- **Personaje (HOMBRE / MUJER, `playerGender`)**: selección **puramente cosmética** (sprite, retrato del duelo VS y voz); ambos comparten hitbox, velocidad, daño y armas, y
-  todas las ventajas siguen siendo de las 5 máscaras. Se elige en la propia pantalla ELIGE TU MÁSCARA (sin pantallas extra): dos botones neón `[ HOMBRE ] [ MUJER ]` bajo el
-  título (`maskLayout().genders`; más altos en táctil), que se pulsan con **clic / toque** (no empiezan el piso) o con el teclado: **Q / ↑ / W = HOMBRE · E / ↓ / S = MUJER** (← / → / A / D siguen
-  cambiando de máscara). Se guarda en `neonrush.settings.v1` (opción `playerGender`, también en OPCIONES → JUEGO → PERSONAJE; `apply` → `game.setGender`), así que la próxima
-  vez ya sale elegido y basta Espacio / Enter para entrar. `player.gender` lo fija Game al crear el jugador y al cambiar el ajuste; `game.gender` lee la opción.
+- **Agente (JACK / VEX, `playerGender`)**: JACK = `'male'`, VEX = `'female'` (nombres en clave de mercenario arcade, `AGENTS` en `portraits.js`). Selección **puramente cosmética** (silueta, chaqueta,
+  coleta, retrato del duelo VS y voz); ambos comparten hitbox, velocidad, daño y armas, y todas las ventajas siguen siendo de las 5 máscaras. Se elige en la propia pantalla ELIGE TU MÁSCARA
+  (sin pantallas extra) y se guarda en `neonrush.settings.v1` (opción `playerGender`, también en OPCIONES → JUEGO → AGENTE; `apply` → `game.setGender`): la próxima vez ya sale elegido y
+  basta Espacio / Enter. `player.gender` lo fija Game al crear el jugador y al cambiar el ajuste.
+  - **Composición** (`maskLayout()`, de arriba abajo): título (y 6) · subtítulo `PRÓXIMO: PISO n · …` (y 25) · **selector JACK / VEX** (y 37) · las 5 tarjetas (con `iconScale` 2-5 según el sitio que dejan la franja
+    y el pie) · una **franja** inferior de 64 px con el **visor de vista previa a la izquierda** y el nombre y la pasiva de la máscara a su derecha · una sola línea de ayuda al pie
+    (`FLECHAS: MÁSCARA · Q/E: AGENTE · ESPACIO / ENTER: EMPEZAR`). En escritorio, `ESC: MENÚ` y `T: RÉCORDS` van discretos en las esquinas de arriba (en táctil son los botones VOLVER y RÉCORDS).
+  - **Botones del agente**: JACK cian (`#05d9e8`) y VEX magenta (`#ff2a85`), con su símbolo ♂ / ♀ de píxeles 9×9 (`drawGenderIcon`); el activo lleva borde y halo de su color y fondo teñido. 74 px de ancho; en táctil
+    miden `touch.px(36)` de alto (tamaño de dedo). Se pulsan con **clic / toque** (no empiezan el piso) o con **Q / ↑ / W = JACK · E / ↓ / S = VEX** (← / → / A / D siguen cambiando de máscara).
+  - **Vista previa en vivo** (`drawAgentPreview`, 64×64): el agente elegido con la máscara elegida, dibujado con los mismos sprites del juego (`playerBody(máscara, 0, género)`, `drawMaskHead`, `ponytail`), en guardia
+    (vaivén de 1 px, puños que suben y bajan, mirada que barre unos grados, coleta de VEX que se balancea) sobre una rejilla con un barrido de luz, marco neón del color del agente y su nombre dentro. Se redibuja cada
+    fotograma, así que cambia al instante al alternar JACK / VEX o de máscara (las 10 combinaciones dan imágenes distintas).
 - Flujo: estado `masks` antes de cada piso (al arrancar, tras los resultados con Espacio/Enter
   y al empezar partida nueva). Flechas/A-D o pasar el ratón eligen (el ratón solo cuenta si se
   mueve); Espacio/Enter o clic en la tarjeta confirman. `R` NO abre la selección: reintenta el
@@ -328,7 +335,7 @@ siguiente piso (`goToLevel`) … tras el último → `gameover` → `menu` o par
 - HUD: miniatura del retrato (12×12 a ×2) bajo el arma y, debajo del nombre, el contador de
   brutalidad (ver abajo); los resultados muestran la máscara usada.
 
-### Personaje femenino (`'female'`)
+### Personaje femenino (VEX, `'female'`)
 - **Cuerpo** (`PLAYER_BODY_F` en `sprites.js`, misma plantilla y letras que `PLAYER_BODY`): hombros dos filas más estrechos (una por lado), bomber entallada con **rayas rosas** (`q`) en las mangas y en el
   dobladillo de la espalda (que sustituye a la capucha). Mantiene la identidad cian y los colores de cada máscara (`OUTFITS`). Variantes horneadas `body_f_<id>` y `body_f_<id>_b1..5`
   (mismo reparto de sangre por nivel sobre su plantilla); `playerBody(maskId, nivel, gender)` elige la correcta, y `goreEnabled` apagado = nivel 0, como siempre.
@@ -858,7 +865,7 @@ Colores centralizados en `COLORS` (`src/utils.js`) y `PALETTE` (`src/sprites.js`
   `Settings` guarda `{ version: 1, values: {…} }` en `localStorage` clave **`neonrush.settings.v1`** (lectura defensiva
   con `sanitize`: JSON corrupto, tipos o valores fuera de rango → valor por defecto; escritura con try/catch). `set`/`adjust`
   guardan y llaman a `apply`; `applyAll` (al final del constructor de `Game`) aplica lo guardado; `reset` restaura.
-- **Opciones actuales**: AUDIO `musicVolume`, `sfxVolume` (0–100 % de 10 en 10) · JUEGO `playerGender` (PERSONAJE: HOMBRE / MUJER, cosmético), `strobeEnabled` (LUCES ESTROBOSCÓPICAS del club), `goreEnabled` · TÁCTIL `buttonScale`
+- **Opciones actuales**: AUDIO `musicVolume`, `sfxVolume` (0–100 % de 10 en 10) · JUEGO `playerGender` (AGENTE: JACK / VEX, cosmético), `strobeEnabled` (LUCES ESTROBOSCÓPICAS del club), `goreEnabled` · TÁCTIL `buttonScale`
   (PEQUEÑO 0,85 / NORMAL 1 / GRANDE 1,2), `buttonOpacity` (BAJA 0,5 / MEDIA 0,75 / ALTA 1), `stickFire` (DISPARO CON JOYSTICK: BORDE 0,85 / FÁCIL 0,6 / NO = solo apunta; escribe `fireThreshold`), `autoFire` (DISPARO AUTOMÁTICO), `hapticsEnabled`,
   `aimAssist` (OFF / SUAVE / ALTO; el antiguo sí/no se migra: true → SUAVE, false → OFF). Las táctiles escriben en `touch.setConfig`.
 - **Audio** (`audio.js`): `sfx.setVolumes({ music, sfx })`. Hay un `sfxBus` nuevo entre todos los efectos (y la moto) y el master;
