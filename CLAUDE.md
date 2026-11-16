@@ -106,7 +106,8 @@ Cada piso empieza **en la calle**, no dentro. El ciclo (`game.js`) es:
    sacudida, chispas y el aviso `SALIDAS BLOQUEADAS`. Empieza la música de combate y corre el reloj.
 4. **Despejar** (`state 'cleared'`, `this.inside && todos muertos`): suena `tapeStop` y entra el ambiente
    vacío (ya existente); la puerta se **desbloquea y se abre** (`Door.unlock()`, sonido `unlock`) y
-   sale el aviso `¡EDIFICIO LIMPIO!`. El marco pasa a la moto (`MOTO`).
+   sale el aviso grande `PISO COMPLETADO` (2,6 s, `showCallout`); **al apagarse** aparece el objetivo parpadeante
+   `REGRESA A LA MOTO` (nunca los dos a la vez: se pinta solo si `callout` es null). El marco pasa a la moto (`MOTO`).
 5. **Fuga** (`state 'leaving'`): al **rozar la moto** (`touchingBike`: su borde + `MOUNT_MARGIN`) el
    jugador se sube (0,4 s) y la moto acelera hasta salir de la pantalla (1,35 s) con polvo y el motor
    (`playMotoDeparture`, ver "La moto"); después fundido y resultados (`finishFloor`). También se puede saltar con
@@ -645,13 +646,15 @@ Colores centralizados en `COLORS` (`src/utils.js`) y `PALETTE` (`src/sprites.js`
   - **Aim-assist** (`assistAngle`): con un enemigo vivo (no derribado) a la vista y a ≤ 360 u dentro de un cono
     (7°..28° según `aimAssist`, algo más estrecho de lejos), el ángulo se inclina hacia él (tirón máx. 0,7·fuerza, mayor
     cuanto más centrado). Siempre parte del ángulo crudo del dedo, así no se acumula ni salta de objetivo.
-  - Botones en arco junto al pulgar derecho: **ATACAR** (el principal, grande, esquina) · **PATEAR/REMATAR/MOTO** encima
-    · **LANZAR** (clic derecho: recoger/lanzar) el más alto y pequeño, desplazado a la izquierda (más lejos = menos
-    toques sin querer) · **REINICIAR** (R) bajo la máscara.
-  - Botón contextual (`id: 'act'`, `game.touchAction()`): derribado a tiro → `REMATAR` (rojo/blanco parpadeante, mismo
-    objetivo que el indicador) y envía `E`; puerta de enfrente → `PATEAR` (apagado si no hay puerta a tiro); `cleared`
-    y cerca de la moto (borde + 3·`MOUNT_MARGIN`) → `MOTO` (cian), que llama a `startLeaving()`. Si el arma aún está en
-    cadencia, la pulsación se guarda 0,25 s (`ACT_BUFFER`) y se reintenta al acabar el cooldown.
+  - Botones junto al pulgar derecho: **ATACAR** (el principal, grande, en la esquina) y **LANZAR** (clic derecho:
+    recoger/lanzar) justo encima, alineado a su borde derecho · **REINICIAR** (R) bajo la máscara. No hay botón de E.
+  - **ATACAR es un botón inteligente** (`game.touchAction()` da la etiqueta; el ancho es fijo para que no se mueva) y
+    lo mismo hace el toque rápido del joystick derecho (`TouchControls.smartAttack`): derribado a tiro → `REMATAR`
+    (rojo/blanco parpadeante; atacar ya ejecuta, mismo objetivo que el indicador); puerta de enfrente → `PATEAR`
+    (con arma cuerpo a cuerpo atacar ya patea; con arma de fuego envía `E` en vez de disparar); `cleared` y cerca de la
+    moto (borde + 3·`MOUNT_MARGIN`) → `MOTO` (cian), que llama a `startLeaving()`. El dedo que patea o monta se marca
+    `button:used` y no cuenta como ATACAR mantenido (si no, dispararía a la vez). Si el arma está en cadencia, el `E`
+    se guarda 0,25 s (`ACT_BUFFER`). Mantener el joystick en el borde sigue atacando (no patea).
   - **Feedback**: al tocar un botón crece hasta 2 px y se ilumina (`PRESS_FLASH` 0,15 s) y vibra 12 ms; ATACAR
     mantenido/disparo continuo vibra 8 ms cada 0,12 s; empezar una ejecución 30 ms; morir `[40,30,90]`. Todo vía
     `TouchControls.haptic()`, que respeta `hapticsEnabled` y falla en silencio sin `navigator.vibrate` (iOS).

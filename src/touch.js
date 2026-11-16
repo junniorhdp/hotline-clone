@@ -11,11 +11,12 @@ import { lineOfSight } from './map.js';
 //                         (más allá de `fireThreshold`) ataca/dispara a la cadencia del arma
 //                         (input.aimFiring). Un toque rápido que no llega a disparar = un ataque.
 //                         Con `aimAssist` la mira se ajusta un poco hacia el enemigo cercano.
-//   ATACAR              → tocar = un ataque (input.tapAttack); mantener = input.attackHeld
-//   PATEAR/REMATAR/MOTO → la tecla E según el contexto (`game.touchAction()`): remata a un derribado,
-//                         patea la puerta de enfrente o, con el edificio limpio junto a la moto, se
-//                         sube y se va. La pulsación se guarda 0,25 s si el arma aún está en cadencia.
-//   LANZAR              → clic derecho (recoger / lanzar)
+//   ATACAR              → botón inteligente (`game.touchAction()`, la etiqueta cambia): tocar = un ataque
+//                         (input.tapAttack); mantener = input.attackHeld. Con un derribado a tiro REMATA
+//                         (el ataque ya ejecuta), con una puerta delante la PATEA (con armas de fuego
+//                         envía E en vez de disparar) y, con el edificio limpio junto a la moto, se sube
+//                         y se va (MOTO). El toque rápido del joystick derecho hace lo mismo.
+//   LANZAR              → clic derecho (recoger / lanzar), justo encima de ATACAR
 //   REINICIAR           → tecla R
 // Fuera de la partida (menús, máscaras, resultados…) un toque equivale a un clic en ese punto.
 // Los tamaños se definen en píxeles CSS (tamaño real del dedo) y se pasan a píxeles internos.
@@ -97,7 +98,7 @@ export class TouchControls {
     this.aim = null;
     this.roles = new Map();
     this.flash = {};    // botón → segundos de resaltado tras pulsarlo
-    this.action = { id: 'kick', label: 'PATEAR', ready: false }; // acción contextual vigente
+    this.action = { id: 'attack', label: 'ATACAR', ready: false }; // acción contextual vigente
     this.actBuffer = 0;
     this.hapticTimer = 0;
     this.prev = { exec: false, alive: true, firing: false };
@@ -120,27 +121,26 @@ export class TouchControls {
   }
 
   // Márgenes = MARGIN + zona segura del sistema (muesca, barra de inicio): nada táctil
-  // queda debajo de ellas. Los botones forman un arco junto al pulgar derecho: ATACAR en la
-  // esquina, PATEAR/REMATAR encima y LANZAR el más alto y pequeño (más lejos = menos toques sin querer).
+  // queda debajo de ellas. Junto al pulgar derecho: ATACAR (grande, en la esquina) y LANZAR justo encima.
   layout() {
     const { width: w, height: h } = this.game.scene;
     const s = this.game.safe, cfg = this.config;
     const left = MARGIN + s.l, right = w - MARGIN - s.r, bottom = h - MARGIN - s.b;
     const bh = Math.max(16, Math.round(this.px(BUTTON_CSS_HEIGHT * cfg.buttonScale)));
-    const bw = Math.max(Math.round(bh * 1.8), measureText('REMATAR') + 12);
     const rh = Math.max(14, Math.round(bh * 0.75));
-    const tw = Math.max(Math.round(rh * 1.8), measureText('LANZAR') + 12);
-    // ATACAR es el botón principal: más grande y en la esquina, donde cae el pulgar.
+    // ATACAR es el botón principal: más grande y en la esquina, donde cae el pulgar. Su ancho es fijo
+    // (cabe la etiqueta más larga) para que no se mueva al cambiar de ATACAR a REMATAR, PATEAR o MOTO.
     const ah = Math.round(bh * 1.3);
-    const aw = Math.max(Math.round(ah * 1.6), measureText('ATACAR') + 12);
-    const attack = { id: 'attack', label: 'ATACAR', x: right - aw, y: bottom - ah, w: aw, h: ah, accent: COLORS.wall };
-    const act = { id: 'act', label: this.action.label, x: right - bw, y: attack.y - 6 - bh, w: bw, h: bh };
-    const throwB = { id: 'throw', label: 'LANZAR', x: right - tw - Math.round(bw * 0.3), y: act.y - 6 - rh, w: tw, h: rh };
+    const aw = Math.max(Math.round(ah * 1.6), measureText('REMATAR') + 12);
+    const bw = Math.max(Math.round(bh * 1.8), measureText('LANZAR') + 12);
+    const attack = { id: 'attack', label: this.action.label, x: right - aw, y: bottom - ah, w: aw, h: ah, accent: COLORS.wall };
+    // LANZAR justo encima de ATACAR, alineado a su borde derecho (el pulgar lo alcanza sin soltar la esquina).
+    const throwB = { id: 'throw', label: 'LANZAR', x: right - bw, y: attack.y - 6 - bh, w: bw, h: bh };
     return {
       left, right, bottom,
       stickR: Math.max(16, Math.round(this.px(cfg.joystickRadius))),
       buttons: [
-        attack, act, throwB,
+        attack, throwB,
         // Debajo de la miniatura de la máscara del HUD.
         { id: 'retry', label: 'REINICIAR', x: left, y: 56 + s.t, w: measureText('REINICIAR') + 12, h: rh },
       ],
@@ -162,22 +162,31 @@ export class TouchControls {
     input.aimActive = input.aimFiring = input.attackHeld = false;
   }
 
-  press(id) {
+  press(id, touchId) {
     const g = this.game, input = g.input;
     this.flash[id] = PRESS_FLASH;
     this.haptic(12);
-    if (id === 'attack') input.tapAttack = true; // golpe inmediato; mantenerlo sigue atacando
+    // Si el toque patea o sube a la moto no cuenta como ATACAR mantenido (si no, dispararía a la vez).
+    if (id === 'attack' && this.smartAttack()) this.roles.set(touchId, 'button:used');
     if (id === 'throw') input.mousePressed.right = true;
     if (id === 'retry') input.pressed.add('KeyR');
-    if (id === 'act') {
-      const a = g.touchAction();
-      if (a.id === 'mount') g.startLeaving();
-      else {
-        if (a.id === 'execute') this.haptic(28);
-        input.pressed.add('KeyE');
-        this.actBuffer = ACT_BUFFER; // si el arma sigue en cadencia, se reintenta en cuanto acabe
-      }
+  }
+
+  // Ataque unificado (botón ATACAR y toque rápido del joystick derecho): según el contexto sube a la
+  // moto, patea la puerta (con arma de fuego, donde atacar dispararía; el cuerpo a cuerpo ya patea
+  // solo) o ataca, y atacar con un derribado a tiro ya lo remata. Devuelve true si el toque se gastó
+  // en patear o montar (no es un ataque).
+  smartAttack() {
+    const g = this.game, input = g.input, a = g.touchAction();
+    if (a.id === 'mount') { g.startLeaving(); return true; }
+    if (a.id === 'kick' && a.ready && !g.player.def.melee) {
+      input.pressed.add('KeyE');
+      this.actBuffer = ACT_BUFFER; // si el arma sigue en cadencia, se reintenta en cuanto acabe
+      return true;
     }
+    if (a.id === 'execute') this.haptic(28);
+    input.tapAttack = true;
+    return false;
   }
 
   // Asistencia de apuntado: si hay un enemigo vivo a la vista dentro de un cono estrecho alrededor
@@ -249,7 +258,7 @@ export class TouchControls {
         const button = L.buttons.find((b) => inside(b, p));
         if (button) {
           this.roles.set(t.id, `button:${button.id}`);
-          this.press(button.id);
+          this.press(button.id, t.id);
         } else if (p.x < half && !this.move) {
           this.move = { id: t.id, ox: p.x, oy: p.y, x: p.x, y: p.y };
           this.roles.set(t.id, 'move');
@@ -313,11 +322,11 @@ export class TouchControls {
       if (endedAim && !endedAim.fired && endedAim.held < TAP_MAX) {
         const v = vec(endedAim, cfg.aimDeadzone);
         if (v.len > cfg.aimDeadzone) { input.aimAngle = this.assistAngle(Math.atan2(v.dir.y, v.dir.x)); input.aimActive = true; }
-        input.tapAttack = true;
+        this.smartAttack();
       }
     }
 
-    // PATEAR/REMATAR pulsado mientras el arma aún estaba en cadencia (E se pierde si el cooldown > 0).
+    // PATEAR (E) pulsado mientras el arma aún estaba en cadencia (E se pierde si el cooldown > 0).
     const p = g.player;
     if (this.actBuffer > 0) {
       this.actBuffer -= dt;
@@ -356,10 +365,10 @@ export class TouchControls {
     const act = this.action;
     for (const b of L.buttons) {
       const press = (this.flash[b.id] || 0) / PRESS_FLASH;
-      let lit = press > 0 || (b.id === 'attack' && g.input.attackHeld);
+      const lit = press > 0 || (b.id === 'attack' && g.input.attackHeld);
       let alpha = b.id === 'attack' ? 0.7 : 0.55;
-      if (b.id === 'act') {
-        // Contexto: REMATAR parpadea en rojo/blanco neón, MOTO en cian, PATEAR se apaga sin puerta delante.
+      if (b.id === 'attack') {
+        // Contexto: REMATAR parpadea en rojo/blanco neón, MOTO en cian, PATEAR en rosa; ATACAR, el de siempre.
         if (act.id === 'execute') {
           const blink = Math.floor(now / 110) % 2;
           b.accent = blink ? COLORS.text : COLORS.enemyBullet;
@@ -370,8 +379,9 @@ export class TouchControls {
           b.textColor = COLORS.player;
           alpha = 0.9;
         } else {
-          b.accent = act.ready ? COLORS.wall : '#3a2a55';
-          alpha = act.ready ? 0.8 : 0.4;
+          b.accent = COLORS.wall;
+          b.textColor = act.id === 'kick' && act.ready ? COLORS.text : undefined;
+          alpha = act.id === 'kick' && act.ready ? 0.9 : 0.7;
         }
       }
       drawTouchButton(ctx, b, lit, alpha * op, press);
