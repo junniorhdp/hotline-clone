@@ -343,11 +343,25 @@ export class Game {
   maskLayout() {
     const w = this.scene.width, h = this.scene.height, n = MASKS.length, gap = 6;
     const cardW = clamp(Math.floor((w - 16 - gap * (n - 1)) / n), 40, 78);
-    const iconScale = clamp(Math.min(Math.floor((cardW - 12) / 12), Math.floor((h - 130) / 12)), 2, 5);
+    const iconScale = clamp(Math.min(Math.floor((cardW - 12) / 12), Math.floor((h - 160) / 12)), 2, 5);
     const cardH = 12 * iconScale + 24;
     const x0 = Math.round((w - (n * cardW + (n - 1) * gap)) / 2);
-    const cards = MASKS.map((_, i) => ({ x: x0 + i * (cardW + gap), y: 36, w: cardW, h: cardH }));
-    return { cards, iconScale, bottom: 36 + cardH };
+    const top = 54; // deja sitio, entre el título y las tarjetas, al selector HOMBRE / MUJER
+    const cards = MASKS.map((_, i) => ({ x: x0 + i * (cardW + gap), y: top, w: cardW, h: cardH }));
+    // Selector de personaje (HOMBRE / MUJER): dos botones neón centrados; más altos en táctil (ver touch.px).
+    const bh = this.input.touchMode ? Math.max(15, Math.round(this.touch.px(34))) : 14, bw = 64;
+    const by = 33;
+    const genders = [
+      { id: 'male', label: 'HOMBRE', x: Math.round(w / 2 - bw - 3), y: by, w: bw, h: bh },
+      { id: 'female', label: 'MUJER', x: Math.round(w / 2 + 3), y: by, w: bw, h: bh },
+    ];
+    return { cards, iconScale, bottom: top + cardH, genders };
+  }
+
+  pickGender(id) {
+    if (this.gender === id) return;
+    this.settings.set('playerGender', id); // se guarda y llama a setGender
+    this.sfx.play('pickup');
   }
 
   updateMaskSelect() {
@@ -355,12 +369,22 @@ export class Game {
     const prev = this.maskIndex;
     if (input.wasPressed('ArrowLeft') || input.wasPressed('KeyA')) this.maskIndex = (this.maskIndex + n - 1) % n;
     if (input.wasPressed('ArrowRight') || input.wasPressed('KeyD')) this.maskIndex = (this.maskIndex + 1) % n;
+    // Personaje (solo cosmético): Q / ↑ / W = HOMBRE · E / ↓ / S = MUJER, o tocar / pulsar su botón.
+    const wantMale = input.wasPressed('KeyQ') || input.wasPressed('ArrowUp') || input.wasPressed('KeyW');
+    const wantFemale = input.wasPressed('KeyE') || input.wasPressed('ArrowDown') || input.wasPressed('KeyS');
+    if (wantMale) this.pickGender('male');
+    else if (wantFemale) this.pickGender('female');
 
     // Ratón: pasar por encima selecciona (solo si se ha movido), clic confirma.
     const m = this.mouseInternal();
     const moved = Math.hypot(m.x - this.maskMouse.x, m.y - this.maskMouse.y) > 0.5;
     this.maskMouse = m;
-    const hovered = this.maskLayout().cards.findIndex((c) => m.x >= c.x && m.x < c.x + c.w && m.y >= c.y && m.y < c.y + c.h);
+    const lay = this.maskLayout();
+    const hovered = lay.cards.findIndex((c) => m.x >= c.x && m.x < c.x + c.w && m.y >= c.y && m.y < c.y + c.h);
+    if (input.mousePressed.left) {
+      const gb = lay.genders.find((b) => m.x >= b.x && m.x < b.x + b.w && m.y >= b.y && m.y < b.y + b.h);
+      if (gb) { this.pickGender(gb.id); return; } // clic / toque en HOMBRE o MUJER: no empieza el piso
+    }
     if (hovered >= 0 && moved) this.maskIndex = hovered;
     if (this.maskIndex !== prev) this.sfx.play('empty');
 
@@ -460,6 +484,17 @@ export class Game {
     if (e.kind === 'boss') return new Boss(e.x, e.y);
     const weapon = e.weapon ? { type: e.weapon, ammo: ENEMY_WEAPONS[e.weapon].dropAmmo } : null;
     return new Enemy(e.x, e.y, e.patrol, weapon, e.kind, e.melee);
+  }
+
+  // Personaje (Hombre / Mujer): SOLO cosmético. Cambia el sprite del jugador, su retrato en el duelo VS y el tono de su voz
+  // (`sfx.voice`); no toca velocidad, hitbox, daño ni pasivas, que son de las máscaras.
+  get gender() {
+    return this.settings.get('playerGender') === 'female' ? 'female' : 'male';
+  }
+
+  setGender(v) {
+    this.sfx.voice = v === 'female' ? 1.22 : 1;
+    if (this.player) this.player.gender = v === 'female' ? 'female' : 'male';
   }
 
   // --- Menús modales (options-menu.js): OPCIONES y PAUSA -------------------------------------
@@ -795,6 +830,7 @@ export class Game {
     const retryInside = !arrival && this.entered;
     const start = retryInside ? level.entry : level.player;
     this.player = new Player(start.x, start.y, maskEffects(this.mask), this.mask.id, retryInside);
+    this.player.gender = this.gender;
     this.player.angle = -Math.PI / 2; // mira al edificio
     if (retryInside) this.player.weapon = this.entryWeapon ? { ...this.entryWeapon } : null;
     this.player.bloodLevel = this.goreOn ? bloodLevelFor(this.gore) : 0;
@@ -1281,31 +1317,31 @@ export class Game {
     // Retratos y VS
     const topY = 16 + s.t;
     const frame = (x, color) => {
-      ctx.fillStyle = '#05000f'; ctx.fillRect(x - 2, topY - 2, 52, 52);
+      ctx.fillStyle = '#05000f'; ctx.fillRect(x - 2, topY - 2, 60, 60);
       ctx.fillStyle = color;
-      ctx.fillRect(x - 2, topY - 2, 52, 1); ctx.fillRect(x - 2, topY + 49, 52, 1);
-      ctx.fillRect(x - 2, topY - 2, 1, 52); ctx.fillRect(x + 49, topY - 2, 1, 52);
+      ctx.fillRect(x - 2, topY - 2, 60, 1); ctx.fillRect(x - 2, topY + 57, 60, 1);
+      ctx.fillRect(x - 2, topY - 2, 1, 60); ctx.fillRect(x + 57, topY - 2, 1, 60);
     };
-    const px = cx - 104, ex = cx + 52;
+    const px = cx - 112, ex = cx + 54;
     const vdef = villainDef(sc.e.kind);
     frame(px, COLORS.player); frame(ex, vdef.frame);
     // Tú: el retrato de tu máscara con la sangre que llevas (nivel 0 si la sangre está desactivada).
-    ctx.drawImage(bloodyMaskPortrait(this.mask, this.goreOn ? this.player.bloodLevel : 0), px, topY, 48, 48);
+    ctx.drawImage(bloodyMaskPortrait(this.mask, this.goreOn ? this.player.bloodLevel : 0, this.gender), px, topY, 56, 56);
     // Él: un rostro en penumbra por tipo de enemigo; los ojos parpadean de vez en cuando.
-    ctx.drawImage(villainPortrait(sc.e.kind), ex, topY, 48, 48);
+    ctx.drawImage(villainPortrait(sc.e.kind), ex + 4, topY + 4, 48, 48);
     ctx.fillStyle = 'rgba(5, 0, 15, 0.22)';
-    ctx.fillRect(ex, topY + 24, 48, 24);
+    ctx.fillRect(ex + 4, topY + 28, 48, 24);
     if (Math.floor(now / 140) % 16 === 0) {
       ctx.fillStyle = '#07050d';
-      for (const [x, y] of vdef.eyes) ctx.fillRect(ex + x * 4, topY + y * 4, 4, 4);
+      for (const [x, y] of vdef.eyes) ctx.fillRect(ex + 4 + x * 4, topY + 4 + y * 4, 4, 4);
     }
     const vs = 'VS', vsScale = 5;
     const jx = pulse ? 1 : -1;
-    drawText(ctx, vs, cx - 1 + jx, topY + 6, { color: COLORS.player, scale: vsScale, align: 'center', shadow: null });
-    drawText(ctx, vs, cx + 1 - jx, topY + 7, { color: vdef.frame, scale: vsScale, align: 'center', shadow: null });
-    drawText(ctx, vs, cx, topY + 6, { color: '#ffffff', scale: vsScale, align: 'center', shadow: null });
+    drawText(ctx, vs, cx - 1 + jx, topY + 10, { color: COLORS.player, scale: vsScale, align: 'center', shadow: null });
+    drawText(ctx, vs, cx + 1 - jx, topY + 11, { color: vdef.frame, scale: vsScale, align: 'center', shadow: null });
+    drawText(ctx, vs, cx, topY + 10, { color: '#ffffff', scale: vsScale, align: 'center', shadow: null });
     // Titular del duelo (quién contra quién)
-    drawText(ctx, sc.label, cx, topY + 56, { color: sc.mode === 'clash' ? COLORS.enemy : '#ffffff', align: 'center' });
+    drawText(ctx, sc.label, cx, topY + 62, { color: sc.mode === 'clash' ? COLORS.enemy : '#ffffff', align: 'center' });
     // Barra de tensión
     const barW = Math.max(110, Math.min(220, Math.round(w * 0.46))), barH = 9 + (danger && pulse ? 2 : 0);
     const bx = cx - Math.round(barW / 2), by = h - 52 - s.b;
@@ -1627,6 +1663,7 @@ export class Game {
     this.fx.kick(1);
     this.hitstop = HITSTOP.playerDeath;
     this.sfx.play('death');
+    this.sfx.play('grunt', 0.9);
   }
 
   // Patada a la puerta que haya delante del jugador. Devuelve true si había puerta.
@@ -2218,6 +2255,19 @@ export class Game {
       drawText(ctx, mask.name, c.x + c.w / 2, y + 10 + size, { color: sel ? COLORS.text : '#7d6f98', align: 'center' });
     });
 
+    // Selector HOMBRE / MUJER (neón): el elegido va relleno y con halo.
+    for (const b of this.maskLayout().genders) {
+      const on = this.gender === b.id;
+      ctx.save();
+      if (on) { ctx.shadowColor = COLORS.wall; ctx.shadowBlur = 8; }
+      ctx.fillStyle = on ? COLORS.wall : '#3a2a55';
+      ctx.fillRect(b.x, b.y, b.w, b.h);
+      ctx.restore();
+      ctx.fillStyle = on ? '#2a0d3a' : '#140a24';
+      ctx.fillRect(b.x + 1, b.y + 1, b.w - 2, b.h - 2);
+      drawText(ctx, b.label, b.x + b.w / 2, b.y + Math.round((b.h - CELL_H) / 2), { color: on ? COLORS.text : '#7d6f98', align: 'center' });
+    }
+
     const mask = MASKS[this.maskIndex];
     let y = bottom + 8;
     drawText(ctx, mask.name, cx, y, { color: COLORS.player, scale: 2, align: 'center' });
@@ -2227,7 +2277,7 @@ export class Game {
       y += 11;
     }
     if (Math.floor(performance.now() / 400) % 2 === 0) {
-      drawText(ctx, this.hint('FLECHAS / RATÓN: ELEGIR · ESPACIO / ENTER: EMPEZAR', 'TOCA UNA MÁSCARA: ELEGIR · OTRA VEZ: EMPEZAR'),
+      drawText(ctx, this.hint('FLECHAS: MÁSCARA · Q/E: PERSONAJE · ESPACIO / ENTER: EMPEZAR', 'TOCA UNA MÁSCARA: ELEGIR · OTRA VEZ: EMPEZAR'),
         cx, h - 14 - this.safe.b, { color: COLORS.player, align: 'center' });
     }
     // En táctil, VOLVER y RÉCORDS son botones (arriba).

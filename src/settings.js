@@ -22,6 +22,11 @@ export const OPTIONS = [
   // --- Jugabilidad / visual ---
   // Sin sangre: no hay manchas en suelo ni paredes, ni huellas, ni sangre sobre el personaje; las bajas
   // sueltan chispas de neón y humo. Lo leen game.js (`goreOn`) y el HUD.
+  // Personaje (Hombre / Mujer): SOLO cosmético (sprite, retrato del duelo VS y voz); mismas estadísticas. Se elige también
+  // en la pantalla ELIGE TU MÁSCARA. Todas las ventajas jugables siguen siendo de las 5 máscaras.
+  { id: 'playerGender', section: 'JUEGO', label: 'PERSONAJE', type: 'choice', default: 'male',
+    choices: [{ label: 'HOMBRE', value: 'male' }, { label: 'MUJER', value: 'female' }],
+    apply: (g, v) => g.setGender(v) },
   // Luces estroboscópicas del piso 4 (el club): pulsos de color neón sobre la escena. Apagarlas deja el club
   // con su luz normal (recomendado con fotosensibilidad).
   { id: 'strobeEnabled', section: 'JUEGO', label: 'LUCES ESTROBOSCÓPICAS', type: 'toggle', default: true },

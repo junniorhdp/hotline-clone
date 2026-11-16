@@ -28,7 +28,7 @@ HTML5 Canvas, JavaScript Vanilla (ES Modules) y Vite. Sin frameworks ni librerí
     armas, nivel de sangre del personaje y suelas manchadas (huellas).
   - `enemy.js` — IA de enemigos (patrulla, visión, persecución, búsqueda, derribado, `executing`
     mientras los rematan), tipo armado y las variantes `runner` (corredor) y `heavy` (guardia pesado).
-  - `portraits.js` — retratos de la pantalla VS del forcejeo: máscara con la sangre del personaje y rostros de villanos.
+  - `portraits.js` — retratos de la pantalla VS del forcejeo: máscara con la sangre del personaje (y pelo/chaqueta si es mujer) y rostros de villanos.
   - `boss.js` — `Boss` (subclase de `Enemy`): el jefe del piso 6, EL EJECUTOR, y su barra de vida (`drawBossBar`).
   - `doors.js` — puertas batientes: física de la hoja, empuje, patada y derribo; la puerta principal
     del edificio (`main`) se bloquea (`lock`: se cierra de golpe) y se desbloquea (`unlock`).
@@ -276,6 +276,11 @@ siguiente piso (`goToLevel`) … tras el último → `gameover` → `menu` o par
   `id` (`MASKS.find`), así las partidas guardadas con un nombre antiguo (OSO, GUEPARDO…) salen
   con el nuevo; `maskName` solo es el respaldo si el `id` ya no existe. Este juego es de un solo
   golpe y no tiene vida, por eso ninguna máscara da "resistencia".
+- **Personaje (HOMBRE / MUJER, `playerGender`)**: selección **puramente cosmética** (sprite, retrato del duelo VS y voz); ambos comparten hitbox, velocidad, daño y armas, y
+  todas las ventajas siguen siendo de las 5 máscaras. Se elige en la propia pantalla ELIGE TU MÁSCARA (sin pantallas extra): dos botones neón `[ HOMBRE ] [ MUJER ]` bajo el
+  título (`maskLayout().genders`; más altos en táctil), que se pulsan con **clic / toque** (no empiezan el piso) o con el teclado: **Q / ↑ / W = HOMBRE · E / ↓ / S = MUJER** (← / → / A / D siguen
+  cambiando de máscara). Se guarda en `neonrush.settings.v1` (opción `playerGender`, también en OPCIONES → JUEGO → PERSONAJE; `apply` → `game.setGender`), así que la próxima
+  vez ya sale elegido y basta Espacio / Enter para entrar. `player.gender` lo fija Game al crear el jugador y al cambiar el ajuste; `game.gender` lee la opción.
 - Flujo: estado `masks` antes de cada piso (al arrancar, tras los resultados con Espacio/Enter
   y al empezar partida nueva). Flechas/A-D o pasar el ratón eligen (el ratón solo cuenta si se
   mueve); Espacio/Enter o clic en la tarjeta confirman. `R` NO abre la selección: reintenta el
@@ -322,6 +327,18 @@ siguiente piso (`goToLevel`) … tras el último → `gameover` → `menu` o par
     colores en `MASK_SKINS` + ropa en `OUTFITS` (si falta la cabeza o el cuerpo se usa el de NEON).
 - HUD: miniatura del retrato (12×12 a ×2) bajo el arma y, debajo del nombre, el contador de
   brutalidad (ver abajo); los resultados muestran la máscara usada.
+
+### Personaje femenino (`'female'`)
+- **Cuerpo** (`PLAYER_BODY_F` en `sprites.js`, misma plantilla y letras que `PLAYER_BODY`): hombros dos filas más estrechos (una por lado), bomber entallada con **rayas rosas** (`q`) en las mangas y en el
+  dobladillo de la espalda (que sustituye a la capucha). Mantiene la identidad cian y los colores de cada máscara (`OUTFITS`). Variantes horneadas `body_f_<id>` y `body_f_<id>_b1..5`
+  (mismo reparto de sangre por nivel sobre su plantilla); `playerBody(maskId, nivel, gender)` elige la correcta, y `goreEnabled` apagado = nivel 0, como siempre.
+- **Cola de caballo**: sprite aparte `ponytail` (10×5, pelo violeta `p/P`, goma rosa `t`) que `Player.draw` pinta bajo la cabeza, con la base en la nuca, rotado por `player.tailA`.
+  `Player.updateTail` lo balancea (≈ ±0,3 rad a ~3 Hz al correr, un vaivén mínimo parada) y lo deja **atrás al girar** (proporcional al giro del ángulo de apuntado, tope ±0,8 rad).
+  Solo dibujo. Sin máscara (llegada en moto) la cabeza es `bare_f` (el pelo de `bare` en violeta); funciona con armas, ejecuciones, la moto y las capas de sangre.
+- **Retrato del duelo VS** (`bloodyMaskPortrait(máscara, nivel, gender)`): lienzo de 28×28 (24 + 2 de margen) mostrado a 56×56 en marcos de 60: la máscara con su sangre y, en `female`, **detrás**
+  de ella pelo violeta por arriba y los lados, una coleta con goma rosa que cuelga a la derecha, cuello y hombros estrechos de la bomber con raya rosa bajo la máscara.
+- **Voz** (`sfx.voice`: 1 hombre, 1,22 mujer; `setGender`): escala los tonos de los sonidos del jugador `death`, `scuffleIn` y `scuffleWin` y el nuevo gruñido de esfuerzo `grunt` (sierra con formantes
+  que baja de tono + soplo de ruido; se oye al empezar el forcejeo, al contraatacar y al morir). Más grave en `male`, algo más agudo en `female`.
 
 ### Sangre en el personaje
 El jugador se va manchando con las bajas **del piso** y la máscara también.
@@ -551,7 +568,7 @@ fuego **sin balas cuenta como puños**, `Game.playerCategory`; la del enemigo es
   La pulsación que llena la barra gana antes de que el empuje la baje.
 - **Fatiga**: `resistencia = min(2,2, 1 + 0,22 × (forcejeos del piso − 1))`, mostrada como `RESISTENCIA X1,7`. `scuffleCount` se reinicia al empezar piso o partida y **se
   conserva con R** (como la sangre). Medido (pulsaciones/s necesarias): 1.º ≈ 5/s, 3.º ≈ 6-7/s, 8.º ≈ 10/s.
-- **Retratos** (`src/portraits.js`; 48×48 px en marcos de 52): el tuyo es `bloodyMaskPortrait(máscara, player.bloodLevel)`: el retrato de frente de la máscara (el de las
+- **Retratos** (`src/portraits.js`; el del jugador a 56×56 en marcos de 60, el del rival a 48×48 centrado; ver también "Personaje femenino"): el tuyo es `bloodyMaskPortrait(máscara, player.bloodLevel)`: el retrato de frente de la máscara (el de las
   tarjetas) a 24×24 con gotas sobre los píxeles opacos en un orden fijo por máscara (semilla), 0/7/16/28/42/60 según el nivel de sangre, con la antigua más oscura, coágulos 2×2,
   regueros que solo bajan por la máscara y brillos húmedos; con `goreEnabled` apagado sale limpia (nivel 0). El del rival es `villainPortrait(kind)`: un rostro 12×12 en penumbra por tipo
   (`grunt`: gorra morada, ojos ámbar, cicatriz y mandíbula; `runner`: capucha rosa, pañuelo cian y rendijas de neón), con marco y `VS` del color del villano, sombra sobre la mitad
@@ -841,7 +858,7 @@ Colores centralizados en `COLORS` (`src/utils.js`) y `PALETTE` (`src/sprites.js`
   `Settings` guarda `{ version: 1, values: {…} }` en `localStorage` clave **`neonrush.settings.v1`** (lectura defensiva
   con `sanitize`: JSON corrupto, tipos o valores fuera de rango → valor por defecto; escritura con try/catch). `set`/`adjust`
   guardan y llaman a `apply`; `applyAll` (al final del constructor de `Game`) aplica lo guardado; `reset` restaura.
-- **Opciones actuales**: AUDIO `musicVolume`, `sfxVolume` (0–100 % de 10 en 10) · JUEGO `strobeEnabled` (LUCES ESTROBOSCÓPICAS del club), `goreEnabled` · TÁCTIL `buttonScale`
+- **Opciones actuales**: AUDIO `musicVolume`, `sfxVolume` (0–100 % de 10 en 10) · JUEGO `playerGender` (PERSONAJE: HOMBRE / MUJER, cosmético), `strobeEnabled` (LUCES ESTROBOSCÓPICAS del club), `goreEnabled` · TÁCTIL `buttonScale`
   (PEQUEÑO 0,85 / NORMAL 1 / GRANDE 1,2), `buttonOpacity` (BAJA 0,5 / MEDIA 0,75 / ALTA 1), `stickFire` (DISPARO CON JOYSTICK: BORDE 0,85 / FÁCIL 0,6 / NO = solo apunta; escribe `fireThreshold`), `autoFire` (DISPARO AUTOMÁTICO), `hapticsEnabled`,
   `aimAssist` (OFF / SUAVE / ALTO; el antiguo sí/no se migra: true → SUAVE, false → OFF). Las táctiles escriben en `touch.setConfig`.
 - **Audio** (`audio.js`): `sfx.setVolumes({ music, sfx })`. Hay un `sfxBus` nuevo entre todos los efectos (y la moto) y el master;

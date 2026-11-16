@@ -12,6 +12,7 @@ import { COLORS, seededRandom, hashString } from './utils.js';
 // --- Sangre sobre la máscara ---------------------------------------------------------------------
 const BLOOD_DROPS = [0, 7, 16, 28, 42, 60]; // gotas por nivel de sangre (0..5)
 const portraitCache = new Map();
+const PAD = 2; // margen (px del retrato) alrededor de la máscara: ahí asoman el pelo y la chaqueta
 const baseCache = new Map();
 const dropsCache = new Map();
 
@@ -40,26 +41,49 @@ function dropOrder(mask) {
   return dropsCache.get(mask.id);
 }
 
-export function bloodyMaskPortrait(mask, level = 0) {
+// Detrás de la máscara (se dibuja ANTES, la máscara lo tapa): en el retrato femenino, el pelo violeta cae por los lados y arriba,
+// una coleta cuelga a la derecha con su goma rosa, y el cuello y los hombros de la bomber (cian, raya rosa, hombros estrechos)
+// asoman bajo la máscara. Todo sobre un lienzo de 28×28 (24 + 2 de margen por lado).
+function drawFemaleBack(ctx) {
+  const R = (x, y, w, h, c) => { ctx.fillStyle = c; ctx.fillRect(x, y, w, h); };
+  const hair = '#7a2f8f', shade = '#4d1a63', light = '#b04ab8', tie = '#ff4fa3';
+  // flequillo / pelo de arriba y de los lados
+  R(5, 0, 18, 4, hair); R(3, 2, 22, 4, hair); R(1, 4, 3, 16, hair); R(24, 4, 3, 14, hair);
+  R(7, 0, 5, 1, light); R(13, 1, 4, 1, light); R(1, 6, 1, 8, shade); R(26, 6, 1, 8, shade);
+  // coleta: sale por la derecha, baja por detrás del hombro y acaba en punta
+  R(24, 10, 4, 2, tie); R(23, 12, 5, 8, hair); R(24, 20, 4, 6, hair); R(25, 26, 2, 2, shade); R(25, 13, 1, 6, light);
+  // cuello
+  R(10, 25, 8, 3, '#f1b48a'); R(10, 27, 8, 1, '#c27a5a');
+  // bomber entallada: hombros estrechos con raya rosa y cuello alto
+  R(2, 26, 8, 2, '#05d9e8'); R(18, 26, 8, 2, '#05d9e8'); R(3, 27, 6, 1, '#037f8c'); R(19, 27, 6, 1, '#037f8c');
+  R(4, 26, 5, 1, '#ff4fa3'); R(19, 26, 5, 1, '#ff4fa3');
+}
+
+// `gender`: 'male' (el retrato de siempre) o 'female' (con pelo, coleta, cuello y chaqueta). La sangre va encima de la
+// máscara igual en los dos.
+export function bloodyMaskPortrait(mask, level = 0, gender = 'male') {
   const lv = Math.max(0, Math.min(5, level | 0));
-  const key = `${mask.id}:${lv}`;
+  const female = gender === 'female';
+  const key = `${mask.id}:${lv}:${female ? 'f' : 'm'}`;
   if (portraitCache.has(key)) return portraitCache.get(key);
   const c = document.createElement('canvas');
-  c.width = c.height = 24;
+  c.width = c.height = 24 + PAD * 2;
   const ctx = c.getContext('2d');
   ctx.imageSmoothingEnabled = false;
-  ctx.drawImage(base24(mask), 0, 0);
+  if (female) drawFemaleBack(ctx);
+  ctx.drawImage(base24(mask), PAD, PAD);
   const n = BLOOD_DROPS[lv];
   if (n > 0) {
     const { px, opaque } = dropOrder(mask);
     for (let i = 0; i < n && i < px.length; i++) {
-      const [x, y] = px[i];
+      const [x0, y0] = px[i];
+      const x = x0 + PAD, y = y0 + PAD;
       const age = i / n; // las primeras gotas son las más viejas
       ctx.fillStyle = age < 0.35 ? COLORS.bloodDark : age < 0.7 ? COLORS.bloodMid : COLORS.blood;
       ctx.fillRect(x, y, 1, 1);
-      if (i % 5 === 0 && x < 23 && y < 23) ctx.fillRect(x, y, 2, 2);       // coágulo
+      if (i % 5 === 0 && x < 23 + PAD && y < 23 + PAD) ctx.fillRect(x, y, 2, 2);       // coágulo
       if (i % 7 === 3) {                                                     // reguero hacia abajo (solo sobre la máscara)
-        for (let d = 1; d <= 3 && opaque.has((y + d) * 24 + x); d++) ctx.fillRect(x, y + d, 1, 1);
+        for (let d = 1; d <= 3 && opaque.has((y0 + d) * 24 + x0); d++) ctx.fillRect(x, y + d, 1, 1);
       }
       if (age > 0.85 && i % 3 === 0) { ctx.fillStyle = COLORS.bloodWet; ctx.fillRect(x, y, 1, 1); } // brillo húmedo
     }

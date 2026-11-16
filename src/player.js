@@ -1,6 +1,6 @@
 import { moveAndSlide, lineOfSight, isSolidAt, castRay } from './map.js';
 import { WEAPON_DEFS, Bullet, Pickup, inMeleeArc, drawWeaponShape } from './weapons.js';
-import { COLORS, TAU } from './utils.js';
+import { COLORS, TAU, angleDiff, clamp } from './utils.js';
 import { drawSprite, sprites, pixelRect, drawMaskHead, maskHead, playerBody, BLOOD_LEVELS, WORLD_PX } from './sprites.js';
 import { DEFAULT_EFFECTS } from './masks.js';
 import { drawText } from './pixelfont.js';
@@ -88,6 +88,9 @@ export class Player {
     this.swingDur = 1;
     this.punchSide = 1;
     this.muzzle = 0;
+    this.gender = 'male'; // 'male' | 'female': SOLO cosmético (sprite, retrato y voz); lo fija Game (ajuste playerGender)
+    this.tailA = 0;       // ángulo de balanceo de la cola de caballo (rad)
+    this.prevAngle = 0;
     this.recoil = 0;      // s restantes del retroceso del arma (ver RECOIL)
     this.recoilMax = 1;
     this.noAmmoFlash = 0;
@@ -163,6 +166,7 @@ export class Player {
       this.angle = Math.atan2(m.y - this.y, m.x - this.x);
     }
 
+    this.updateTail(dt, mx || my);
     this.cooldown -= dt;
     this.swing = Math.max(0, this.swing - dt);
     this.recoil = Math.max(0, this.recoil - dt);
@@ -187,6 +191,16 @@ export class Player {
       if (target) this.startExecution(game, target);
       else if (kickKey) this.kick(game);
     }
+  }
+
+  // Cola de caballo (solo aspecto femenino): se balancea de lado a lado al correr y se queda atrás al girar, y vuelve a
+  // su sitio al pararse. Es solo dibujo: no afecta a la física ni a nada jugable.
+  updateTail(dt, moving) {
+    const turn = angleDiff(this.angle, this.prevAngle);
+    this.prevAngle = this.angle;
+    const t = performance.now() / 1000;
+    const target = clamp(-turn * 5, -0.8, 0.8) + (moving ? Math.sin(t * 18) * 0.3 : Math.sin(t * 2) * 0.04);
+    this.tailA += (target - this.tailA) * Math.min(1, dt * 14);
   }
 
   // Mientras pisa sangre las suelas se mantienen empapadas (y no se imprime nada, no se vería);
@@ -480,8 +494,11 @@ export class Player {
     // Cuerpo (con la ropa y la sangre que toquen) y encima la cabeza de la máscara, ya en el eje
     // de apuntado. En la ejecución el cuerpo se echa atrás al cargar y hacia delante al golpear.
     ctx.translate(pose ? pose.lean : bodyLean, 0);
-    drawSprite(ctx, playerBody(this.maskId, this.bloodLevel), 0, 0);
-    drawMaskHead(ctx, this.masked ? this.maskId : 'bare', this.bloodLevel);
+    const female = this.gender === 'female';
+    drawSprite(ctx, playerBody(this.maskId, this.bloodLevel, this.gender), 0, 0);
+    // Cola de caballo: detrás de la cabeza (la base queda bajo ella) y rotada alrededor de su base.
+    if (female) drawSprite(ctx, 'ponytail', -3, 0, this.tailA, { ox: 10, oy: 2.5 });
+    drawMaskHead(ctx, this.masked ? this.maskId : (female ? 'bare_f' : 'bare'), this.bloodLevel);
     ctx.translate(pose ? -pose.lean : -bodyLean, 0);
     if (pose) {
       // Levantada, la herramienta está más cerca de la cámara: va POR ENCIMA del jugador.

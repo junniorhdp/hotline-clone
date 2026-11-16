@@ -102,7 +102,7 @@ const SOUNDS = {
     s.noise({ dur: 0.15, gain: 0.2 * v, filter: 'bandpass', freq: 800, freqTo: 300, q: 1.5 });
   },
   death(s, v) {
-    s.tone({ type: 'sawtooth', from: 300, to: 50, dur: 0.7, gain: 0.25 * v });
+    s.tone({ type: 'sawtooth', from: 300 * s.voice, to: 50 * s.voice, dur: 0.7, gain: 0.25 * v });
     s.noise({ dur: 0.4, gain: 0.3 * v, filter: 'lowpass', freq: 600 });
   },
   // Blip de combo: sube de tono con el multiplicador.
@@ -153,14 +153,25 @@ const SOUNDS = {
     s.noise({ dur: 0.5, gain: 0.22 * v, filter: 'lowpass', freq: 4200, freqTo: 120, q: 0.6 });
     s.noise({ dur: 0.07, gain: 0.14 * v, filter: 'highpass', freq: 1800, delay: 0.5 });
   },
+  // Gruñido de esfuerzo del jugador (inicio del forcejeo, contraataque, golpe recibido): una sierra que baja de tono
+  // pasada por un filtro de formantes + un soplo de ruido. `s.voice` lo sube un poco si el personaje es femenino
+  // (≈ +22 %, y el formante también), de modo que se distingue sin cambiar nada jugable.
+  grunt(s, v) {
+    const f = 118 * s.voice;
+    s.tone({ type: 'sawtooth', from: f * 1.15, to: f * 0.8, dur: 0.22, gain: 0.07 * v });
+    s.tone({ type: 'triangle', from: f * 2.3, to: f * 1.6, dur: 0.18, gain: 0.04 * v });
+    s.noise({ dur: 0.16, gain: 0.09 * v, filter: 'bandpass', freq: 900 * s.voice, freqTo: 600 * s.voice, q: 3 });
+  },
   // Forcejeo: el golpe seco que lo inicia (frenazo grave + barrido de aire) y el fogonazo del contraataque.
   scuffleIn(s, v) {
-    s.tone({ type: 'sine', from: 220, to: 36, dur: 0.45, gain: 0.7 * v });
-    s.tone({ type: 'sawtooth', from: 440, to: 55, dur: 0.4, gain: 0.12 * v });
+    s.tone({ type: 'sine', from: 220 * s.voice, to: 36, dur: 0.45, gain: 0.7 * v });
+    s.tone({ type: 'sawtooth', from: 440 * s.voice, to: 55 * s.voice, dur: 0.4, gain: 0.12 * v });
+    s.play('grunt', 0.8);
     s.noise({ dur: 0.35, gain: 0.25 * v, filter: 'lowpass', freq: 5200, freqTo: 200, q: 0.8 });
   },
   scuffleWin(s, v) {
-    s.tone({ type: 'sine', from: 140, to: 40, dur: 0.3, gain: 1 * v });
+    s.tone({ type: 'sine', from: 140 * s.voice, to: 40, dur: 0.3, gain: 1 * v });
+    s.play('grunt', 1);
     s.noise({ dur: 0.12, gain: 0.5 * v, filter: 'bandpass', freq: 1800, freqTo: 600, q: 0.6 });
     [523.25, 783.99, 1046.5].forEach((f, i) => s.tone({ type: 'square', from: f, dur: 0.16, gain: 0.1 * v, delay: 0.1 + i * 0.07 }));
   },
@@ -179,6 +190,7 @@ export class Sfx {
     this.slow = 0;          // 0..1: cuánto ha bajado de tono y de velocidad la música (forcejeo)
     this.slowTarget = 0;
     this.lastTick = 0;
+    this.voice = 1;         // tono de la voz del jugador: 1 = hombre (más grave), ~1,22 = mujer (algo más aguda); ver setGender
     this.musicVol = 1;      // 0..1, ajuste del jugador (settings.js): música y ambiente
     this.sfxVol = 1;        // 0..1: todos los efectos, incluida la moto
     this.musicMode = 'action';  // 'action' | 'empty' | 'menu'

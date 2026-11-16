@@ -18,6 +18,8 @@ const PALETTE = {
   w: '#fff6d6', o: '#ffd166',               // fogonazo / latón
   z: '#c9c3e6', Z: '#7a7499',               // metal (tubo)
   b: '#ffbe0b', B: '#b38600',               // cuerpo genérico (plantilla tumbado)
+  p: '#7a2f8f', P: '#4d1a63', t: '#ff4fa3',   // pelo violeta (cola de caballo) y goma
+  q: '#ff4fa3',                              // raya rosa de la bomber femenina
   r: COLORS.blood,                           // huella de sangre (footMid y footDark la recolorean)
 };
 
@@ -44,7 +46,38 @@ const PLAYER_BODY = [
   '................',
 ];
 
+// Cuerpo FEMENINO (misma plantilla y mismas letras que PLAYER_BODY): hombros dos filas más estrechos (una por lado), bomber
+// entallada con rayas rosas en las mangas (`q`) y en el dobladillo de la espalda (`q` en la columna 4). La cola de caballo no va
+// aquí: es un sprite aparte (`ponytail`) que Player.draw balancea al correr y al girar. Solo cambia el aspecto: la hitbox,
+// la velocidad y el daño son idénticos.
+const PLAYER_BODY_F = [
+  '................',
+  '................',
+  '................',
+  '.....kkkkkkkk...',
+  '....kLjjqqjxk...',
+  '...kLjjkkkkxk...',
+  '...kqHkkkkkkk...',
+  '...kqHkkkkkkk...',
+  '...kqHkkkkkkk...',
+  '...kqHkkkkkkk...',
+  '...kjjjkkkkxk...',
+  '....kJjjqqjxk...',
+  '.....kkkkkkkk...',
+  '................',
+  '................',
+  '................',
+];
+
 const DEFS = {
+  // Cola de caballo (de lado, la base a la derecha, pegada a la nuca; `t` = goma del pelo).
+  ponytail: [
+    '..kkkkkk..',
+    '.kpppPPtk.',
+    'kppppPPPtk',
+    '.kpppPPtk.',
+    '..kkkkkk..',
+  ],
   // Patrulla: camisa amarilla y gorra con visera hacia delante.
   enemy: [
     '................',
@@ -229,6 +262,7 @@ const MASK_SKINS = {
 // (capucha h/H) y los puños (x), con el color de la máscara. NEÓN es el atuendo clásico, todo cian.
 const HOOD = { h: '#5a5a72', H: '#3a3a4e' };
 const OUTFITS = {
+  bare_f:   { h: '#05d9e8', H: '#05d9e8', x: '#037f8c' }, // (para que exista body_bare_f; no se usa)
   bare:     { h: '#05d9e8', H: '#05d9e8', x: '#037f8c' }, // (solo para que exista body_bare; no se usa)
   neon:     { h: '#05d9e8', H: '#05d9e8', x: '#037f8c' },
   oso:      { ...HOOD, x: '#a0693f' },
@@ -236,6 +270,10 @@ const OUTFITS = {
   tiburon:  { ...HOOD, x: '#9fb0d6' },
   buho:     { ...HOOD, x: '#9b74c4' },
 };
+
+// Sin máscara y femenina: la misma cabeza que `bare` con el pelo violeta.
+MASK_HEADS.bare_f = MASK_HEADS.bare;
+MASK_SKINS.bare_f = { ...MASK_SKINS.bare, R: '#b04ab8', M: '#7a2f8f', N: '#4d1a63' };
 
 // La cabeza va delante del centro del cuerpo (como se ve desde arriba) y el morro sobresale un
 // par de píxeles. Con 6 filas × 8 columnas a WORLD_PX cubre las columnas 6..13 y las filas 5..10
@@ -385,8 +423,8 @@ function withBlood(base, pixels) {
 
 // Nombre del bitmap del cuerpo / la cabeza con el nivel de sangre dado (0 = limpio).
 const bloodSuffix = (level) => (level > 0 ? `_b${Math.min(BLOOD_LEVELS, level | 0)}` : '');
-export function playerBody(maskId, level = 0) {
-  return `body_${MASK_HEADS[maskId] ? maskId : 'neon'}${bloodSuffix(level)}`;
+export function playerBody(maskId, level = 0, gender = 'male') {
+  return `body_${gender === 'female' ? 'f_' : ''}${MASK_HEADS[maskId] ? maskId : 'neon'}${bloodSuffix(level)}`;
 }
 
 // Variantes recoloreadas de la plantilla "tumbado".
@@ -439,9 +477,14 @@ export function sprites() {
       // Todas las variantes con sangre se hornean ahora, una vez: dibujar no cuesta más por ello.
       const headBlood = bloodTimeline(planBlood(rows, HEAD_STAINABLE, `head:${id}`, HEAD_BLOOD.k), HEAD_BLOOD);
       const bodyBlood = bloodTimeline(planBlood(PLAYER_BODY, BODY_STAINABLE, `body:${id}`, BODY_BLOOD.k), BODY_BLOOD);
+      // Cuerpo femenino (mismo reparto de sangre por nivel, sobre su propia plantilla).
+      const colorsF = { ...OUTFITS[id], q: '#ff4fa3' };
+      cache[`body_f_${id}`] = buildSprite(PLAYER_BODY_F, colorsF);
+      const bodyBloodF = bloodTimeline(planBlood(PLAYER_BODY_F, BODY_STAINABLE, `bodyf:${id}`, BODY_BLOOD.k), BODY_BLOOD);
       for (let level = 1; level <= BLOOD_LEVELS; level++) {
         cache[`head_${id}_b${level}`] = withBlood(cache[`head_${id}`], bloodAtLevel(headBlood, level));
         cache[`body_${id}_b${level}`] = withBlood(cache[`body_${id}`], bloodAtLevel(bodyBlood, level));
+        cache[`body_f_${id}_b${level}`] = withBlood(cache[`body_f_${id}`], bloodAtLevel(bodyBloodF, level));
       }
     }
   }
