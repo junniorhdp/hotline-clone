@@ -183,6 +183,7 @@ export class Game {
     this.scuffleCount = 0; // forcejeos de este piso: cada uno endurece al enemigo (se conserva con R)
     this.scuffleGrace = 0; // s de inmunidad al cuerpo a cuerpo tras un forcejeo
     this.scuffleI = 0;     // 0..1: intensidad del filtro "VS" (suaviza la entrada y la salida)
+    this.floatingTexts = []; // textos tácticos que suben y se desvanecen: { x, y, text, color, t, max } (ver addFloat)
     this.goalAge = 0;      // s desde que el cartel de piso completado se apagó (anima el objetivo)
     this.runId = newRunId();
     this.showRecords = false;
@@ -849,6 +850,7 @@ export class Game {
     this.cine = null;
     this.callout = null;
     this.goalAge = 0;
+    this.floatingTexts.length = 0;
     this.scuffle = null;      // si se reinicia en pleno forcejeo: cámara y audio vuelven a la normalidad
     this.scuffleGrace = 0;
     this.camera.mul = this.camera.mulTarget = 1;
@@ -972,6 +974,8 @@ export class Game {
     this.goalAge = this.state === 'cleared' && !this.callout ? this.goalAge + dt : 0;
     if (this.state === 'playing' && this.inside) this.time += dt; // el reloj corre dentro del edificio
     this.score.update(dt, this.state === 'playing');
+    for (const f of this.floatingTexts) f.t -= dt;
+    this.floatingTexts = this.floatingTexts.filter((f) => f.t > 0);
     if (this.player.alive) this.player.update(dt, this);
     for (const e of this.enemies) if (e.alive) e.update(dt, this);
 
@@ -1093,6 +1097,10 @@ export class Game {
         p.y = b.y;
         p.angle = 0;
         if (Math.random() < 0.6) this.particles.dust(b.x - 24, b.y + rand(-4, 4), 1);
+        // Escape: humo gris que se queda atrás (más denso al arrancar) y chispas de neón cian/magenta.
+        const smoke = t2 < 0.35 ? 3 : 1;
+        for (let i = 0; i < smoke; i++) this.particles.dust(b.x - 20 - rand(0, 6), b.y + 3 + rand(-2, 2), 1);
+        if (Math.random() < 0.45) this.particles.neon(b.x - 22, b.y + 3, Math.PI + rand(-0.3, 0.3), 1, 0.25);
         if (t2 >= LEAVE_RIDE) { this.finishLeaving(); return; }
       }
     }
@@ -1161,6 +1169,7 @@ export class Game {
     this.camera.addShake(10);
     this.fx.kick(0.6);
     this.showCallout('¡DISPARO DE PÁNICO!', COLORS.enemy, 0.8);
+    this.addFloat(e.x, e.y - 20, '¡QUEMARROPA!', COLORS.enemy, 1, 1.1);
     this.touch.haptic([20, 20, 30]);
   }
 
@@ -1626,7 +1635,30 @@ export class Game {
 
   addScore(cause, e) {
     this.score.register(cause, e.x, e.y - 14);
-    if (this.score.combo > 1) this.sfx.play('combo', 1, this.score.combo);
+    if (this.score.combo > 1) {
+      this.sfx.play('combo', 1, this.score.combo);
+      // El multiplicador activo sube junto al enemigo: más caliente cuanto más alto.
+      const c = this.score.combo;
+      this.addFloat(e.x + 12, e.y - 4, `x${c}`, c >= 5 ? COLORS.blood : c >= 3 ? COLORS.enemy : COLORS.player, c >= 4 ? 2 : 1);
+    }
+  }
+
+  // Texto táctico flotante en el mundo (¡QUEMARROPA!, ¡DESARME!, x3…): sube unos 24 u, entra con un "pop" a doble tamaño y se
+  // desvanece al final. Solo dibujo (drawFloatingTexts); no afecta a la jugabilidad.
+  addFloat(x, y, text, color = COLORS.text, scale = 1, life = 0.9) {
+    if (this.floatingTexts.length > 14) this.floatingTexts.shift();
+    this.floatingTexts.push({ x, y, text, color, scale, t: life, max: life });
+  }
+
+  drawFloatingTexts(ctx) {
+    for (const f of this.floatingTexts) {
+      const age = f.max - f.t;
+      const s = this.camera.worldToScreen(f.x, f.y - age * 26);
+      ctx.globalAlpha = Math.min(1, f.t * 4);
+      const sc = age < 0.1 ? f.scale + 1 : f.scale;
+      drawText(ctx, f.text, s.x, s.y, { color: f.color, scale: sc, align: 'center', shadow: COLORS.background });
+    }
+    ctx.globalAlpha = 1;
   }
 
   // Golpe intermedio de una ejecución (cuchillo, tubo, ráfaga): hiere sin matar. Salpica un poco, hace
@@ -1648,9 +1680,11 @@ export class Game {
   knockDown(e, angle, cause = 'fists') {
     if (!e.standing) return;
     if (e.guardKnock && !e.guardKnock(cause, angle, this)) return;
+    const armed = !!(e.weapon || e.meleeWeapon);
     e.knockDown(angle, this.map);
     this.addScore(cause, e);
     this.dropWeapon(e);
+    if (cause === 'thrown') this.addFloat(e.x, e.y - 18, armed ? '¡DESARME!' : '¡GOLPE!', COLORS.player, 1, 1.0);
     this.particles.dust(e.x, e.y, 6);
     this.camera.addShake(3);
     this.fx.kick(0.2);
@@ -1946,6 +1980,25 @@ export class Game {
     const b = this.bike;
     if (!b) return;
     drawSprite(ctx, 'bikeShadow', b.x + 3, b.y + 3, 0, { alpha: 0.5 });
+    // Fuga en moto: el faro proyecta un cono de luz semitransparente hacia delante (se abre y se apaga con la distancia),
+    // en bloques de píxeles y sumado, y su luz crece con la velocidad.
+    if (this.state === 'leaving' && this.cine && this.cine.t >= LEAVE_BOARD) {
+      const t2 = this.cine.t - LEAVE_BOARD, hx = b.x + 16, hy = b.y + 1;
+      const power = Math.min(1, t2 / 0.5);
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.fillStyle = '#fff2b0';
+      const N = 22;
+      for (let i = 0; i < N; i++) {
+        const k = i / N;
+        ctx.globalAlpha = 0.26 * power * (1 - k) * (1 - k * 0.4);
+        const half = 2 + i * 1.5;
+        pixelRect(ctx, hx + i * 7, hy - half, 4, Math.max(1, Math.round((2 * half) / WORLD_PX)));
+      }
+      ctx.globalAlpha = 0.6 * power;
+      pixelDisc(ctx, hx + 2, hy, 3, WORLD_PX);
+      ctx.restore();
+    }
     drawSprite(ctx, 'bike', b.x, b.y, 0);
   }
 
@@ -2479,6 +2532,7 @@ export class Game {
       return;
     }
     this.drawPopups(ctx);
+    this.drawFloatingTexts(ctx);
     this.drawExecutePrompt(ctx);
     const boss = this.enemies.find((e) => e.kind === 'boss' && e.alive && e.awake);
     if (boss && this.state !== 'cleared') drawBossBar(ctx, boss, w, 32 + this.safe.t);

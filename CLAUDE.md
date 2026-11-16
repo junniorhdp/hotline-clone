@@ -467,6 +467,8 @@ cambia de régimen todo el rato y se tiene que poder cortar limpia. Es Web Audio
   de marcha; 3) al salir de la pantalla el volumen cae, el filtro se cierra y el tono baja ~260 cents
   (Doppler de alejamiento). El `tail` (0,3 s) cubre el fundido (`FADE_TIME` 0,25 s): la voz sigue
   sonando al llegar a resultados, ya en −80 dBFS, y se libera sola; no se corta de golpe.
+- **Faro y humo** (solo dibujo): en la **fuga** (`state 'leaving'`, tras subirse) `drawBike` proyecta desde el faro un **cono de luz** semitransparente (22 bloques sumados que se abren y se apagan con la distancia; su luz crece
+  en los primeros 0,5 s) y, mientras acelera, el escape deja **humo gris** (más denso al arrancar, `particles.dust`) y chispas de **neón** cian/magenta (`particles.neon`) hacia atrás.
 - **Cortes** (`stopMoto(fade)`: rampa exponencial a 0,0001 y para fuentes y sonidos puntuales ya
   programados): `reset()` (R, piso nuevo, nueva partida: 0,05 s), saltar la llegada (0,12 s) o la fuga
   (0,2 s), `toggleMute` (0,03 s) y cualquier nueva `playMoto…` (0,04 s). En silencio o con el contexto
@@ -483,6 +485,13 @@ cambia de régimen todo el rato y se tiene que poder cortar limpia. Es Web Audio
 - Daño: todo es de un golpe, con una excepción: el choque cuerpo a cuerpo de frente se resuelve con la matriz de combate (forcejeo, disparo de pánico o muerte según las armas; ver "Matriz de combate"); por la espalda, de bala o del jefe sigue matando al instante. Lo que cambia es el efecto: **matar** o **derribar** (estado `down`
   ~3,2 s, luego se levanta; se remata con una **ejecución**, ver "Ejecuciones").
   Cualquier arma **lanzada** (clic derecho) derriba si va a más de 160 px/s.
+
+### Game feel de arcade (solo dibujo y partículas)
+- **Disparo**: además del sprite del fogonazo (`muzzle`) y del **casquillo** de latón que sale despedido hacia un lado y queda en el suelo (`particles.shell`, ya existían), la boca del arma lleva un **halo de luz aditivo**
+  (`Player.drawMuzzleGlow`: tres discos de píxeles ámbar/crema/blanco que se apagan en 0,06 s) tanto en el disparo normal como en las ejecuciones con arma de fuego.
+- **Textos flotantes** (`game.floatingTexts`, `addFloat`/`drawFloatingTexts`; se limpian en `reset`, tope 15): suben ~26 u, entran con un "pop" a doble tamaño y se desvanecen al final. `¡QUEMARROPA!` en el disparo defensivo,
+  `¡DESARME!` (o `¡GOLPE!` si iba sin arma) al derribar con un arma lanzada (`cause 'thrown'`) y el **multiplicador** del combo (`x2`, `x3`…; cian, ámbar desde x3, rojo desde x5, a doble tamaño desde x4) en cada baja encadenada
+  (`addScore`). Conviven con los popups de puntos (`score.popups`).
 
 ### Ritmo: el jugador y la IA
 Todo está ajustado para que el combate sea frenético (entre paréntesis, el valor anterior).

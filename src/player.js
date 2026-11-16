@@ -1,7 +1,7 @@
 import { moveAndSlide, lineOfSight, isSolidAt, castRay } from './map.js';
 import { WEAPON_DEFS, Bullet, Pickup, inMeleeArc, drawWeaponShape } from './weapons.js';
 import { COLORS, TAU, angleDiff, clamp } from './utils.js';
-import { drawSprite, sprites, pixelRect, drawMaskHead, maskHead, playerBody, BLOOD_LEVELS, WORLD_PX } from './sprites.js';
+import { drawSprite, sprites, pixelRect, pixelDisc, drawMaskHead, maskHead, playerBody, BLOOD_LEVELS, WORLD_PX } from './sprites.js';
 import { DEFAULT_EFFECTS } from './masks.js';
 import { drawText } from './pixelfont.js';
 
@@ -191,6 +191,25 @@ export class Player {
       if (target) this.startExecution(game, target);
       else if (kickKey) this.kick(game);
     }
+  }
+
+  // Destello del disparo: además del sprite del fogonazo, un halo de luz aditivo (más pequeño al apagarse) que ilumina
+  // un instante el suelo y al propio jugador. (x, y) = boca del arma en coordenadas locales (ctx ya girado).
+  drawMuzzleGlow(ctx, x, y) {
+    const k = clamp(this.muzzle / 0.06, 0, 1);
+    if (k <= 0) return;
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.globalAlpha = 0.18 * k;
+    ctx.fillStyle = '#ffbe0b';
+    pixelDisc(ctx, x, y, 9, WORLD_PX);
+    ctx.globalAlpha = 0.4 * k;
+    ctx.fillStyle = '#ffe08a';
+    pixelDisc(ctx, x, y, 5, WORLD_PX);
+    ctx.globalAlpha = 0.8 * k;
+    ctx.fillStyle = '#ffffff';
+    pixelDisc(ctx, x, y, 2, WORLD_PX);
+    ctx.restore();
   }
 
   // Cola de caballo (solo aspecto femenino): se balancea de lado a lado al correr y se queda atrás al girar, y vuelve a
@@ -479,7 +498,10 @@ export class Player {
       ctx.rotate(swingOffset);
       drawSprite(ctx, 'fist', wx, wy);
       drawWeaponShape(ctx, type, wx, wy, 0, def.maxAmmo > 0 && this.weapon.ammo <= 0);
-      if (this.muzzle > 0) drawSprite(ctx, 'muzzle', wx + sprites()[type].width * 2, wy);
+      if (this.muzzle > 0) {
+        drawSprite(ctx, 'muzzle', wx + sprites()[type].width * 2, wy);
+        this.drawMuzzleGlow(ctx, wx + sprites()[type].width * 2 + 4, wy);
+      }
       ctx.restore();
     } else {
       // Puños: el que golpea se adelanta.
@@ -569,6 +591,7 @@ export class Player {
     drawWeaponShape(ctx, this.weapon.type, pose.x, pose.y, pose.angle, false, pose.scale);
     if ((pose.style === 'shoot' || pose.style === 'blast' || pose.style === 'burst') && this.muzzle > 0) {
       drawSprite(ctx, 'muzzle', pose.x + sprites()[this.weapon.type].width * 2, pose.y);
+      this.drawMuzzleGlow(ctx, pose.x + sprites()[this.weapon.type].width * 2 + 4, pose.y);
     }
   }
 
