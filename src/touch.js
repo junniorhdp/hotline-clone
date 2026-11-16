@@ -11,12 +11,16 @@ import { lineOfSight } from './map.js';
 //                         (más allá de `fireThreshold`) ataca/dispara a la cadencia del arma
 //                         (input.aimFiring). Un toque rápido que no llega a disparar = un ataque.
 //                         Con `aimAssist` la mira se ajusta un poco hacia el enemigo cercano.
-//   ATACAR              → botón inteligente (`game.touchAction()`, la etiqueta cambia): tocar = un ataque
-//                         (input.tapAttack); mantener = input.attackHeld. Con un derribado a tiro REMATA
-//                         (el ataque ya ejecuta), con una puerta delante la PATEA (con armas de fuego
-//                         envía E en vez de disparar) y, con el edificio limpio junto a la moto, se sube
-//                         y se va (MOTO). El toque rápido del joystick derecho hace lo mismo.
-//   LANZAR              → clic derecho (recoger / lanzar), justo encima de ATACAR
+// Botones de la derecha, de abajo a arriba, sin texto (iconos de píxeles, ver ICONS):
+//   ATACAR (retícula)   → botón inteligente (`game.touchAction()`): tocar = un ataque (input.tapAttack);
+//                         mantener = input.attackHeld. Con un derribado a tiro REMATA (el ataque ya
+//                         ejecuta), con una puerta delante la PATEA (con armas de fuego envía E en vez
+//                         de disparar) y, con el edificio limpio junto a la moto, se sube y se va. El
+//                         toque rápido del joystick derecho hace lo mismo.
+//   LANZAR (arma en vuelo) → clic derecho (recoger / lanzar)
+//   PATEAR (bota)       → la tecla E según el contexto (`contextAction`): remata a un derribado (bota
+//                         parpadeando rojo/blanco), patea la puerta de enfrente o, con el edificio limpio
+//                         junto a la moto, se sube y se va (el icono pasa a doble chevron cian).
 //   REINICIAR           → tecla R
 // Fuera de la partida (menús, máscaras, resultados…) un toque equivale a un clic en ese punto.
 // Los tamaños se definen en píxeles CSS (tamaño real del dedo) y se pasan a píxeles internos.
@@ -69,7 +73,70 @@ const ASSIST_RANGE = 360;      // u del mundo: hasta dónde engancha la asistenc
 const MARGIN = 6;
 const GAMEPLAY = new Set(['playing', 'cleared']);
 
+const ICON_COLOR = '#ff2e55'; // rojo neón (el blanco va fijo en las 'o')
 const inside = (r, p) => p.x >= r.x && p.x < r.x + r.w && p.y >= r.y && p.y < r.y + r.h;
+
+// Iconos de los botones de la derecha: cuadrículas generadas por código ('#' = color del botón,
+// 'o' = blanco). Se dibujan a escala entera y en posiciones enteras, así salen nítidos en cualquier pantalla.
+function makeIcon(n, plot) {
+  const g = Array.from({ length: n }, () => Array(n).fill('.'));
+  plot((x, y, c = '#') => { if (x >= 0 && y >= 0 && x < n && y < n) g[y][x] = c; });
+  return g.map((r) => r.join(''));
+}
+export const ICONS = {
+  // Retícula: anillo con cuatro marcas y punto central.
+  attack: [
+    '.....#.....',
+    '.....#.....',
+    '...#####...',
+    '..#.....#..',
+    '..#.....#..',
+    '###..o..###',
+    '..#.....#..',
+    '..#.....#..',
+    '...#####...',
+    '.....#.....',
+    '.....#.....',
+  ],
+  // Arma en vuelo: hoja en diagonal con la punta clara y estelas de velocidad.
+  throw: makeIcon(11, (p) => {
+    for (let i = 0; i <= 7; i++) { p(10 - i, i); p(9 - i, i); p(8 - i, i + 1); }
+    p(10, 0, 'o'); p(9, 0, 'o'); p(10, 1, 'o');
+    p(2, 8); p(1, 9); p(2, 9); p(3, 8);
+    for (const [x, y] of [[3, 2], [4, 2], [0, 5], [1, 5], [2, 5], [0, 8]]) p(x, y, 'o');
+  }),
+  // Bota de perfil con la suela clara y dos rayas de impulso.
+  kick: [
+    '...####....',
+    '...####....',
+    '...####....',
+    'oo.####....',
+    'oo.#####...',
+    '...######..',
+    '...#######.',
+    'oo.########',
+    '..#########',
+    '..ooooooooo',
+    '...........',
+  ],
+  // Doble chevron: interactuar / subir a la moto.
+  mount: makeIcon(11, (p) => {
+    for (let i = 0; i < 5; i++) for (const o of [0, 5]) { p(o + i, 1 + i); p(o + i, 9 - i); p(o + i + 1, 1 + i); p(o + i + 1, 9 - i); }
+  }),
+};
+
+function drawIcon(ctx, rows, cx, cy, k, color) {
+  const n = rows.length;
+  const x0 = Math.round(cx - (n * k) / 2), y0 = Math.round(cy - (n * k) / 2);
+  for (let y = 0; y < n; y++) {
+    for (let x = 0; x < rows[y].length; x++) {
+      const c = rows[y][x];
+      if (c === '.') continue;
+      ctx.fillStyle = c === 'o' ? '#ffffff' : color;
+      ctx.fillRect(x0 + x * k, y0 + y * k, k, k);
+    }
+  }
+}
 
 // Botón táctil pixel art: fondo oscuro, borde de 1 px (rosa al pulsarlo) y texto centrado.
 // `press` (0..1) es el pulso tras tocarlo: crece hasta 2 px y se ilumina.
@@ -85,8 +152,14 @@ export function drawTouchButton(ctx, b, lit, alpha = 0.55, press = 0) {
   ctx.fillRect(x, y, 1, h);
   ctx.fillRect(x + w - 1, y, 1, h);
   ctx.globalAlpha = lit ? 1 : Math.min(1, alpha + 0.25);
-  drawText(ctx, b.label, x + w / 2, y + Math.round((h - CELL_H) / 2) - 1,
-    { color: lit ? COLORS.text : b.textColor || '#c9bce6', align: 'center' });
+  if (b.icon) {
+    // Icono a escala entera: ocupa ~60 % del lado menor del botón.
+    const k = Math.max(1, Math.floor((Math.min(w, h) * 0.6) / b.icon.length));
+    drawIcon(ctx, b.icon, x + w / 2, y + h / 2, k, lit ? '#ffffff' : b.iconColor || ICON_COLOR);
+  } else {
+    drawText(ctx, b.label, x + w / 2, y + Math.round((h - CELL_H) / 2) - 1,
+      { color: lit ? COLORS.text : b.textColor || '#c9bce6', align: 'center' });
+  }
   ctx.globalAlpha = 1;
 }
 
@@ -128,19 +201,18 @@ export class TouchControls {
     const left = MARGIN + s.l, right = w - MARGIN - s.r, bottom = h - MARGIN - s.b;
     const bh = Math.max(16, Math.round(this.px(BUTTON_CSS_HEIGHT * cfg.buttonScale)));
     const rh = Math.max(14, Math.round(bh * 0.75));
-    // ATACAR es el botón principal: más grande y en la esquina, donde cae el pulgar. Su ancho es fijo
-    // (cabe la etiqueta más larga) para que no se mueva al cambiar de ATACAR a REMATAR, PATEAR o MOTO.
-    const ah = Math.round(bh * 1.3);
-    const aw = Math.max(Math.round(ah * 1.6), measureText('REMATAR') + 12);
-    const bw = Math.max(Math.round(bh * 1.8), measureText('LANZAR') + 12);
-    const attack = { id: 'attack', label: this.action.label, x: right - aw, y: bottom - ah, w: aw, h: ah, accent: COLORS.wall };
-    // LANZAR justo encima de ATACAR, alineado a su borde derecho (el pulgar lo alcanza sin soltar la esquina).
-    const throwB = { id: 'throw', label: 'LANZAR', x: right - bw, y: attack.y - 6 - bh, w: bw, h: bh };
+    // De abajo a arriba, alineados al borde derecho: ATACAR (principal, grande, en la esquina), LANZAR y
+    // PATEAR/INTERACTUAR. Sin texto: los iconos los distinguen (ver ICONS). Son casi cuadrados.
+    const ah = Math.round(bh * 1.3), aw = Math.round(ah * 1.25);
+    const bw = Math.round(bh * 1.25);
+    const attack = { id: 'attack', icon: ICONS.attack, x: right - aw, y: bottom - ah, w: aw, h: ah, accent: COLORS.enemyBullet };
+    const throwB = { id: 'throw', icon: ICONS.throw, x: right - bw, y: attack.y - 6 - bh, w: bw, h: bh };
+    const actB = { id: 'act', icon: this.action.id === 'mount' ? ICONS.mount : ICONS.kick, x: right - bw, y: throwB.y - 6 - bh, w: bw, h: bh };
     return {
       left, right, bottom,
       stickR: Math.max(16, Math.round(this.px(cfg.joystickRadius))),
       buttons: [
-        attack, throwB,
+        attack, throwB, actB,
         // Debajo de la miniatura de la máscara del HUD.
         { id: 'retry', label: 'REINICIAR', x: left, y: 56 + s.t, w: measureText('REINICIAR') + 12, h: rh },
       ],
@@ -169,7 +241,18 @@ export class TouchControls {
     // Si el toque patea o sube a la moto no cuenta como ATACAR mantenido (si no, dispararía a la vez).
     if (id === 'attack' && this.smartAttack()) this.roles.set(touchId, 'button:used');
     if (id === 'throw') input.mousePressed.right = true;
+    if (id === 'act') this.contextAction();
     if (id === 'retry') input.pressed.add('KeyR');
+  }
+
+  // Botón superior (PATEAR / REMATAR / INTERACTUAR): la tecla E según el contexto. Con un derribado a
+  // tiro lo remata, con el edificio limpio junto a la moto se sube y se va; si no, patea la puerta.
+  contextAction() {
+    const g = this.game, a = g.touchAction();
+    if (a.id === 'mount') { g.startLeaving(); return; }
+    if (a.id === 'execute') this.haptic(28);
+    g.input.pressed.add('KeyE');
+    this.actBuffer = ACT_BUFFER; // si el arma sigue en cadencia, se reintenta en cuanto acabe
   }
 
   // Ataque unificado (botón ATACAR y toque rápido del joystick derecho): según el contexto sube a la
@@ -363,26 +446,17 @@ export class TouchControls {
       g.input.aimFiring ? COLORS.blood : COLORS.wall, g.input.aimFiring, this.config.fireThreshold);
 
     const act = this.action;
+    const blink = Math.floor(now / 110) % 2;
     for (const b of L.buttons) {
       const press = (this.flash[b.id] || 0) / PRESS_FLASH;
       const lit = press > 0 || (b.id === 'attack' && g.input.attackHeld);
       let alpha = b.id === 'attack' ? 0.7 : 0.55;
-      if (b.id === 'attack') {
-        // Contexto: REMATAR parpadea en rojo/blanco neón, MOTO en cian, PATEAR en rosa; ATACAR, el de siempre.
-        if (act.id === 'execute') {
-          const blink = Math.floor(now / 110) % 2;
-          b.accent = blink ? COLORS.text : COLORS.enemyBullet;
-          b.textColor = blink ? COLORS.enemyBullet : COLORS.text;
-          alpha = 0.95;
-        } else if (act.id === 'mount') {
-          b.accent = COLORS.player;
-          b.textColor = COLORS.player;
-          alpha = 0.9;
-        } else {
-          b.accent = COLORS.wall;
-          b.textColor = act.id === 'kick' && act.ready ? COLORS.text : undefined;
-          alpha = act.id === 'kick' && act.ready ? 0.9 : 0.7;
-        }
+      if (b.id === 'act') {
+        // Botón superior: REMATAR parpadea rojo/blanco, MOTO en cian, PATEAR enciende el rosa si hay puerta.
+        b.iconColor = act.id === 'mount' ? COLORS.player : ICON_COLOR;
+        b.accent = act.id === 'execute' ? (blink ? '#ffffff' : ICON_COLOR) : act.id === 'mount' ? COLORS.player
+          : act.ready ? COLORS.wall : undefined;
+        alpha = act.ready ? 0.9 : 0.4;
       }
       drawTouchButton(ctx, b, lit, alpha * op, press);
     }

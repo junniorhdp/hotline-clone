@@ -651,9 +651,16 @@ Colores centralizados en `COLORS` (`src/utils.js`) y `PALETTE` (`src/sprites.js`
   - **Aim-assist** (`assistAngle`): con un enemigo vivo (no derribado) a la vista y a ≤ 360 u dentro de un cono
     (7°..28° según `aimAssist`, algo más estrecho de lejos), el ángulo se inclina hacia él (tirón máx. 0,7·fuerza, mayor
     cuanto más centrado). Siempre parte del ángulo crudo del dedo, así no se acumula ni salta de objetivo.
-  - Botones junto al pulgar derecho: **ATACAR** (el principal, grande, en la esquina) y **LANZAR** (clic derecho:
-    recoger/lanzar) justo encima, alineado a su borde derecho · **REINICIAR** (R) bajo la máscara. No hay botón de E.
-  - **ATACAR es un botón inteligente** (`game.touchAction()` da la etiqueta; el ancho es fijo para que no se mueva) y
+  - Botones de la derecha, **de abajo a arriba y sin texto**, alineados al borde derecho (casi cuadrados): **ATACAR**
+    (retícula, grande, en la esquina) · **LANZAR** (arma en vuelo; clic derecho: recoger/lanzar) · **PATEAR/INTERACTUAR**
+    (bota; el icono pasa a doble chevron cian junto a la moto). **REINICIAR** (R) sigue con texto bajo la máscara.
+  - **Iconos** (`ICONS` en `touch.js`): cuadrículas de 11×11 (`#` = rojo neón `ICON_COLOR`, `o` = blanco) dibujadas por
+    `drawIcon` a **escala entera** (≈60 % del lado menor del botón) y en posiciones enteras, así salen nítidas en cualquier
+    pantalla. Al pulsar el icono se vuelve blanco. Un botón con `icon` en `drawTouchButton` no pinta texto.
+  - **Botón superior** (`contextAction`, `id: 'act'`): la tecla E según `game.touchAction()`: derribado a tiro → remata (borde
+    rojo/blanco parpadeante), puerta delante → patea (borde rosa), `cleared` junto a la moto → `startLeaving()`; apagado si no hay nada
+    que hacer. El `E` se guarda 0,25 s (`ACT_BUFFER`) si el arma está en cadencia.
+  - **ATACAR también es inteligente** (misma lógica que el botón superior, sin cambiar de aspecto) y
     lo mismo hace el toque rápido del joystick derecho (`TouchControls.smartAttack`): derribado a tiro → `REMATAR`
     (rojo/blanco parpadeante; atacar ya ejecuta, mismo objetivo que el indicador); puerta de enfrente → `PATEAR`
     (con arma cuerpo a cuerpo atacar ya patea; con arma de fuego envía `E` en vez de disparar); `cleared` y cerca de la
