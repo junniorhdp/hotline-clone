@@ -163,7 +163,8 @@ export class Game {
     this.entered = false;
     this.entryWeapon = null;
     this.cine = null;      // cinemática en curso: { kind: 'arrive' | 'leave', t }
-    this.callout = null;   // aviso grande temporal: { text, color, t }
+    this.callout = null;   // aviso grande temporal: { text, color, t, max, sub }
+    this.goalAge = 0;      // s desde que el cartel de piso completado se apagó (anima el objetivo)
     this.runId = newRunId();
     this.showRecords = false;
     this.levelIndex = 0;
@@ -567,6 +568,7 @@ export class Game {
     this.inside = retryInside;
     this.cine = null;
     this.callout = null;
+    this.goalAge = 0;
     this.enemies = level.enemies.map((e) => new Enemy(e.x, e.y, e.patrol,
       e.weapon ? { type: e.weapon, ammo: ENEMY_WEAPONS[e.weapon].dropAmmo } : null));
     this.pickups = level.weapons.map((w) => new Pickup(w.type, w.x, w.y));
@@ -672,6 +674,7 @@ export class Game {
 
     this.bannerTimer = Math.max(0, this.bannerTimer - dt);
     if (this.callout && (this.callout.t -= dt) <= 0) this.callout = null;
+    this.goalAge = this.state === 'cleared' && !this.callout ? this.goalAge + dt : 0;
     if (this.state === 'playing' && this.inside) this.time += dt; // el reloj corre dentro del edificio
     this.score.update(dt, this.state === 'playing');
     if (this.player.alive) this.player.update(dt, this);
@@ -696,7 +699,7 @@ export class Game {
       this.sfx.setMusic('empty');
       this.mainDoor.unlock();
       this.sfx.play('unlock');
-      this.showCallout('PISO COMPLETADO', COLORS.player, 2.6); // el objetivo (REGRESA A LA MOTO) sale al apagarse
+      this.showCallout('PISO COMPLETADO', COLORS.player, 2.8, '¡EDIFICIO LIMPIO!'); // el objetivo (REGRESA A LA MOTO) sale al apagarse
     }
     if (this.state === 'cleared' && this.player.alive && this.touchingBike()) this.startLeaving();
 
@@ -861,8 +864,8 @@ export class Game {
     this.showCallout('SALIDAS BLOQUEADAS', COLORS.blood);
   }
 
-  showCallout(text, color, seconds = 2.4) {
-    this.callout = { text, color, t: seconds, max: seconds };
+  showCallout(text, color, seconds = 2.4, sub = null) {
+    this.callout = { text, color, t: seconds, max: seconds, sub };
   }
 
   // Puertas: primero los enemigos y AL FINAL el jugador, que tiene prioridad absoluta: su empujón
@@ -1625,6 +1628,86 @@ export class Game {
   }
 
   // Escala de texto más grande (hasta `preferred`) con la que el texto cabe en `maxW`.
+  // Cartel grande (SALIDAS BLOQUEADAS, PISO COMPLETADO): una franja oscura se abre desde el centro con
+  // filos de neón, el texto entra deslizándose con doble sombra rosa/cian y un destello lo barre; el
+  // subtítulo aparece después y todo se desvanece al final. Ocupa el centro: el objetivo va aparte.
+  drawCallout(ctx, w, h) {
+    const c = this.callout;
+    if (!c) return;
+    const age = c.max - c.t;
+    const ease = (t) => 1 - Math.pow(1 - clamp(t, 0, 1), 3);
+    const open = ease(age / 0.22), fade = clamp(c.t / 0.4, 0, 1);
+    const scale = this.fitScale(c.text, w - 24, 3);
+    const textH = CELL_H * scale, subH = c.sub ? CELL_H + 5 : 0;
+    const bandH = Math.round((textH + subH + 14) * open);
+    const cx = Math.round(w / 2), cy = Math.round(h * 0.34);
+    const y0 = cy - Math.round(bandH / 2);
+    ctx.save();
+    ctx.globalAlpha = 0.8 * fade;
+    ctx.fillStyle = '#0a0418';
+    ctx.fillRect(0, y0, w, bandH);
+    ctx.globalAlpha = fade;
+    ctx.fillStyle = c.color;
+    ctx.fillRect(0, y0, w, 1);
+    ctx.fillRect(0, y0 + bandH - 1, w, 1);
+    ctx.globalAlpha = 0.3 * fade;
+    ctx.fillRect(0, y0 + 2, w, 1);
+    ctx.fillRect(0, y0 + bandH - 3, w, 1);
+    if (open > 0.7) {
+      const slide = Math.round((1 - ease((age - 0.12) / 0.3)) * w * 0.35);
+      const tx = cx - slide, ty = y0 + 7;
+      ctx.globalAlpha = fade * clamp((age - 0.1) / 0.15, 0, 1);
+      drawText(ctx, c.text, tx + 2, ty + 1, { color: COLORS.wall, scale, align: 'center', shadow: null });
+      drawText(ctx, c.text, tx - 1, ty, { color: COLORS.player, scale, align: 'center', shadow: null });
+      drawText(ctx, c.text, tx, ty, { color: COLORS.text, scale, align: 'center', shadow: null });
+      if (c.sub) {
+        ctx.globalAlpha = fade * clamp((age - 0.45) / 0.25, 0, 1);
+        drawText(ctx, c.sub, cx, ty + textH + 4, { color: c.color, align: 'center' });
+      }
+      // Destello: una barra clara cruza el cartel una vez, justo cuando el texto ya está.
+      const sweep = (age - 0.35) / 0.4;
+      if (sweep > 0 && sweep < 1) {
+        ctx.globalAlpha = 0.35 * fade;
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(Math.round(sweep * (w + 24)) - 12, y0 + 1, 6, bandH - 2);
+      }
+    }
+    ctx.restore();
+  }
+
+  // Objetivo de piso despejado: un panel abajo en el centro (desliza hacia arriba al aparecer, con
+  // flecha parpadeante y borde que late). Solo sale cuando el cartel grande ya se ha ido.
+  drawGoalPanel(ctx, w, h) {
+    if (this.state !== 'cleared' || this.callout) return;
+    const text = 'REGRESA A LA MOTO';
+    const e = 1 - Math.pow(1 - clamp(this.goalAge / 0.3, 0, 1), 3);
+    const scale = this.fitScale(text, w - 60, 2);
+    const tw = measureText(text) * scale, th = CELL_H * scale;
+    const pw = tw + 34, ph = th + 12;
+    const x = Math.round(w / 2 - pw / 2);
+    // En escritorio, por encima de la línea de controles de abajo (dos filas de texto).
+    const bottom = this.input.touchMode ? 10 : 10 + 2 * (CELL_H + 2);
+    const y = Math.round(h - this.safe.b - bottom - ph + (1 - e) * (ph + 14 + bottom));
+    const pulse = 0.6 + 0.4 * Math.sin(performance.now() / 180);
+    ctx.save();
+    ctx.globalAlpha = 0.85 * e;
+    ctx.fillStyle = '#0a0418';
+    ctx.fillRect(x, y, pw, ph);
+    ctx.globalAlpha = (0.5 + 0.5 * pulse) * e;
+    ctx.fillStyle = COLORS.player;
+    ctx.fillRect(x, y, pw, 1);
+    ctx.fillRect(x, y + ph - 1, pw, 1);
+    ctx.fillRect(x, y, 1, ph);
+    ctx.fillRect(x + pw - 1, y, 1, ph);
+    ctx.globalAlpha = e;
+    // Flecha (triángulo de píxeles) parpadeante a la izquierda: apunta hacia la moto.
+    if (Math.floor(performance.now() / 250) % 2 === 0) {
+      for (let i = 0; i < 4; i++) ctx.fillRect(x + 8 + i, y + Math.round(ph / 2) - 4 + i, 1, 8 - 2 * i);
+    }
+    drawText(ctx, text, x + 20 + Math.round(tw / 2), y + 6, { color: COLORS.player, scale, align: 'center' });
+    ctx.restore();
+  }
+
   fitScale(text, maxW, preferred = 2) {
     let s = preferred;
     while (s > 1 && measureText(text) * s > maxW) s--;
@@ -1739,19 +1822,13 @@ export class Game {
       ctx.globalAlpha = 1;
     }
     // Objetivo de cada fase (parpadea): entrar y, despejado el edificio, volver a la moto.
-    const goal = this.state === 'cleared' ? (this.callout ? null : 'REGRESA A LA MOTO')
-      : this.state === 'playing' && !this.inside && this.bannerTimer <= 0 ? 'ENTRA AL EDIFICIO' : null;
+    const goal = this.state === 'playing' && !this.inside && this.bannerTimer <= 0 ? 'ENTRA AL EDIFICIO' : null;
     if (goal && Math.floor(performance.now() / 300) % 3 !== 0) {
       // Debajo del bloque de puntuación (termina en y≈67) para no solaparse con él.
       drawText(ctx, goal, cx, 72 + T, { color: COLORS.player, scale: this.fitScale(goal, w - 12), align: 'center' });
     }
-    // Aviso grande temporal (SALIDAS BLOQUEADAS, PISO COMPLETADO): aparece y se desvanece.
-    if (this.callout) {
-      const c = this.callout;
-      ctx.globalAlpha = Math.min(1, c.t * 2, (c.max - c.t) * 6);
-      drawText(ctx, c.text, cx, Math.round(h * 0.36), { color: c.color, scale: this.fitScale(c.text, w - 12, 2), align: 'center' });
-      ctx.globalAlpha = 1;
-    }
+    this.drawCallout(ctx, w, h);
+    this.drawGoalPanel(ctx, w, h);
     // Cinemáticas: barras negras arriba y abajo y cómo saltarlas.
     if (this.state === 'arriving' || this.state === 'leaving') {
       ctx.fillStyle = '#05000f';

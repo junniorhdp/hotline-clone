@@ -106,8 +106,13 @@ Cada piso empieza **en la calle**, no dentro. El ciclo (`game.js`) es:
    sacudida, chispas y el aviso `SALIDAS BLOQUEADAS`. Empieza la música de combate y corre el reloj.
 4. **Despejar** (`state 'cleared'`, `this.inside && todos muertos`): suena `tapeStop` y entra el ambiente
    vacío (ya existente); la puerta se **desbloquea y se abre** (`Door.unlock()`, sonido `unlock`) y
-   sale el aviso grande `PISO COMPLETADO` (2,6 s, `showCallout`); **al apagarse** aparece el objetivo parpadeante
-   `REGRESA A LA MOTO` (nunca los dos a la vez: se pinta solo si `callout` es null). El marco pasa a la moto (`MOTO`).
+   salen, **por turnos y nunca a la vez**, dos mensajes:
+   1. `drawCallout`: cartel `PISO COMPLETADO` (2,8 s, subtítulo `¡EDIFICIO LIMPIO!`) en una franja oscura que se abre desde el centro con filos
+   de neón, texto que entra deslizando con doble sombra rosa/cian, destello que lo barre y fundido final (el mismo cartel
+   sirve a `SALIDAS BLOQUEADAS`; `showCallout(text, color, seg, sub)`).
+   2. `drawGoalPanel`: al apagarse el cartel (`goalAge` cuenta desde entonces) sube desde abajo un panel `REGRESA A LA MOTO`
+   (centro inferior; en escritorio por encima de la línea de controles) con borde cian que late y flecha parpadeante.
+   El marco pasa a la moto (`MOTO`).
 5. **Fuga** (`state 'leaving'`): al **rozar la moto** (`touchingBike`: su borde + `MOUNT_MARGIN`) el
    jugador se sube (0,4 s) y la moto acelera hasta salir de la pantalla (1,35 s) con polvo y el motor
    (`playMotoDeparture`, ver "La moto"); después fundido y resultados (`finishFloor`). También se puede saltar con
