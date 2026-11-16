@@ -1339,6 +1339,7 @@ export class Game {
     ctx.drawImage(this.propsLayer, 0, 0, pixelW, pixelH);
     for (const e of this.enemies) if (e.alive && e.state === 'down') e.draw(ctx, this.time, this);
     this.drawExecuteMarks(ctx);
+    this.drawLockMark(ctx);
     for (const p of this.pickups) p.draw(ctx, this.time);
     for (const b of this.bullets) b.draw(ctx);
     for (const e of this.enemies) if (e.standing) e.draw(ctx, this.time, this);
@@ -1448,6 +1449,29 @@ export class Game {
       pixelRect(ctx, x0, y1 - 2, 3, 1); pixelRect(ctx, x0, y1 - 6, 1, 3);
       pixelRect(ctx, x1 - 6, y1 - 2, 3, 1); pixelRect(ctx, x1 - 2, y1 - 6, 1, 3);
     }
+    ctx.restore();
+  }
+
+  // Marca del objetivo fijado por la asistencia de apuntado táctil: un anillo de neón con cuatro segmentos
+  // que gira despacio bajo el enemigo, más cuatro marcas fijas, para saber a quién se va a dar antes de
+  // disparar. Solo en táctil y mientras el joystick derecho apunta y hay objetivo (`touch.lock`).
+  drawLockMark(ctx) {
+    const e = this.touch.lock;
+    if (!this.input.touchMode || !e || !e.alive || !this.player.alive || this.panel) return;
+    const t = performance.now() / 1000, R = 15;
+    const firing = this.input.aimFiring || this.input.attackHeld;
+    ctx.save();
+    ctx.globalAlpha = 0.9;
+    for (let i = 0; i < 4; i++) {
+      const a = t * 1.6 + (i * Math.PI) / 2;
+      ctx.fillStyle = i % 2 ? COLORS.text : (firing ? COLORS.enemyBullet : COLORS.wall);
+      for (let k = -2; k <= 2; k++) {
+        const b = a + k * 0.16;
+        pixelRect(ctx, e.x + Math.cos(b) * R - 1, e.y + Math.sin(b) * R - 1, 2, 2);
+      }
+    }
+    ctx.fillStyle = firing ? COLORS.enemyBullet : COLORS.wall;
+    for (const [dx, dy] of [[0, -R - 5], [0, R + 3], [-R - 5, 0], [R + 3, 0]]) pixelRect(ctx, e.x + dx, e.y + dy, 2, 2);
     ctx.restore();
   }
 

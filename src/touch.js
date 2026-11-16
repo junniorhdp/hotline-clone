@@ -33,7 +33,7 @@ export const TOUCH_CONFIG = {
   joystickRadius: 56,   // px CSS: radio de ambos joysticks
   buttonScale: 1,       // multiplica el alto de los botones (0,7..1,6)
   buttonOpacity: 1,     // multiplica su opacidad (0,3..1)
-  aimAssist: 0.5,       // 0 = sin asistencia … 1 = máxima (ver `assistAngle`)
+  aimAssist: 1,         // 0 = OFF, 0,5 = SUAVE, 1 = ALTO (soft lock-on; ver `assistAngle`)
   hapticsEnabled: true, // vibración breve en botones, disparos, ejecuciones y muerte
   moveDeadzone: 0.12,   // fracción del radio: por debajo no hay movimiento
   aimDeadzone: 0.15,    // fracción del radio: por debajo no se cambia la mirada
@@ -46,7 +46,11 @@ const TAP_MAX = 0.25;          // s: un toque más corto que esto (sin disparar)
 const ACT_BUFFER = 0.25;       // s que se recuerda un PATEAR/REMATAR pulsado en plena cadencia
 const PRESS_FLASH = 0.15;      // s de resaltado tras pulsar un botón
 const HAPTIC_FIRE_GAP = 0.12;  // s mínimos entre vibraciones mientras se dispara
-const ASSIST_RANGE = 360;      // u del mundo: hasta dónde engancha la asistencia
+// Niveles de asistencia de apuntado: cono angular (rad), fuerza del tirón (0..1) y alcance (u del mundo).
+const ASSIST_LEVELS = {
+  soft: { cone: 0.3, pull: 0.35, range: 360 },
+  high: { cone: 0.7, pull: 0.9, range: 440 },
+};
 const MARGIN = 6;
 const GAMEPLAY = new Set(['playing', 'cleared']);
 
@@ -152,6 +156,8 @@ export class TouchControls {
     this.flash = {};    // botón → segundos de resaltado tras pulsarlo
     this.action = { id: 'attack', label: 'ATACAR', ready: false }; // acción contextual vigente
     this.actBuffer = 0;
+    this.lock = null;        // enemigo fijado por la asistencia (se marca en pantalla)
+    this.pendingLock = null;
     this.hapticTimer = 0;
     this.prev = { exec: false, alive: true, firing: false };
   }
@@ -209,6 +215,7 @@ export class TouchControls {
     this.move = this.aim = null;
     this.roles.clear();
     this.actBuffer = 0;
+    this.lock = null;
     const input = this.game.input;
     input.moveAxis = { x: 0, y: 0 };
     input.aimActive = input.aimFiring = input.attackHeld = false;
@@ -253,30 +260,38 @@ export class TouchControls {
     return false;
   }
 
-  // Asistencia de apuntado: si hay un enemigo vivo a la vista dentro de un cono estrecho alrededor
-  // de donde apunta el dedo, la mira se inclina hacia él. El cono (7°..28°) y la fuerza del tirón
-  // crecen con `aimAssist`; el tirón es mayor cuanto más centrado está el enemigo, así que nunca
-  // "salta" a otro objetivo. Se calcula siempre desde el ángulo crudo del dedo (sin acumular).
+  // Asistencia de apuntado (`config.aimAssist`: 0 = OFF, 0,5 = SUAVE, 1 = ALTO; ver ASSIST_LEVELS). Con un
+  // enemigo vivo a la vista (sin paredes ni puertas de por medio) dentro de un cono alrededor de donde apunta el
+  // dedo, la mira se inclina hacia él: SUAVE es un ligero magnetismo; ALTO es un soft lock-on (cono de ~40°,
+  // casi se alinea del todo y engancha hasta más lejos). El cono se estrecha un poco con la distancia. Siempre
+  // parte del ángulo crudo del dedo (no se acumula) y el objetivo anterior tiene prioridad mientras siga
+  // dentro (no salta entre enemigos). El objetivo fijado queda en `this.lock` (lo dibuja game.drawLockMark).
+  assistLevel() {
+    const s = this.config.aimAssist;
+    return s <= 0 ? null : s < 0.75 ? ASSIST_LEVELS.soft : ASSIST_LEVELS.high;
+  }
+
   assistAngle(raw) {
-    const strength = this.config.aimAssist;
+    const L = this.assistLevel();
     const g = this.game, p = g.player;
-    if (strength <= 0 || !p || !p.alive) return raw;
-    const cone = 0.12 + 0.37 * strength;
-    let best = null, bestScore = Infinity;
+    this.pendingLock = null;
+    if (!L || !p || !p.alive) return raw;
+    let best = null, bestDiff = 0, bestScore = Infinity;
     for (const e of g.enemies) {
       if (!e.alive || e.state === 'down') continue;
       const dx = e.x - p.x, dy = e.y - p.y;
       const d = Math.hypot(dx, dy);
-      if (d > ASSIST_RANGE || d < 1) continue;
+      if (d > L.range || d < 1) continue;
       const diff = angleDiff(Math.atan2(dy, dx), raw);
-      // El cono se estrecha un poco con la distancia: a lo lejos hay menos margen de duda.
-      if (Math.abs(diff) > cone * (1 - 0.4 * (d / ASSIST_RANGE))) continue;
+      const cone = L.cone * (1 - 0.4 * (d / L.range)) * (e === this.lock ? 1.2 : 1);
+      if (Math.abs(diff) > cone) continue;
       if (!lineOfSight(g.map, p.x, p.y, e.x, e.y)) continue;
-      const score = Math.abs(diff) + d / 2000;
-      if (score < bestScore) { best = diff; bestScore = score; }
+      const score = Math.abs(diff) + d / 2000 - (e === this.lock ? 0.12 : 0);
+      if (score < bestScore) { best = e; bestDiff = diff; bestScore = score; }
     }
-    if (best === null) return raw;
-    return raw + best * clamp(strength * 0.7 * (1 - Math.abs(best) / (cone * 2)), 0, 0.85);
+    if (!best) return raw;
+    this.pendingLock = best;
+    return raw + bestDiff * clamp(L.pull * (1 - 0.35 * Math.abs(bestDiff) / L.cone), 0, 0.95);
   }
 
   // Se llama al principio de cada paso de simulación, antes de que el juego lea la entrada.
@@ -376,13 +391,17 @@ export class TouchControls {
       this.aim.held += dt;
       const v = vec(this.aim, cfg.aimDeadzone);
       input.aimActive = true;
-      if (v.len > cfg.aimDeadzone) input.aimAngle = this.assistAngle(Math.atan2(v.dir.y, v.dir.x));
+      if (v.len > cfg.aimDeadzone) {
+        input.aimAngle = this.assistAngle(Math.atan2(v.dir.y, v.dir.x));
+        this.lock = this.pendingLock;
+      } else this.lock = null;
       const limit = this.aim.firing ? cfg.fireThreshold - HOLD_FIRE_HYSTERESIS : cfg.fireThreshold;
       this.aim.firing = v.len > limit;
       input.aimFiring = this.aim.firing;
       if (this.aim.firing) this.aim.fired = true;
     } else {
       input.aimActive = input.aimFiring = false;
+      this.lock = null;
       if (endedAim && !endedAim.fired && endedAim.held < TAP_MAX) {
         const v = vec(endedAim, cfg.aimDeadzone);
         if (v.len > cfg.aimDeadzone) { input.aimAngle = this.assistAngle(Math.atan2(v.dir.y, v.dir.x)); input.aimActive = true; }

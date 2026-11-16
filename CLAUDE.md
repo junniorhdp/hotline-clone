@@ -640,7 +640,7 @@ Colores centralizados en `COLORS` (`src/utils.js`) y `PALETTE` (`src/sprites.js`
 - **Orientación**: apaisado obligatorio. En vertical con táctil, `game.needsRotate` pausa el juego
   y muestra "GIRA EL DISPOSITIVO".
 - **Configuración** (`TOUCH_CONFIG` en `touch.js`; `TouchControls.config` / `setConfig(patch)`): `joystickRadius` (px CSS, 56),
-  `buttonScale` (1), `buttonOpacity` (1), `aimAssist` (0..1, 0,5), `hapticsEnabled` (true), `moveDeadzone` (0,12),
+  `buttonScale` (1), `buttonOpacity` (1), `aimAssist` (0 / 0,5 / 1, por defecto 1), `hapticsEnabled` (true), `moveDeadzone` (0,12),
   `aimDeadzone` (0,15), `fireThreshold` (0,6). Todo el dibujo y la detección de toques leen de ahí. **La persistencia y el menú
   los lleva `settings.js`** (ver "Ajustes y menús"): escribe en `config` al arrancar y al cambiar una opción. La antigua clave
   `neonrush.touch.v1` ya no se usa.
@@ -651,9 +651,15 @@ Colores centralizados en `COLORS` (`src/utils.js`) y `PALETTE` (`src/sprites.js`
     (más allá de `fireThreshold`, marcado con un anillo de puntos) ataca a la cadencia del arma (`input.aimFiring`, con
     histéresis de 0,1 al volver hacia dentro). Un toque rápido (< 0,25 s) sin disparar = un ataque (`tapAttack`).
     Ya no dispara por mantener el dedo quieto (cambio respecto a la versión anterior: ATACAR cubre el "mantener").
-  - **Aim-assist** (`assistAngle`): con un enemigo vivo (no derribado) a la vista y a ≤ 360 u dentro de un cono
-    (7°..28° según `aimAssist`, algo más estrecho de lejos), el ángulo se inclina hacia él (tirón máx. 0,7·fuerza, mayor
-    cuanto más centrado). Siempre parte del ángulo crudo del dedo, así no se acumula ni salta de objetivo.
+  - **Aim-assist en tres niveles** (`config.aimAssist`: 0 OFF · 0,5 SUAVE · 1 ALTO, por defecto ALTO; `ASSIST_LEVELS` en `touch.js`).
+    Con un enemigo vivo (no derribado) a la vista —`lineOfSight`: ni paredes ni puertas de por medio— dentro de un cono alrededor de
+    donde apunta el dedo, `assistAngle` inclina la mira hacia él. **SUAVE**: cono 0,3 rad, tirón 0,35, alcance 360 u (ligero
+    magnetismo). **ALTO** (soft lock-on): cono 0,7 rad (~40°), tirón 0,9, alcance 440 u (casi se alinea del todo). El cono se estrecha un
+    40 % con la distancia y el tirón baja un poco si el enemigo está en el borde del cono. Siempre parte del ángulo crudo del dedo (no
+    se acumula) y el objetivo ya fijado tiene prioridad (+20 % de cono) para no saltar entre enemigos.
+  - **Marca de objetivo fijado** (`touch.lock` → `game.drawLockMark`): solo en táctil y mientras el joystick derecho apunta; anillo de neón
+    con cuatro segmentos que gira bajo el enemigo más cuatro marcas fijas (cian/rosa; rojo mientras se ataca). Se dibuja entre las marcas de
+    remate y los pickups, dentro de la cámara.
   - Botones de la derecha, **de abajo a arriba y sin texto**, alineados al borde derecho (casi cuadrados): **ATACAR**
     (retícula, grande, en la esquina) · **LANZAR** (arma en vuelo; clic derecho: recoger/lanzar) · **PATEAR/INTERACTUAR**
     (bota; el icono pasa a doble chevron cian junto a la moto). **REINICIAR** (R) sigue con texto bajo la máscara.
@@ -712,7 +718,7 @@ Colores centralizados en `COLORS` (`src/utils.js`) y `PALETTE` (`src/sprites.js`
   guardan y llaman a `apply`; `applyAll` (al final del constructor de `Game`) aplica lo guardado; `reset` restaura.
 - **Opciones actuales**: AUDIO `musicVolume`, `sfxVolume` (0–100 % de 10 en 10) · JUEGO `goreEnabled` · TÁCTIL `buttonScale`
   (PEQUEÑO 0,85 / NORMAL 1 / GRANDE 1,2), `buttonOpacity` (BAJA 0,5 / MEDIA 0,75 / ALTA 1), `hapticsEnabled`,
-  `aimAssist` (SÍ = 0,5 / NO = 0). Las táctiles escriben en `touch.setConfig`.
+  `aimAssist` (OFF / SUAVE / ALTO; el antiguo sí/no se migra: true → SUAVE, false → OFF). Las táctiles escriben en `touch.setConfig`.
 - **Audio** (`audio.js`): `sfx.setVolumes({ music, sfx })`. Hay un `sfxBus` nuevo entre todos los efectos (y la moto) y el master;
   `musicBus`/`ambientBus` escalan su nivel por `musicVol` (`applyMusicMode`). `M` sigue silenciando el master por encima de ambos.
   Con `sfxVol` en 0 no se crean nodos de efectos. Antes de que exista el `AudioContext` (primer gesto) solo se guardan.

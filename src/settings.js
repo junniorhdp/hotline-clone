@@ -8,6 +8,7 @@ import { clamp } from './utils.js';
 //   type 'toggle'  → boolean (se muestra SÍ / NO)
 //   type 'step'    → número entre `min` y `max` de `step` en `step` (`format(valor)` da el texto)
 //   type 'choice'  → uno de `choices: [{ label, value }]` (el valor guardado es `value`)
+//   `migrate(valorGuardado)` (opcional) convierte valores de versiones antiguas antes de validarlos
 // `apply` se llama al cambiar la opción y una vez al arrancar (`applyAll`) para que el valor guardado
 // surta efecto. Quien necesite el valor en caliente puede leerlo con `game.settings.get(id)`.
 export const SETTINGS_KEY = 'neonrush.settings.v1';
@@ -32,12 +33,18 @@ export const OPTIONS = [
     apply: (g, v) => g.touch.setConfig({ buttonOpacity: v }) },
   { id: 'hapticsEnabled', section: 'TÁCTIL', label: 'VIBRACIÓN', type: 'toggle', default: true,
     apply: (g, v) => g.touch.setConfig({ hapticsEnabled: v }) },
-  { id: 'aimAssist', section: 'TÁCTIL', label: 'ASISTENCIA DE APUNTADO', type: 'toggle', default: true,
-    apply: (g, v) => g.touch.setConfig({ aimAssist: v ? 0.5 : 0 }) },
+  // Asistencia de apuntado: OFF = manual puro · SUAVE = ligero magnetismo · ALTO = soft lock-on con marcador
+  // sobre el enemigo fijado (por defecto en táctil). Los valores numéricos son los de TOUCH_CONFIG.aimAssist.
+  { id: 'aimAssist', section: 'TÁCTIL', label: 'ASISTENCIA DE APUNTADO', type: 'choice', default: 1,
+    choices: [{ label: 'OFF', value: 0 }, { label: 'SUAVE', value: 0.5 }, { label: 'ALTO', value: 1 }],
+    // Versión anterior: era un sí/no (true = 0,5).
+    migrate: (v) => (v === true ? 0.5 : v === false ? 0 : v),
+    apply: (g, v) => g.touch.setConfig({ aimAssist: v }) },
 ];
 
 // Valor válido para `opt` a partir de lo que haya (guardado, corrupto o de una versión antigua).
 export function sanitize(opt, v) {
+  if (opt.migrate) v = opt.migrate(v);
   if (opt.type === 'toggle') return typeof v === 'boolean' ? v : opt.default;
   if (opt.type === 'step') {
     if (typeof v !== 'number' || !Number.isFinite(v)) return opt.default;
