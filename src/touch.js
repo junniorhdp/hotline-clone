@@ -25,10 +25,10 @@ import { lineOfSight } from './map.js';
 // Fuera de la partida (menús, máscaras, resultados…) un toque equivale a un clic en ese punto.
 // Los tamaños se definen en píxeles CSS (tamaño real del dedo) y se pasan a píxeles internos.
 
-// Preferencias táctiles: un único objeto, pensado para un futuro menú de opciones. Se guardan en
-// `localStorage` (clave TOUCH_KEY) con lectura defensiva: lo que falte o sea inválido usa el valor
-// por defecto. Todo el dibujo y la detección de toques leen de `TouchControls.config`.
-export const TOUCH_KEY = 'neonrush.touch.v1';
+// Preferencias táctiles: un único objeto con los valores por defecto. La persistencia y el menú de opciones
+// los lleva settings.js, que escribe aquí con `TouchControls.setConfig({...})` (buttonScale, buttonOpacity,
+// hapticsEnabled, aimAssist) al arrancar y cuando el jugador cambia un ajuste. Todo el dibujo y la detección
+// de toques leen de `TouchControls.config`, así que los cambios se ven en caliente.
 export const TOUCH_CONFIG = {
   joystickRadius: 56,   // px CSS: radio de ambos joysticks
   buttonScale: 1,       // multiplica el alto de los botones (0,7..1,6)
@@ -39,29 +39,6 @@ export const TOUCH_CONFIG = {
   aimDeadzone: 0.15,    // fracción del radio: por debajo no se cambia la mirada
   fireThreshold: 0.6,   // fracción del radio: más allá (borde exterior) ataca
 };
-const RANGES = {
-  joystickRadius: [36, 100], buttonScale: [0.7, 1.6], buttonOpacity: [0.3, 1], aimAssist: [0, 1],
-  moveDeadzone: [0, 0.4], aimDeadzone: [0, 0.4], fireThreshold: [0.3, 0.95],
-};
-
-export function loadTouchConfig() {
-  const cfg = { ...TOUCH_CONFIG };
-  try {
-    const saved = JSON.parse(localStorage.getItem(TOUCH_KEY) || 'null');
-    if (saved && typeof saved === 'object') {
-      for (const k in RANGES) {
-        const v = saved[k];
-        if (typeof v === 'number' && Number.isFinite(v)) cfg[k] = clamp(v, RANGES[k][0], RANGES[k][1]);
-      }
-      if (typeof saved.hapticsEnabled === 'boolean') cfg.hapticsEnabled = saved.hapticsEnabled;
-    }
-  } catch { /* sin acceso o JSON corrupto: valores por defecto */ }
-  return cfg;
-}
-
-export function saveTouchConfig(cfg) {
-  try { localStorage.setItem(TOUCH_KEY, JSON.stringify(cfg)); } catch { /* cuota o modo privado */ }
-}
 
 const BUTTON_CSS_HEIGHT = 48;
 const HOLD_FIRE_HYSTERESIS = 0.1; // al soltar hacia dentro, deja de atacar 0,1 del radio antes
@@ -119,6 +96,8 @@ export const ICONS = {
     '..ooooooooo',
     '...........',
   ],
+  // Pausa: dos barras.
+  pause: makeIcon(11, (p) => { for (let y = 1; y < 10; y++) for (const x of [2, 3, 4, 6, 7, 8]) p(x, y); }),
   // Doble chevron: interactuar / subir a la moto.
   mount: makeIcon(11, (p) => {
     for (let i = 0; i < 5; i++) for (const o of [0, 5]) { p(o + i, 1 + i); p(o + i, 9 - i); p(o + i + 1, 1 + i); p(o + i + 1, 9 - i); }
@@ -166,7 +145,7 @@ export function drawTouchButton(ctx, b, lit, alpha = 0.55, press = 0) {
 export class TouchControls {
   constructor(game) {
     this.game = game;
-    this.config = loadTouchConfig();
+    this.config = { ...TOUCH_CONFIG };
     this.move = null;   // { id, ox, oy, x, y } en píxeles internos
     this.aim = null;
     this.roles = new Map();
@@ -184,7 +163,6 @@ export class TouchControls {
 
   setConfig(patch) {
     Object.assign(this.config, patch);
-    saveTouchConfig(this.config);
   }
 
   // Vibración breve (Android; iOS no la soporta). Respeta `hapticsEnabled`.
@@ -215,6 +193,8 @@ export class TouchControls {
         attack, throwB, actB,
         // Debajo de la miniatura de la máscara del HUD.
         { id: 'retry', label: 'REINICIAR', x: left, y: 56 + s.t, w: measureText('REINICIAR') + 12, h: rh },
+        // Pausa (= Esc): icono bajo REINICIAR; abre el menú de pausa con OPCIONES.
+        { id: 'pause', icon: ICONS.pause, x: left, y: 56 + s.t + rh + 4, w: rh, h: rh },
       ],
     };
   }
@@ -243,6 +223,7 @@ export class TouchControls {
     if (id === 'throw') input.mousePressed.right = true;
     if (id === 'act') this.contextAction();
     if (id === 'retry') input.pressed.add('KeyR');
+    if (id === 'pause') input.pressed.add('Escape');
   }
 
   // Botón superior (PATEAR / REMATAR / INTERACTUAR): la tecla E según el contexto. Con un derribado a
@@ -304,7 +285,7 @@ export class TouchControls {
     for (const id in this.flash) this.flash[id] = Math.max(0, this.flash[id] - dt);
     if (!input.touchMode) { if (this.move || this.aim) this.reset(); return; }
 
-    if (!GAMEPLAY.has(g.state)) {
+    if (!GAMEPLAY.has(g.state) || g.panel) {
       if (this.move || this.aim || this.roles.size) this.reset();
       // Pantallas fuera de la partida: primero los botones táctiles de la pantalla (VOLVER,
       // TERMINAR…), que "pulsan" la tecla equivalente. Si no se toca ninguno: con el panel de
@@ -433,7 +414,7 @@ export class TouchControls {
 
   draw(ctx) {
     const g = this.game;
-    if (!g.input.touchMode || !GAMEPLAY.has(g.state)) return;
+    if (!g.input.touchMode || !GAMEPLAY.has(g.state) || g.panel) return;
     const L = this.layout();
     const R = L.stickR;
     const op = this.config.buttonOpacity;

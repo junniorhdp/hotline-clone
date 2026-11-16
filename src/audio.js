@@ -1,5 +1,6 @@
 // Audio 100% procedimental con Web Audio (sin archivos): efectos de sonido + música synthwave.
 // El AudioContext solo puede arrancar tras un gesto del usuario, así que se crea en el primer clic/tecla.
+const clamp01 = (v) => Math.min(1, Math.max(0, v));
 const MASTER_VOLUME = 0.4;
 const MUSIC_VOLUME = 0.5;    // relativo al master; M silencia ambos
 const AMBIENT_VOLUME = 0.7;  // ambiente de "piso limpio" (ver setMusic)
@@ -164,6 +165,8 @@ export class Sfx {
   constructor() {
     this.ctx = null;
     this.muted = false;
+    this.musicVol = 1;      // 0..1, ajuste del jugador (settings.js): música y ambiente
+    this.sfxVol = 1;        // 0..1: todos los efectos, incluida la moto
     this.musicMode = 'action';  // 'action' | 'empty' | 'menu'
     this.musicTimer = null;
     this.droneUntil = 0;
@@ -188,8 +191,12 @@ export class Sfx {
       const comp = this.ctx.createDynamicsCompressor();
       this.master.connect(comp);
       comp.connect(this.ctx.destination);
+      // Efectos: todo lo puntual (y la moto) pasa por `sfxBus`, así `sfxVolume` los atenúa sin tocar la música.
+      this.sfxBus = this.ctx.createGain();
+      this.sfxBus.gain.value = Math.max(this.sfxVol, 0.0001);
+      this.sfxBus.connect(this.master);
       this.musicBus = this.ctx.createGain();
-      this.musicBus.gain.value = MUSIC_VOLUME;
+      this.musicBus.gain.value = Math.max(MUSIC_VOLUME * this.musicVol, 0.0001);
       this.musicBus.connect(this.master);
       // El ambiente vacío va por su propio bus: así la música se corta en seco sin tocarlo y
       // el ambiente se abre y se cierra con sus propios tiempos.
@@ -212,8 +219,18 @@ export class Sfx {
     if (this.muted) this.stopMoto(0.03);
   }
 
+  // Volúmenes del jugador (0..1). Se aplican al instante (rampa corta); sin contexto solo se guardan
+  // y los usa init(). Música y ambiente comparten `musicVol`.
+  setVolumes({ music, sfx } = {}) {
+    if (music !== undefined) this.musicVol = clamp01(music);
+    if (sfx !== undefined) this.sfxVol = clamp01(sfx);
+    if (!this.ctx) return;
+    this.ramp(this.sfxBus.gain, this.sfxVol, 0.04);
+    this.applyMusicMode(false);
+  }
+
   play(name, volume = 1, arg) {
-    if (!this.ctx || this.muted || this.ctx.state !== 'running' || volume <= 0) return;
+    if (!this.ctx || this.muted || this.ctx.state !== 'running' || volume <= 0 || this.sfxVol <= 0) return;
     SOUNDS[name](this, volume, arg);
   }
 
@@ -242,8 +259,8 @@ export class Sfx {
   // Pone los dos buses donde toca según el modo. `instant` = sin rampas (al crear el contexto).
   applyMusicMode(instant) {
     const empty = this.musicMode === 'empty';
-    this.ramp(this.musicBus.gain, empty ? 0.0001 : MUSIC_VOLUME, instant ? 0 : (empty ? CUT_TIME : 0.12));
-    this.ramp(this.ambientBus.gain, empty ? AMBIENT_VOLUME : 0.0001,
+    this.ramp(this.musicBus.gain, empty ? 0.0001 : MUSIC_VOLUME * this.musicVol, instant ? 0 : (empty ? CUT_TIME : 0.12));
+    this.ramp(this.ambientBus.gain, empty ? AMBIENT_VOLUME * this.musicVol : 0.0001,
       instant ? 0 : (empty ? AMBIENT_FADE : 0.3), empty && !instant ? CUT_TIME * 2 : 0);
   }
 
@@ -453,7 +470,7 @@ export class Sfx {
   // junto con `stopMoto()`. Todas las rampas exponenciales acaban en 0,0001, nunca en 0.
 
   motoReady() {
-    return !!this.ctx && !this.muted && this.ctx.state === 'running';
+    return !!this.ctx && !this.muted && this.sfxVol > 0 && this.ctx.state === 'running';
   }
 
   // Saturación suave y simétrica (sin DC): redondea la sierra y añade armónicos de ataque.
@@ -518,7 +535,7 @@ export class Sfx {
     lfoDepth.connect(am.gain);
     am.connect(out);
     out.connect(bus);
-    bus.connect(this.master);
+    bus.connect(this.sfxBus);
 
     const sources = [saw, tri, lfo, noise];
     const nodes = [bus, out, am, mix, lfoDepth, exhaust, filter, exhaustFilter, shaper];
@@ -633,7 +650,7 @@ export class Sfx {
     osc.frequency.exponentialRampToValueAtTime(Math.max(to, 1), t + dur);
     g.gain.setValueAtTime(gain, t);
     g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-    osc.connect(g).connect(dest || this.master);
+    osc.connect(g).connect(dest || this.sfxBus);
     osc.onended = () => { osc.disconnect(); g.disconnect(); };
     osc.startAt = t;
     osc.start(t);
@@ -653,7 +670,7 @@ export class Sfx {
     const g = c.createGain();
     g.gain.setValueAtTime(gain, t);
     g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-    src.connect(f).connect(g).connect(dest || this.master);
+    src.connect(f).connect(g).connect(dest || this.sfxBus);
     src.onended = () => { src.disconnect(); f.disconnect(); g.disconnect(); };
     src.startAt = t;
     src.start(t, Math.random() * 0.5);

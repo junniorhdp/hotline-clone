@@ -97,6 +97,15 @@ export class Particles {
     this.neon(x, y, angle, Math.round(11 * power), Math.max(wide, 1));
   }
 
+  // Baja SIN sangre (ajuste "sangre: no"): el mismo impacto, pero solo chispas de neón, chispas
+  // de metal y un poco de humo. No deja nada permanente en el suelo ni en las paredes.
+  cleanKill(x, y, angle, power = 1, wide = 0.55) {
+    this.neon(x, y, angle, Math.round(18 * power), Math.max(wide, 1));
+    this.neon(x, y, angle + Math.PI, Math.round(6 * power), 0.9);
+    this.sparks(x, y, angle, Math.round(8 * power), Math.max(wide, 0.7));
+    this.dust(x, y, Math.round(6 * power));
+  }
+
   shell(x, y, angle) {
     if (this.shells.length >= MAX_SHELLS) this.shells.shift();
     const a = angle + rand(-0.35, 0.35);

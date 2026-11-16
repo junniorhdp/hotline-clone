@@ -6,6 +6,8 @@ import { MASKS, maskEffects, maskIcon } from './masks.js';
 import { ScoreHistory, FloorStats, MAX_ENTRIES, newRunId, formatDate } from './scores-history.js';
 import { Menu } from './menu.js';
 import { TouchControls } from './touch.js';
+import { Settings } from './settings.js';
+import { buildOptionsMenu, buildPauseMenu } from './options-menu.js';
 import { Player, bloodLevelFor, FINISH_RANGE, EXEC_HIT } from './player.js';
 import { Enemy } from './enemy.js';
 import { Door, ENEMY_PUSH_SPEED } from './doors.js';
@@ -179,6 +181,8 @@ export class Game {
     this.floorStats = new FloorStats();
     this.menu = new Menu(this);
     this.touch = new TouchControls(this);
+    this.settings = new Settings(this); // ajustes guardados (settings.js); `applyAll` los aplica al final del constructor
+    this.panel = null;   // menú modal abierto (OPCIONES / PAUSA, options-menu.js): congela el juego
     this.toast = null;
     // Elemento invisible que lee las zonas seguras CSS (env(safe-area-inset-*)).
     this.safeProbe = document.createElement('div');
@@ -197,6 +201,7 @@ export class Game {
     window.visualViewport?.addEventListener('resize', onResize);
     this.resize();
     this.reset();
+    this.settings.applyAll();
     this.openMenu();
   }
 
@@ -353,7 +358,7 @@ export class Game {
   // Solo en modo táctil, en las pantallas donde con teclado se usan Esc / R / Enter / T.
   // `key` es la tecla que "pulsan" (TouchControls la inyecta): reutilizan la misma lógica.
   screenButtons() {
-    if (!this.input.touchMode || this.fade) return [];
+    if (!this.input.touchMode || this.fade || this.panel) return [];
     const w = this.scene.width, h = this.scene.height, s = this.safe;
     const sized = (id, label, key, accent) => ({ id, label, key, accent, ...this.touch.buttonSize(label) });
     // Fila de botones centrada en horizontal.
@@ -418,7 +423,7 @@ export class Game {
   // La pantalla completa solo se puede pedir dentro del propio evento del usuario (no desde el
   // bucle del juego): por eso el botón del título se atiende aquí, en el `pointerup`.
   onPointerUp(e) {
-    if (this.state !== 'menu' || this.menu.screen !== 'title' || this.fade) return;
+    if (this.state !== 'menu' || this.menu.screen !== 'title' || this.fade || this.panel) return;
     const r = this.menu.fullscreenRect();
     if (!r) return;
     const rect = this.canvas.getBoundingClientRect();
@@ -428,6 +433,24 @@ export class Game {
     document.documentElement.requestFullscreen({ navigationUI: 'hide' })
       .then(() => screen.orientation?.lock?.('landscape').catch(() => {})) // solo Android
       .catch(() => {});
+  }
+
+  // --- Menús modales (options-menu.js): OPCIONES y PAUSA -------------------------------------
+  openOptions(onBack = () => this.closePanel()) {
+    this.panel = buildOptionsMenu(this, onBack);
+  }
+
+  openPause() {
+    this.panel = buildPauseMenu(this);
+  }
+
+  closePanel() {
+    this.panel = null;
+    this.player.cooldown = Math.max(this.player.cooldown, 0.25); // que el toque de cerrar no se vuelva un golpe
+  }
+
+  drawPanel(ctx, w, h) {
+    if (this.panel) this.panel.draw(ctx, w, h);
   }
 
   // Reintenta el piso actual (R): los puntos vuelven a los que había al entrar.
@@ -561,7 +584,7 @@ export class Game {
     this.player = new Player(start.x, start.y, maskEffects(this.mask), this.mask.id, retryInside);
     this.player.angle = -Math.PI / 2; // mira al edificio
     if (retryInside) this.player.weapon = this.entryWeapon ? { ...this.entryWeapon } : null;
-    this.player.bloodLevel = bloodLevelFor(this.gore);
+    this.player.bloodLevel = this.goreOn ? bloodLevelFor(this.gore) : 0;
     this.spawn = { x: level.player.x, y: level.player.y }; // la acera, junto a la moto
     this.entry = level.entry;
     this.bike = { park: { x: level.bike.x, y: level.bike.y }, w: level.bike.w, h: level.bike.h, x: level.bike.x, y: level.bike.y, riding: false };
@@ -637,6 +660,8 @@ export class Game {
     const back = input.wasPressed('Escape');
 
     if (this.fade) { this.updateFade(dt); return; }
+    // Menú modal abierto (OPCIONES / PAUSA): el juego está congelado y solo él lee la entrada.
+    if (this.panel) { this.panel.update(); return; }
     if (this.state === 'menu') { this.menu.update(); return; }
     if (this.state === 'gameover') {
       if (confirm) this.transition(() => this.newRun());
@@ -651,6 +676,8 @@ export class Game {
       else if (!this.showRecords) this.updateMaskSelect();
       return;
     }
+    // Esc (o el icono de pausa en táctil): PAUSA. Solo con el piso en juego, fuera o dentro del edificio.
+    if ((this.state === 'playing' || this.state === 'cleared') && back) { this.openPause(); return; }
     // R es instantáneo a propósito (sin fundido): reintentar debe ser inmediato.
     if (input.wasPressed('KeyR')) { this.restartLevel(); return; }
     if (this.state === 'dead' && confirm) { this.transition(() => this.endRun(false)); return; }
@@ -1007,8 +1034,23 @@ export class Game {
 
   // Cada baja salpica al jugador: la sangre acumulada sube con la fuerza del golpe (más en melé y
   // remate) y, al pasar al siguiente nivel, unas gotas caen sobre él para que se note el cambio.
+  // Ajuste "sangre" (settings.js). Apagado: ni manchas, ni huellas, ni sangre sobre el personaje; las bajas
+  // sueltan chispas de neón y humo (`particles.cleanKill`). Lo ya dibujado en el suelo se queda hasta el
+  // siguiente reinicio del piso (la capa de sangre también lleva los cadáveres), pero las capas de las
+  // paredes, las huellas y la sangre del personaje se ocultan al instante.
+  get goreOn() {
+    return this.settings.get('goreEnabled') !== false;
+  }
+
+  refreshGore() {
+    if (!this.player) return;
+    this.player.bloodLevel = this.goreOn ? bloodLevelFor(this.gore) : 0;
+    if (!this.goreOn) { this.prints.clear(); this.player.soles = 0; }
+  }
+
   stainPlayer(power, angle) {
-    this.gore += power;
+    this.gore += power; // se sigue contando: si se vuelve a activar la sangre, el personaje la recupera
+    if (!this.goreOn) return;
     const level = bloodLevelFor(this.gore);
     if (level === this.player.bloodLevel) return;
     this.player.bloodLevel = level;
@@ -1017,6 +1059,7 @@ export class Game {
 
   // ¿Pisa (x, y) sangre fresca? Un cadáver o un charco de baja: empapa las suelas del jugador.
   bloodUnderfoot(x, y) {
+    if (!this.goreOn) return false;
     for (const e of this.enemies) {
       if (!e.alive && e.corpse && Math.hypot(e.corpse.x - x, e.corpse.y - y) < CORPSE_STEP_RADIUS) return true;
     }
@@ -1028,6 +1071,7 @@ export class Game {
   // regueros en el suelo y salpicaduras en las paredes de enfrente. Lo permanente se queda hasta
   // que se reinicia el piso.
   bleed(x, y, angle, power, wide) {
+    if (!this.goreOn) { this.particles.cleanKill(x, y, angle, power, wide); return; }
     this.particles.gore(x, y, angle, power, wide);
     this.splatBlood(x, y, angle, power, wide);
     this.splatWalls(x, y, angle, power, wide);
@@ -1113,6 +1157,7 @@ export class Game {
   // la que viajaba, así el salpicado tiene dirección), un resto que se para (con su mancha) o
   // una gota del rastro que va dejando un resto en vuelo.
   bake(kind, p) {
+    if (!this.goreOn) return; // gotas que ya iban en el aire al apagar la sangre
     const ctx = this.bloodCtx;
     const x = Math.round(p.x / WORLD_PX), y = Math.round(p.y / WORLD_PX);
     if (kind === 'trail') {
@@ -1286,7 +1331,7 @@ export class Game {
     this.camera.apply(ctx);
     ctx.drawImage(this.floorLayer, 0, 0, pixelW, pixelH);
     ctx.drawImage(this.bloodLayer, 0, 0, pixelW, pixelH);
-    this.prints.draw(ctx); // sobre baldosas y sangre, bajo todo lo demás
+    if (this.goreOn) this.prints.draw(ctx); // sobre baldosas y sangre, bajo todo lo demás
     this.drawBike(ctx);
     this.drawObjectiveMarker(ctx);
     this.particles.drawGround(ctx);
@@ -1310,7 +1355,7 @@ export class Game {
     ctx.globalCompositeOperation = 'source-over';
     ctx.globalAlpha = 1;
     ctx.drawImage(this.wallLayer, 0, 0, pixelW, pixelH);
-    if (this.wallBloodDirty) ctx.drawImage(this.wallBloodLayer, 0, 0, pixelW, pixelH);
+    if (this.wallBloodDirty && this.goreOn) ctx.drawImage(this.wallBloodLayer, 0, 0, pixelW, pixelH);
 
     if (this.debug) this.renderDebug(ctx);
 
@@ -1753,6 +1798,7 @@ export class Game {
     if (this.state === 'menu') {
       this.menu.draw(ctx, w, h);
       this.drawToast(ctx);
+      this.drawPanel(ctx, w, h);
       this.drawCrosshair(ctx);
       return;
     }
@@ -1761,12 +1807,14 @@ export class Game {
       if (this.showRecords) this.drawRecordsOverlay(ctx, w, h);
       this.touch.drawScreenButtons(ctx);
       this.drawToast(ctx);
+      this.drawPanel(ctx, w, h);
       this.drawCrosshair(ctx);
       return;
     }
     if (this.state === 'gameover') {
       this.drawGameOver(ctx, w, h);
       this.touch.drawScreenButtons(ctx);
+      this.drawPanel(ctx, w, h);
       this.drawCrosshair(ctx);
       return;
     }
@@ -1787,7 +1835,7 @@ export class Game {
     ctx.globalAlpha = 1;
     drawText(ctx, this.mask.name, L + 28, 25 + T, { color: '#9d8fb8' });
     // Brutalidad: una gota por nivel de sangre que lleva el personaje.
-    for (let i = 0; i < BLOOD_LEVELS; i++) {
+    for (let i = 0; i < (this.goreOn ? BLOOD_LEVELS : 0); i++) {
       ctx.fillStyle = i < p.bloodLevel ? COLORS.blood : '#3a1a3a';
       ctx.fillRect(L + 28 + i * 6, 34 + T, 4, 3);
     }
@@ -1851,6 +1899,7 @@ export class Game {
     if (this.state === 'results') this.drawResults(ctx, w, h);
     this.drawToast(ctx);
 
+    this.drawPanel(ctx, w, h);
     this.drawCrosshair(ctx);
   }
 }

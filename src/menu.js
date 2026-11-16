@@ -5,7 +5,7 @@ import { drawTouchButton } from './touch.js';
 import { COLORS, clamp } from './utils.js';
 
 // Menú principal estilo arcade. Vive en `game.state === 'menu'` con tres subpantallas:
-//   'title'   logo + JUGAR / SELECCIONAR PISO / RÉCORDS
+//   'title'   logo + JUGAR / SELECCIONAR PISO / RÉCORDS / OPCIONES (modal de options-menu.js)
 //   'floors'  tarjetas de pisos con miniatura, récord y rango (bloqueados hasta completar el anterior)
 //   'records' Top 5 histórico
 // Los cambios de pantalla pasan por `game.transition()` (fundido).
@@ -13,6 +13,7 @@ const TITLE_OPTIONS = [
   { label: 'JUGAR', action: (g) => g.transition(() => g.startRunAt(0)) },
   { label: 'SELECCIONAR PISO', action: (g) => g.transition(() => g.menu.open('floors'), 0.15) },
   { label: 'RÉCORDS', action: (g) => g.transition(() => g.menu.open('records'), 0.15) },
+  { label: 'OPCIONES', action: (g) => g.openOptions() },
 ];
 const RANK_COLORS = { S: COLORS.player, A: COLORS.weapon, B: COLORS.enemy, C: COLORS.blood };
 const DIM = '#7d6f98';
@@ -151,9 +152,11 @@ export class Menu {
   titleLayout() {
     const { width: w, height: h } = this.game.scene;
     const horizon = Math.round(h * 0.55);
+    // Separación adaptada: con cuatro opciones hay que dejar sitio a la línea de ayuda de abajo.
+    const step = Math.max(15, Math.min(20, Math.floor((h - 30 - this.game.safe.b - (horizon + 8)) / TITLE_OPTIONS.length)));
     const options = TITLE_OPTIONS.map((o, i) => {
       const tw = measureText(o.label) * 2;
-      return { x: Math.round(w / 2 - tw / 2) - 14, y: horizon + 8 + i * 20, w: tw + 28, h: 18 };
+      return { x: Math.round(w / 2 - tw / 2) - 14, y: horizon + 8 + i * step, w: tw + 28, h: step - 2 };
     });
     return { horizon, options };
   }
@@ -248,7 +251,7 @@ export class Menu {
     // Opciones sobre la rejilla, con panel oscuro para que se lean.
     const panel = { x: Math.min(...options.map((o) => o.x)) - 8, y: options[0].y - 4 };
     panel.w = Math.max(...options.map((o) => o.x + o.w)) + 8 - panel.x;
-    panel.h = options[options.length - 1].y + 22 - panel.y;
+    panel.h = options[options.length - 1].y + options[options.length - 1].h + 4 - panel.y;
     ctx.fillStyle = 'rgba(13, 2, 33, 0.78)';
     ctx.fillRect(panel.x, panel.y, panel.w, panel.h);
     ctx.fillStyle = '#3a2a55';

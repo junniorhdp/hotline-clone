@@ -172,6 +172,7 @@ export class Player {
   // pared no avanza y no pisa), alternando pie, orientada según el rumbo. La intensidad baja de
   // 1 en la primera a 1 - SOLE_FADE en la última.
   updateSoles(game, moved) {
+    if (!game.goreOn) { this.soles = 0; return; } // sin sangre: ni suelas manchadas ni huellas
     if (game.bloodUnderfoot(this.x, this.y)) {
       this.wetSoles();
       return;

@@ -57,6 +57,8 @@ HTML5 Canvas, JavaScript Vanilla (ES Modules) y Vite. Sin frameworks ni librerí
     `playerBody`, `pixelRect`, `pixelDisc`, `snap`.
   - `pixelfont.js` — fuente bitmap 5×7 propia (con tildes y Ñ) y `drawText`; cachea cada texto renderizado.
   - `input.js` — teclado, ratón y dedos (Pointer Events); distingue "mantenido" de "pulsado este paso".
+  - `settings.js` — ajustes del jugador: lista declarativa `OPTIONS` + gestor `Settings` (`localStorage`). Ver "Ajustes y menús".
+  - `options-menu.js` — menús modales de lista `ListMenu` (OPCIONES y PAUSA) con estética neón.
   - `touch.js` — controles táctiles: joysticks flotantes, botones, aim-assist y háptica; `TOUCH_CONFIG` parametriza todo; traduce dedos a la entrada del juego.
   - `utils.js` — paleta de colores y helpers matemáticos/geométricos.
 - Game loop con paso fijo a 60 FPS: `requestAnimationFrame` + acumulador de `deltaTime`;
@@ -181,6 +183,7 @@ Correspondencia entre las pantallas conceptuales y los valores reales de `game.s
 | MENU | `'menu'` | subpantallas en `game.menu.screen`: `'title'`, `'floors'`, `'records'` (`menu.js`) |
 | MASK_SELECT | `'masks'` | antes de cada piso; `Esc` vuelve al menú |
 | ARRIVAL | `'arriving'` | cinemática de llegada en moto (saltable); sin combate |
+| PAUSA | (`game.panel`) | no es un estado: menú modal sobre `playing`/`cleared` (Esc o icono de pausa) que congela el juego |
 | PLAYING | `'playing'` · `'dead'` | `playing` incluye fuera del edificio (`inside` false) y dentro con el piso bloqueado; `dead`: `R` reintenta (instantáneo), `Enter` termina la partida |
 | LEVEL_CLEAR | `'cleared'` → `'leaving'` → `'results'` | `cleared` = edificio despejado y puerta abierta, vuelve a la moto; `leaving` = se sube y se va (saltable); `results` = rango/tiempo/puntos |
 | GAME_OVER | `'gameover'` | edificio completado o muerte definitiva; Top 5. `Espacio` partida nueva, `Esc` menú |
@@ -636,11 +639,11 @@ Colores centralizados en `COLORS` (`src/utils.js`) y `PALETTE` (`src/sprites.js`
   y se desactiva al usar ratón o teclado. Sin modo táctil no se dibuja ni se procesa nada táctil.
 - **Orientación**: apaisado obligatorio. En vertical con táctil, `game.needsRotate` pausa el juego
   y muestra "GIRA EL DISPOSITIVO".
-- **Configuración** (`TOUCH_CONFIG` en `touch.js`, guardada en `localStorage` clave `neonrush.touch.v1` con
-  lectura defensiva y rangos en `RANGES`; `TouchControls.config` / `setConfig(patch)`): `joystickRadius` (px CSS, 56),
+- **Configuración** (`TOUCH_CONFIG` en `touch.js`; `TouchControls.config` / `setConfig(patch)`): `joystickRadius` (px CSS, 56),
   `buttonScale` (1), `buttonOpacity` (1), `aimAssist` (0..1, 0,5), `hapticsEnabled` (true), `moveDeadzone` (0,12),
-  `aimDeadzone` (0,15), `fireThreshold` (0,6). Todo el dibujo y la detección de toques leen de ahí: un futuro menú de
-  opciones solo tiene que llamar a `setConfig`.
+  `aimDeadzone` (0,15), `fireThreshold` (0,6). Todo el dibujo y la detección de toques leen de ahí. **La persistencia y el menú
+  los lleva `settings.js`** (ver "Ajustes y menús"): escribe en `config` al arrancar y al cambiar una opción. La antigua clave
+  `neonrush.touch.v1` ya no se usa.
 - **Controles** (`touch.js`, solo en `playing`/`cleared`):
   - Joystick izquierdo flotante → `input.moveAxis` analógico con **zona muerta reescalada** (la velocidad arranca de
     cero justo al salir de ella) y **seguimiento**: si el dedo se sale del círculo, el círculo se desplaza con él.
@@ -700,6 +703,34 @@ Colores centralizados en `COLORS` (`src/utils.js`) y `PALETTE` (`src/sprites.js`
   `viewport` sin zoom); eso también evita los clics de ratón emulados tras cada toque.
 - Audio: en táctil se desbloquea en `pointerup`/`touchend` (el navegador no lo permite en `pointerdown`).
 
+## Ajustes y menús (`settings.js`, `options-menu.js`)
+- **Datos**: `OPTIONS` es una lista declarativa; añadir una opción = añadir un objeto
+  `{ id, section, label, type, default, apply(game, valor) }` con `type` `toggle` (boolean, SÍ/NO), `step`
+  (`min`/`max`/`step`/`format`) o `choice` (`choices: [{ label, value }]`). El menú se genera solo desde la lista.
+  `Settings` guarda `{ version: 1, values: {…} }` en `localStorage` clave **`neonrush.settings.v1`** (lectura defensiva
+  con `sanitize`: JSON corrupto, tipos o valores fuera de rango → valor por defecto; escritura con try/catch). `set`/`adjust`
+  guardan y llaman a `apply`; `applyAll` (al final del constructor de `Game`) aplica lo guardado; `reset` restaura.
+- **Opciones actuales**: AUDIO `musicVolume`, `sfxVolume` (0–100 % de 10 en 10) · JUEGO `goreEnabled` · TÁCTIL `buttonScale`
+  (PEQUEÑO 0,85 / NORMAL 1 / GRANDE 1,2), `buttonOpacity` (BAJA 0,5 / MEDIA 0,75 / ALTA 1), `hapticsEnabled`,
+  `aimAssist` (SÍ = 0,5 / NO = 0). Las táctiles escriben en `touch.setConfig`.
+- **Audio** (`audio.js`): `sfx.setVolumes({ music, sfx })`. Hay un `sfxBus` nuevo entre todos los efectos (y la moto) y el master;
+  `musicBus`/`ambientBus` escalan su nivel por `musicVol` (`applyMusicMode`). `M` sigue silenciando el master por encima de ambos.
+  Con `sfxVol` en 0 no se crean nodos de efectos. Antes de que exista el `AudioContext` (primer gesto) solo se guardan.
+- **Sin sangre** (`game.goreOn`, `refreshGore`): `bleed` usa `particles.cleanKill` (chispas de neón, metal y humo) y no pinta
+  suelo/paredes; `bake`, `bloodUnderfoot`, `updateSoles` y `stainPlayer` no hacen nada (`gore` se sigue acumulando, así que
+  al reactivarla el personaje recupera su nivel); las huellas, la capa de sangre de las paredes, las variantes `_b1..5` del personaje
+  y las gotas del HUD se ocultan al instante. **Limitación conocida**: la capa de sangre del suelo también lleva los cadáveres, así
+  que lo ya manchado en el suelo se queda hasta el siguiente reinicio del piso (`R` o piso nuevo); lo nuevo sale limpio.
+- **Menús** (`ListMenu`, en `game.panel`): modal con marco doble cian/magenta y título con aberración. Items `header`, `button`
+  y `value` (opción de `OPTIONS`). Teclado: ↑/↓ (W/S) navegar · ←/→ (A/D) ajustar (se paran en los topes) · Enter/Espacio avanza
+  un paso (da la vuelta) · Esc vuelve. Ratón: moverlo selecciona, clic en el lado izquierdo/derecho del valor resta/suma, en el resto
+  avanza. Táctil: un toque es un clic (alto de fila ≈ 40 px CSS; si no cabe, se quitan las cabeceras y luego se encogen las filas).
+  Mientras hay panel `game.update` solo llama a `panel.update` (el juego y los joysticks están congelados; `touch.update` lo trata
+  como pantalla fuera de partida). Se dibuja sobre todo, bajo el cursor (`drawPanel`).
+- **Accesos**: OPCIONES en el título (`TITLE_OPTIONS` de `menu.js`) y en la PAUSA. La **pausa** (`openPause`: CONTINUAR · OPCIONES ·
+  SALIR AL MENÚ) se abre con **Esc** en `playing`/`cleared` o con el icono de pausa táctil (dos barras, bajo REINICIAR; pulsa Esc).
+  Opciones abierta desde la pausa vuelve a la pausa; desde el título, al título. Cerrar el panel da 0,25 s de cooldown al jugador.
+
 ## Debug
 - `F1` activa/desactiva el modo debug: hitboxes, conos de visión (cortados por puertas),
   líneas de visión, rutas BFS, estados de la IA (incluido aim/windup y temporizador de
@@ -715,4 +746,4 @@ Colores centralizados en `COLORS` (`src/utils.js`) y `PALETTE` (`src/sprites.js`
 `E` patada a puerta o ejecutar a un derribado en rango · `R` reintentar piso (reaparece dentro, sin repetir la llegada) ·
 `Espacio`/`Enter`/clic saltan las cinemáticas de llegada y fuga y continúan en resultados ·
 `T` mejores partidas (selección de máscara y muerte) · `Enter` en la muerte: terminar partida ·
-`F1` debug · `M` silenciar sonido y música · `V` efectos CRT on/off
+`Esc` pausa (con OPCIONES) · `F1` debug · `M` silenciar sonido y música · `V` efectos CRT on/off
