@@ -513,6 +513,12 @@ cambia de régimen todo el rato y se tiene que poder cortar limpia. Es Web Audio
   `¡DESARME!` (o `¡GOLPE!` si iba sin arma) al derribar con un arma lanzada (`cause 'thrown'`) y el **multiplicador** del combo (`x2`, `x3`…; cian, ámbar desde x3, rojo desde x5, a doble tamaño desde x4) en cada baja encadenada
   (`addScore`). Conviven con los popups de puntos (`score.popups`).
 
+### Estadísticas del intento (`game.stats`, `statsSummary`, `drawStatsPanel`)
+- Se cuentan por **intento de piso** (`newStats()` en `reset()`, así que R las reinicia): `attacks` (golpes cuerpo a cuerpo —sin patadas a puertas ni ejecuciones— y disparos, `recordAttack`), `hits` (golpes que conectan y disparos
+  cuyas balas alcanzan a alguien, `recordShotHit` por `b.shot`; el disparo defensivo y el contraataque cuentan como acierto), `kills` (cada `killEnemy`) y `uses` por arma (puños = `fists`). Resumen: `TIEMPO: m:ss` (`game.time`), `PRECISIÓN: hits/attacks`
+  (`--` sin ataques), `BAJAS` y `ARMA` favorita (la más usada, con su nombre de `WEAPON_DEFS`).
+- Un **mini panel flotante** (marco neón, 4 líneas) sale en los **resultados** (a la izquierda del bloque en pantallas de ≥ 400 px; en estrechas, una línea `BAJAS · PRECISIÓN · ARMA`; la instantánea queda en `results.stats`) y en la **pantalla de muerte**, bajo la franja `HAS MUERTO`.
+
 ### Ritmo: el jugador y la IA
 Todo está ajustado para que el combate sea frenético (entre paréntesis, el valor anterior).
 - **Jugador** (`player.js`): `SPEED` 228 (210). El movimiento ya responde al instante (no hay

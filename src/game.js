@@ -205,6 +205,7 @@ export class Game {
     this.settings = new Settings(this); // ajustes guardados (settings.js); `applyAll` los aplica al final del constructor
     this.keys.onChange = () => this.settings.save();
     this.ads = new Ads(this); // gestor de pausa para un SDK de anuncios (ads.js); sin SDK no hace nada
+    this.stats = this.newStats(); // estadísticas del intento (ver recordAttack / statsSummary)
     this.maskDrops = [];   // máscaras caídas de un portador: { x, y, mask, t } (ver dropMask)
     this.panel = null;   // menú modal abierto (OPCIONES / PAUSA, options-menu.js): congela el juego
     this.toast = null;
@@ -787,6 +788,7 @@ export class Game {
     this.state = 'results';
     this.results = this.score.finishLevel(this.time, this.par, this.enemies.length);
     this.results.last = this.levelIndex === LEVELS.length - 1;
+    this.results.stats = this.statsSummary(); // el panel se queda fijo aunque luego se reinicie el estado
     // Se guarda al completar cada piso: si se cierra la pestaña, el progreso ya cuenta.
     this.results.position = this.saveRun(this.results.last);
     this.floorStats.record(this.levelIndex + 1, this.results.rank, this.results.levelScore);
@@ -883,6 +885,7 @@ export class Game {
     this.callout = null;
     this.goalAge = 0;
     this.floatingTexts.length = 0;
+    this.stats = this.newStats();
     this.maskDrops.length = 0;
     this.scuffle = null;      // si se reinicia en pleno forcejeo: cámara y audio vuelven a la normalidad
     this.scuffleGrace = 0;
@@ -1191,6 +1194,7 @@ export class Game {
     const angle = Math.atan2(e.y - p.y, e.x - p.x);
     p.angle = angle;
     w.ammo--;
+    this.recordAttack(w.type, true);
     const cos = Math.cos(angle), sin = Math.sin(angle);
     this.particles.sparks(p.x + cos * 18, p.y + sin * 18, angle, 9, 0.5);
     this.particles.shell(p.x + cos * 6, p.y + sin * 6, angle + Math.PI / 2);
@@ -1214,6 +1218,7 @@ export class Game {
     p.angle = angle;
     p.startSwing(p.def);
     this.sfx.play('swing');
+    this.recordAttack(p.weapon ? p.weapon.type : 'fists', true);
     this.killEnemy(e, angle, 'melee');
     this.camera.addShake(8);
     p.cooldown = Math.max(p.cooldown, 0.25);
@@ -1529,6 +1534,7 @@ export class Game {
         for (const e of this.enemies) {
           if (!e.alive) continue;
           if (segmentPointDistance(b.px, b.py, b.x, b.y, e.x, e.y) < e.r + b.r) {
+            this.recordShotHit(b.shot);
             this.killEnemy(e, Math.atan2(b.vy, b.vx), 'bullet', b);
             b.alive = false;
             b.hitWall = false;
@@ -1609,6 +1615,7 @@ export class Game {
     if (e.guardKill && !e.guardKill(cause, angle, this, src)) return;
     const feel = KILL_FEEL[cause] || KILL_FEEL.bullet;
     e.alive = false;
+    this.stats.kills++;
     this.addScore(cause, e);
     this.dropWeapon(e);
     if (e.carrier) this.dropMask(e);
@@ -1676,6 +1683,58 @@ export class Game {
       const c = this.score.combo;
       this.addFloat(e.x + 12, e.y - 4, `x${c}`, c >= 5 ? COLORS.blood : c >= 3 ? COLORS.enemy : COLORS.player, c >= 4 ? 2 : 1);
     }
+  }
+
+  // --- Estadísticas del intento (panel de resultados y de muerte) ---------------------------------------------------
+  // attacks = golpes cuerpo a cuerpo (sin patadas a puertas ni ejecuciones) + disparos; hits = golpes que conectan + disparos
+  // cuyas balas alcanzan a alguien; uses = veces que se ha usado cada arma (la favorita es la más usada); kills = bajas.
+  newStats() {
+    return { attacks: 0, hits: 0, kills: 0, shotSeq: 1, hitShots: new Set(), uses: {} };
+  }
+
+  // Registra un ataque con el arma `type` ('fists' para los puños). Devuelve el id del disparo (para marcar sus aciertos).
+  recordAttack(type, hit) {
+    const st = this.stats;
+    st.attacks++;
+    st.uses[type] = (st.uses[type] || 0) + 1;
+    if (hit) st.hits++;
+    return st.shotSeq++;
+  }
+
+  recordShotHit(shotId) {
+    if (shotId && !this.stats.hitShots.has(shotId)) { this.stats.hitShots.add(shotId); this.stats.hits++; }
+  }
+
+  // Resumen para mostrar: tiempo (m:ss), precisión (%, '--' si no se atacó), bajas y arma favorita.
+  statsSummary() {
+    const st = this.stats;
+    const t = Math.max(0, Math.floor(this.time));
+    const fav = Object.entries(st.uses).sort((a, b) => b[1] - a[1])[0];
+    return {
+      time: `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`,
+      accuracy: st.attacks > 0 ? `${Math.round((st.hits / st.attacks) * 100)}%` : '--',
+      kills: st.kills,
+      favorite: fav ? (WEAPON_DEFS[fav[0]] ? WEAPON_DEFS[fav[0]].name : fav[0].toUpperCase()) : '--',
+    };
+  }
+
+  // Mini panel flotante (marco neón, 4 líneas) en (x, y); devuelve su alto.
+  drawStatsPanel(ctx, x, y, sum) {
+    const w = 128, h = 53;
+    ctx.fillStyle = 'rgba(13, 2, 33, 0.9)';
+    ctx.fillRect(x, y, w, h);
+    ctx.fillStyle = COLORS.player;
+    ctx.fillRect(x, y, w, 1); ctx.fillRect(x, y + h - 1, w, 1);
+    ctx.fillStyle = COLORS.wall;
+    ctx.fillRect(x, y, 1, h); ctx.fillRect(x + w - 1, y, 1, h);
+    drawText(ctx, 'ESTADÍSTICAS', x + w / 2, y + 4, { color: '#9d8fb8', align: 'center' });
+    const rows = [['TIEMPO', sum.time], ['PRECISIÓN', sum.accuracy], ['BAJAS', String(sum.kills)], ['ARMA', sum.favorite]];
+    rows.forEach(([label, value], i) => {
+      const ry = y + 15 + i * 9;
+      drawText(ctx, `${label}:`, x + 6, ry, { color: '#9d8fb8' });
+      drawText(ctx, value, x + w - 6, ry, { color: COLORS.text, align: 'right' });
+    });
+    return h;
   }
 
   // Recompensa del PORTADOR: al abatirlo su máscara cae al suelo con un brillo neón y se DESBLOQUEA de forma permanente (se guarda al
@@ -2256,6 +2315,14 @@ export class Game {
       drawText(ctx, `TOP ${MAX_ENTRIES} · PUESTO #${r.position}`, cx, y, { color: COLORS.enemy, align: 'center' });
       y += 12;
     }
+    // Mini panel de estadísticas: a la izquierda del bloque si cabe; en pantallas estrechas, una sola línea resumida.
+    if (r.stats) {
+      if (w >= 400) this.drawStatsPanel(ctx, Math.max(6, cx - 215) + this.safe.l, top + 14, r.stats);
+      else {
+        drawText(ctx, `BAJAS ${r.stats.kills} · PRECISIÓN ${r.stats.accuracy} · ${r.stats.favorite}`, cx, y, { color: '#9d8fb8', align: 'center' });
+        y += 12;
+      }
+    }
     if (Math.floor(performance.now() / 400) % 2 === 0) {
       const prompt = r.last
         ? this.hint('FIN DEL EDIFICIO · ESPACIO / ENTER: VER RÉCORDS', 'FIN DEL EDIFICIO · TOCA PARA VER LOS RÉCORDS')
@@ -2717,6 +2784,7 @@ export class Game {
       drawText(ctx, 'HAS MUERTO', cx, Math.round(h / 2) - 22, { color: COLORS.blood, scale: this.fitScale('HAS MUERTO', w - 12, 3), align: 'center' });
       if (!touch) drawText(ctx, 'R REINTENTAR PISO · ENTER TERMINAR PARTIDA · T RÉCORDS', cx, Math.round(h / 2) + 10, { color: COLORS.text, align: 'center' });
       if (this.showRecords) this.drawRecordsOverlay(ctx, w, h);
+      else this.drawStatsPanel(ctx, Math.round(cx - 64), Math.round(h / 2) - 26 + bandH + 6, this.statsSummary());
       this.touch.drawScreenButtons(ctx);
     }
     this.touch.draw(ctx);

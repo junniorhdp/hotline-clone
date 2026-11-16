@@ -390,7 +390,8 @@ export class Player {
         }
       }
       // Si no hay a quién pegar pero hay una puerta delante, el golpe es una patada.
-      if (!hit) game.kickDoor(this);
+      const kicked = !hit && game.kickDoor(this);
+      if (!kicked) game.recordAttack(this.weapon ? this.weapon.type : 'fists', hit); // estadísticas: golpe y si conectó
       game.camera.addShake(def.shake);
       return;
     }
@@ -402,6 +403,7 @@ export class Player {
       return;
     }
     this.weapon.ammo--;
+    const shotId = game.recordAttack(this.weapon.type, false); // estadísticas: un disparo (acierta si alguna bala suya alcanza a alguien)
     const cos = Math.cos(this.angle), sin = Math.sin(this.angle);
     let bx = this.x + cos * 14, by = this.y + sin * 14;
     if (isSolidAt(game.map, bx, by)) { bx = this.x; by = this.y; }
@@ -410,6 +412,7 @@ export class Player {
       const speed = def.bulletSpeed * this.perks.bulletSpeedMul * (def.pellets > 1 ? 0.85 + Math.random() * 0.3 : 1);
       const bl = new Bullet(bx, by, a, speed, 'player', def.range);
       bl.src = this.weapon.type; // el jefe distingue el arma (ver Boss.guardKill)
+      bl.shot = shotId;
       game.bullets.push(bl);
     }
     game.particles.sparks(this.x + cos * 22, this.y + sin * 22, this.angle, def.pellets > 1 ? 14 : 7, 0.45);
