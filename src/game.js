@@ -8,6 +8,7 @@ import { Menu } from './menu.js';
 import { TouchControls } from './touch.js';
 import { Settings } from './settings.js';
 import { Boss, drawBossBar } from './boss.js';
+import { bloodyMaskPortrait, villainPortrait, villainDef } from './portraits.js';
 import { buildOptionsMenu, buildPauseMenu } from './options-menu.js';
 import { Player, bloodLevelFor, FINISH_RANGE } from './player.js';
 import { Enemy } from './enemy.js';
@@ -45,7 +46,7 @@ const COARSE_POINTER = window.matchMedia?.('(pointer: coarse)').matches ?? false
 // cuerpo y los remates (40-60 ms) se notan más que un disparo.
 // Forcejeo (ver enemyStrike): zoom de cámara, empuje por pulsación, fuerza base del enemigo (barra/s), endurecimiento
 // por forcejeo en el piso, tope y tiempo máximo.
-const SCUFFLE = { zoom: 2, push: 0.1, base: 0.33, fatigue: 0.22, maxMult: 2.2, timeout: 7.5 };
+const SCUFFLE = { zoom: 2, push: 0.1, base: 0.33, fatigue: 0.22, maxMult: 2.2, timeout: 7.5, weaponChance: 0.12 };
 const HITSTOP = { kill: 0.05, melee: 0.055, execution: 0.07, knock: 0.035, doorKnock: 0.07, playerDeath: 0.12 };
 // Cómo se siente cada tipo de baja: `power` = cantidad de sangre y restos, `wide` = semiapertura
 // del salpicado (rad; π = en todas direcciones), `shake` = sacudida de cámara, `stop` = hit-stop
@@ -874,8 +875,8 @@ export class Game {
   }
 
   // --- Forcejeo cuerpo a cuerpo ("estilo VS") -----------------------------------------------------
-  // El golpe de un enemigo cuerpo a cuerpo (grunt o corredor) que te alcanza DE FRENTE (dentro de ~100° de
-  // hacia donde miras) ya no mata: empieza un forcejeo. Por la espalda, o si estás rematando, sigue siendo
+  // El puñetazo de un enemigo desarmado (grunt o corredor) que te alcanza DE FRENTE (dentro de ~100° de hacia
+  // donde miras) estando tú también desarmado ya no mata: empieza un forcejeo. Por la espalda, o si estás rematando, sigue siendo
   // letal. El mundo se congela, la cámara hace zoom ×2 sobre los dos y la música baja de tono y velocidad
   // (cinta que se frena). Hay que aporrear ATACAR (clic, Espacio, E, Enter o tocar el botón / el joystick)
   // para empujar la barra; el enemigo la empuja de vuelta con una fuerza que sube con cada forcejeo del piso
@@ -886,7 +887,11 @@ export class Game {
     if (this.state !== 'playing' || !p.alive) return;
     if (this.scuffleGrace > 0) { e.attackCd = 0.4; return; } // acaba de forcejear: ese golpe no cuenta
     const frontal = Math.abs(angleDiff(angle + Math.PI, p.angle)) < 1.75;
-    if (frontal && !p.exec && (e.kind === 'grunt' || e.kind === 'runner')) this.startScuffle(e, angle);
+    // Solo es un duelo a puño limpio: el enemigo va desarmado (sin arma de fuego ni cuerpo a cuerpo: un cuchillo o
+    // un bate matan al instante) y el jugador también; con un arma en la mano solo hay un `weaponChance` (12 %).
+    const bareEnemy = (e.kind === 'grunt' || e.kind === 'runner') && !e.weapon && !e.meleeWeapon;
+    const duel = frontal && !p.exec && bareEnemy && (!p.weapon || Math.random() < SCUFFLE.weaponChance);
+    if (duel) this.startScuffle(e, angle);
     else this.killPlayer(angle);
   }
 
@@ -1026,20 +1031,29 @@ export class Game {
     // Retratos y VS
     const topY = 16 + s.t;
     const frame = (x, color) => {
-      ctx.fillStyle = '#05000f'; ctx.fillRect(x - 2, topY - 2, 40, 40);
+      ctx.fillStyle = '#05000f'; ctx.fillRect(x - 2, topY - 2, 52, 52);
       ctx.fillStyle = color;
-      ctx.fillRect(x - 2, topY - 2, 40, 1); ctx.fillRect(x - 2, topY + 37, 40, 1);
-      ctx.fillRect(x - 2, topY - 2, 1, 40); ctx.fillRect(x + 37, topY - 2, 1, 40);
+      ctx.fillRect(x - 2, topY - 2, 52, 1); ctx.fillRect(x - 2, topY + 49, 52, 1);
+      ctx.fillRect(x - 2, topY - 2, 1, 52); ctx.fillRect(x + 49, topY - 2, 1, 52);
     };
-    const px = cx - 78, ex = cx + 42;
-    frame(px, COLORS.player); frame(ex, COLORS.wall);
-    ctx.drawImage(maskIcon(this.mask), px, topY, 36, 36);
-    drawSprite(ctx, sc.e.sprite || 'enemy', ex + 18, topY + 18, 0, { scale: 2 });
-    const vs = 'VS', vsScale = 4;
+    const px = cx - 104, ex = cx + 52;
+    const vdef = villainDef(sc.e.kind);
+    frame(px, COLORS.player); frame(ex, vdef.frame);
+    // Tú: el retrato de tu máscara con la sangre que llevas (nivel 0 si la sangre está desactivada).
+    ctx.drawImage(bloodyMaskPortrait(this.mask, this.goreOn ? this.player.bloodLevel : 0), px, topY, 48, 48);
+    // Él: un rostro en penumbra por tipo de enemigo; los ojos parpadean de vez en cuando.
+    ctx.drawImage(villainPortrait(sc.e.kind), ex, topY, 48, 48);
+    ctx.fillStyle = 'rgba(5, 0, 15, 0.22)';
+    ctx.fillRect(ex, topY + 24, 48, 24);
+    if (Math.floor(now / 140) % 16 === 0) {
+      ctx.fillStyle = '#07050d';
+      for (const [x, y] of vdef.eyes) ctx.fillRect(ex + x * 4, topY + y * 4, 4, 4);
+    }
+    const vs = 'VS', vsScale = 5;
     const jx = pulse ? 1 : -1;
-    drawText(ctx, vs, cx - 1 + jx, topY + 2, { color: COLORS.player, scale: vsScale, align: 'center', shadow: null });
-    drawText(ctx, vs, cx + 1 - jx, topY + 3, { color: COLORS.wall, scale: vsScale, align: 'center', shadow: null });
-    drawText(ctx, vs, cx, topY + 2, { color: '#ffffff', scale: vsScale, align: 'center', shadow: null });
+    drawText(ctx, vs, cx - 1 + jx, topY + 6, { color: COLORS.player, scale: vsScale, align: 'center', shadow: null });
+    drawText(ctx, vs, cx + 1 - jx, topY + 7, { color: vdef.frame, scale: vsScale, align: 'center', shadow: null });
+    drawText(ctx, vs, cx, topY + 6, { color: '#ffffff', scale: vsScale, align: 'center', shadow: null });
     // Barra de tensión
     const barW = Math.max(110, Math.min(220, Math.round(w * 0.46))), barH = 9 + (danger && pulse ? 2 : 0);
     const bx = cx - Math.round(barW / 2), by = h - 52 - s.b;

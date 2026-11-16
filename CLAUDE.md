@@ -28,6 +28,7 @@ HTML5 Canvas, JavaScript Vanilla (ES Modules) y Vite. Sin frameworks ni librerí
     armas, nivel de sangre del personaje y suelas manchadas (huellas).
   - `enemy.js` — IA de enemigos (patrulla, visión, persecución, búsqueda, derribado, `executing`
     mientras los rematan), tipo armado y las variantes `runner` (corredor) y `heavy` (guardia pesado).
+  - `portraits.js` — retratos de la pantalla VS del forcejeo: máscara con la sangre del personaje y rostros de villanos.
   - `boss.js` — `Boss` (subclase de `Enemy`): el jefe del piso 6, EL EJECUTOR, y su barra de vida (`drawBossBar`).
   - `doors.js` — puertas batientes: física de la hoja, empuje, patada y derribo; la puerta principal
     del edificio (`main`) se bloquea (`lock`: se cierra de golpe) y se desbloquea (`unlock`).
@@ -502,9 +503,11 @@ Alcance en unidades del mundo (1 casilla = 32). Cadencia = segundos entre ataque
   esquinas funciona). Al morir o ser derribado suelta su arma.
 
 ### Forcejeo cuerpo a cuerpo ("estilo VS", `game.js`: `enemyStrike`, `startScuffle`, `updateScuffle`, `drawScuffleFx/UI`)
-El golpe de un enemigo cuerpo a cuerpo (`grunt` o `runner`; no el pesado, que dispara, ni el jefe, cuyo tajo y embestida siguen siendo letales) ya no
-mata de frente: `Enemy.updateChase` llama a `game.enemyStrike(e, ángulo)`, que mira si el enemigo está **dentro de ~100° de hacia donde miras**
-(`|angleDiff(ángulo+π, p.angle)| < 1,75`) y no estás rematando → **forcejeo**; por la espalda sigue siendo `killPlayer`. Tras un forcejeo hay 0,6 s de
+El puñetazo de un enemigo **desarmado** (`grunt` o `runner`; no el pesado ni los armados, que disparan, ni el jefe, cuyo tajo y embestida siguen siendo letales) ya no
+mata de frente **si tú también vas a puño limpio**: `Enemy.updateChase` llama a `game.enemyStrike(e, ángulo)`, que mira si el enemigo está **dentro de ~100° de hacia donde miras**
+(`|angleDiff(ángulo+π, p.angle)| < 1,75`) y no estás rematando → **forcejeo** si no llevas arma; **con un arma en la mano solo con un 12 %** (`SCUFFLE.weaponChance`) y si no
+mata al instante. Un enemigo con arma (de fuego, o cuerpo a cuerpo si algún día la lleva: `e.meleeWeapon`) mata siempre al instante, igual que por la espalda (`killPlayer`).
+Así el forcejeo queda reservado a los duelos a puño limpio. Tras un forcejeo hay 0,6 s de
 inmunidad al cuerpo a cuerpo (`scuffleGrace`).
 - **Estado** `'scuffle'` (`this.scuffle = { e, bar, t, mult, surge, … }`): el mundo se congela (solo corre `updateScuffle`, partículas a ×0,35).
   Se mira a la cara; `Esc` no pausa; `R` reinicia (`reset()` limpia `scuffle`, zoom y audio).
@@ -515,6 +518,11 @@ inmunidad al cuerpo a cuerpo (`scuffleGrace`).
   La pulsación que llena la barra gana antes de que el empuje la baje.
 - **Fatiga**: `resistencia = min(2,2, 1 + 0,22 × (forcejeos del piso − 1))`, mostrada como `RESISTENCIA X1,7`. `scuffleCount` se reinicia al empezar piso o partida y **se
   conserva con R** (como la sangre). Medido (pulsaciones/s necesarias): 1.º ≈ 5/s, 3.º ≈ 6-7/s, 8.º ≈ 10/s.
+- **Retratos** (`src/portraits.js`; 48×48 px en marcos de 52): el tuyo es `bloodyMaskPortrait(máscara, player.bloodLevel)`: el retrato de frente de la máscara (el de las
+  tarjetas) a 24×24 con gotas sobre los píxeles opacos en un orden fijo por máscara (semilla), 0/7/16/28/42/60 según el nivel de sangre, con la antigua más oscura, coágulos 2×2,
+  regueros que solo bajan por la máscara y brillos húmedos; con `goreEnabled` apagado sale limpia (nivel 0). El del rival es `villainPortrait(kind)`: un rostro 12×12 en penumbra por tipo
+  (`grunt`: gorra morada, ojos ámbar, cicatriz y mandíbula; `runner`: capucha rosa, pañuelo cian y rendijas de neón), con marco y `VS` del color del villano, sombra sobre la mitad
+  inferior y ojos que parpadean cada ~2 s. Para añadir un villano: entrada en `VILLAINS` (`rows`, `palette`, `eyes`, `frame`).
 - **Zoom** (`Camera`: `base` × `mul`, `zoom` es un getter; `mulTarget` 2 y se acerca con `1 − e^(−9dt)`; el seguimiento va más rápido, centrado en el punto medio
   de los dos). Vuelve a 1 al resolverse. Es un múltiplo exacto (×2), así el pixel art sigue nítido.
 - **Filtro VS** (`drawScuffleFx`, intensidad `scuffleI` suavizada): tinte `overlay` magenta/cian que alterna cada 120 ms, viñeta escalonada de 7 anillos,
