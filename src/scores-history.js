@@ -9,12 +9,16 @@
 //   - combo     combo máximo de la partida
 //   - mask      id de la máscara usada en el último piso, maskName su nombre visible
 //   - date      marca de tiempo (ms desde 1970) o null en entradas heredadas
+//   - initials  firma de arcade: 1-4 caracteres A-Z / 0-9 (puede llevar espacios en medio) o null en entradas antiguas
+//   La última firma usada se guarda aparte (SIGNATURE_KEY) para dejarla preseleccionada en la partida siguiente.
 //
 // Datos antiguos: si no existe la clave nueva pero sí `neonrush.highscore` (versión anterior,
 // un único número), se migra como una entrada "heredada". Cualquier JSON corrupto o entrada
 // inválida se descarta en la lectura; nunca se escribe nada que no sea el formato válido.
 const STORAGE_KEY = 'neonrush.scores.v1';
 const LEGACY_KEY = 'neonrush.highscore';
+const SIGNATURE_KEY = 'neonrush.signature.v1';
+export const INITIALS_MAX = 4;
 const VERSION = 1;
 export const MAX_ENTRIES = 5;
 
@@ -37,6 +41,13 @@ function toText(v, maxLen) {
   return typeof v === 'string' && v.length > 0 ? v.slice(0, maxLen) : null;
 }
 
+// Iniciales válidas: 1-4 caracteres A-Z / 0-9 / espacio, en mayúsculas y sin espacios en los extremos; si no, null.
+export function cleanInitials(v) {
+  if (typeof v !== 'string') return null;
+  const t = v.toUpperCase().replace(/[^A-Z0-9 ]/g, '').slice(0, INITIALS_MAX).trim();
+  return t.length ? t : null;
+}
+
 // Devuelve una entrada saneada o null si no es aprovechable.
 function sanitize(raw) {
   if (!raw || typeof raw !== 'object') return null;
@@ -52,6 +63,7 @@ function sanitize(raw) {
     mask: toText(raw.mask, 16),
     maskName: toText(raw.maskName, 16),
     date: toInt(raw.date, 0, 8.64e15),
+    initials: cleanInitials(raw.initials),
   };
 }
 
@@ -118,9 +130,37 @@ export class ScoreHistory {
   record(entry) {
     const clean = sanitize(entry);
     if (!clean) return 0;
+    // Una partida se actualiza al completar cada piso: conserva las iniciales que ya tuviera si la nueva entrada no las trae.
+    const prev = this.entries.find((e) => e.id === clean.id);
+    if (!clean.initials && prev) clean.initials = prev.initials;
     this.entries = sortAndTrim([...this.entries.filter((e) => e.id !== clean.id), clean]);
     this.save();
     return this.positionOf(clean.id);
+  }
+
+  // Firma la entrada de una partida (al registrar un récord) y la recuerda como última firma.
+  setInitials(id, text) {
+    const name = cleanInitials(text);
+    const e = this.entries.find((x) => x.id === id);
+    if (!name) return false;
+    if (e) e.initials = name;
+    this.save();
+    this.saveSignature(name);
+    return true;
+  }
+
+  // Última firma usada ('' si no hay): preseleccionada al registrar el siguiente récord.
+  lastInitials() {
+    const ls = storage();
+    if (!ls) return this.signature || '';
+    try { return cleanInitials(ls.getItem(SIGNATURE_KEY)) || ''; } catch { return this.signature || ''; }
+  }
+
+  saveSignature(name) {
+    this.signature = name;
+    const ls = storage();
+    if (!ls) return;
+    try { ls.setItem(SIGNATURE_KEY, name); } catch { /* cuota o modo privado: dura la sesión */ }
   }
 
   positionOf(id) {

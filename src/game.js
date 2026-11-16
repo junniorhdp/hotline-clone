@@ -3,7 +3,7 @@ import { LEVELS, TILE, loadLevel, isSolidAt, isStructuralWall, castRay, doorHitT
 import { renderFloor, renderWalls, renderProps } from './decor.js';
 import { Score, COMBO_WINDOW } from './score.js';
 import { MASKS, maskEffects, maskIcon } from './masks.js';
-import { ScoreHistory, FloorStats, MAX_ENTRIES, newRunId, formatDate } from './scores-history.js';
+import { ScoreHistory, FloorStats, MAX_ENTRIES, INITIALS_MAX, newRunId, formatDate } from './scores-history.js';
 import { Menu } from './menu.js';
 import { TouchControls } from './touch.js';
 import { Settings } from './settings.js';
@@ -506,6 +506,7 @@ export class Game {
       mask: this.mask.id,
       maskName: this.mask.name,
       date: Date.now(),
+      initials: this.history.lastInitials() || null, // hasta que se firme, lleva la última firma usada
     });
   }
 
@@ -513,10 +514,192 @@ export class Game {
   endRun(completed) {
     const position = this.saveRun(completed);
     this.runSummary = { completed, score: this.score.total, position, newRecord: this.score.isRecord };
-    this.state = 'gameover';
     this.showRecords = false;
     this.sfx.setMusic('menu');
-    if (position) this.sfx.play('clear');
+    if (position) {
+      // Entra en la tabla: antes de enseñarla, se pide la firma (iniciales de arcade).
+      this.startInitials(position);
+      this.sfx.play('clear');
+    } else {
+      this.state = 'gameover';
+    }
+  }
+
+  // --- Firma del récord (iniciales de arcade) -----------------------------------------------------
+  // Estado 'initials': hasta INITIALS_MAX caracteres A-Z / 0-9 / blanco. PC: escribir (A-Z, 0-9; Espacio = blanco),
+  // Retroceso borra, flechas ↑/↓ cambian la letra de la casilla y ←/→ de casilla, Enter confirma. Táctil (y también con
+  // ratón): botones ▲ ▼ sobre y bajo cada casilla, ⌫ y un gran CONFIRMAR, sin teclado del sistema. La última firma
+  // usada sale preseleccionada. Al confirmar se guarda en la entrada (`history.setInitials`) y se enseña la tabla.
+  startInitials(position) {
+    const last = this.history.lastInitials();
+    const chars = Array.from({ length: INITIALS_MAX }, (_, i) => last[i] || ' ');
+    this.initials = { chars, cursor: Math.min(last.length, INITIALS_MAX - 1), position, shake: 0 };
+    this.state = 'initials';
+    this.input.pressed.clear(); // la tecla con la que se murió no se escribe
+  }
+
+  initialsText() {
+    return this.initials.chars.join('').trim();
+  }
+
+  // Casillas y botones (compartido por dibujo y puntero). Tamaño pensado para el dedo en táctil.
+  initialsLayout() {
+    const w = this.scene.width, h = this.scene.height, s = this.safe;
+    const touch = this.input.touchMode;
+    const cell = touch ? clamp(Math.round(this.touch.px(46)), 22, 38) : 24;
+    const gap = 6, n = INITIALS_MAX;
+    const rowW = n * cell + (n - 1) * gap;
+    const x0 = Math.round((w - rowW) / 2);
+    const slotH = Math.round(cell * 1.25), arrH = Math.round(cell * 0.7);
+    const yUp = Math.max(66, Math.round(h * 0.3)) + s.t;
+    const yS = yUp + arrH + 3, yD = yS + slotH + 3, yB = yD + arrH + 8;
+    const slots = [], ups = [], downs = [];
+    for (let i = 0; i < n; i++) {
+      const x = x0 + i * (cell + gap);
+      ups.push({ x, y: yUp, w: cell, h: arrH });
+      slots.push({ x, y: yS, w: cell, h: slotH });
+      downs.push({ x, y: yD, w: cell, h: arrH });
+    }
+    const bh = arrH + 4, backW = Math.round(cell * 1.5);
+    const back = { x: x0, y: yB, w: backW, h: bh };
+    const ok = { x: x0 + backW + gap, y: yB, w: rowW - backW - gap, h: bh };
+    return { slots, ups, downs, back, ok, cell, rowW, x0, yB, bh };
+  }
+
+  cycleInitial(i, dir) {
+    const set = ' ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+    const st = this.initials;
+    const k = set.indexOf(st.chars[i]);
+    st.chars[i] = set[(k + dir + set.length) % set.length];
+    st.cursor = i;
+    this.sfx.play('empty');
+  }
+
+  typeInitial(ch) {
+    const st = this.initials;
+    st.chars[st.cursor] = ch;
+    st.cursor = Math.min(INITIALS_MAX - 1, st.cursor + 1);
+    this.sfx.play('pickup');
+  }
+
+  backInitial() {
+    const st = this.initials;
+    if (st.chars[st.cursor] !== ' ') st.chars[st.cursor] = ' ';
+    else if (st.cursor > 0) { st.cursor--; st.chars[st.cursor] = ' '; }
+    this.sfx.play('empty');
+  }
+
+  confirmInitials() {
+    const st = this.initials, name = this.initialsText();
+    if (!name) { st.shake = 1; this.sfx.play('empty'); return; } // al menos una letra
+    this.history.setInitials(this.runId, name);
+    this.initials = null;
+    this.state = 'gameover';
+    this.sfx.play('clear');
+  }
+
+  updateInitials(dt) {
+    const st = this.initials, input = this.input;
+    st.shake = Math.max(0, st.shake - dt * 4);
+    for (const code of input.pressed) {
+      let m;
+      if ((m = /^Key([A-Z])$/.exec(code))) this.typeInitial(m[1]);
+      else if ((m = /^(?:Digit|Numpad)(\d)$/.exec(code))) this.typeInitial(m[1]);
+      else if (code === 'Space') this.typeInitial(' ');
+      else if (code === 'Backspace' || code === 'Delete') this.backInitial();
+      else if (code === 'ArrowUp') this.cycleInitial(st.cursor, 1);
+      else if (code === 'ArrowDown') this.cycleInitial(st.cursor, -1);
+      else if (code === 'ArrowLeft') st.cursor = Math.max(0, st.cursor - 1);
+      else if (code === 'ArrowRight') st.cursor = Math.min(INITIALS_MAX - 1, st.cursor + 1);
+      else if (code === 'Enter' || code === 'NumpadEnter') { this.confirmInitials(); return; }
+    }
+    // Ratón / toque: ▲ ▼ sobre cada casilla, tocar una casilla la selecciona, ⌫ y CONFIRMAR.
+    if (input.mousePressed.left) {
+      const L = this.initialsLayout(), m = this.mouseInternal();
+      const inside = (r) => m.x >= r.x && m.x < r.x + r.w && m.y >= r.y && m.y < r.y + r.h;
+      for (let i = 0; i < INITIALS_MAX; i++) {
+        if (inside(L.ups[i])) this.cycleInitial(i, 1);
+        else if (inside(L.downs[i])) this.cycleInitial(i, -1);
+        else if (inside(L.slots[i])) { st.cursor = i; this.sfx.play('empty'); }
+      }
+      if (inside(L.back)) { this.backInitial(); this.touch.haptic(8); }
+      else if (inside(L.ok)) { this.confirmInitials(); this.touch.haptic(15); }
+    }
+  }
+
+  // Pantalla "¡NUEVO RÉCORD! INGRESA TUS INICIALES" estilo máquina recreativa.
+  drawInitials(ctx, w, h) {
+    const st = this.initials, s = this.runSummary;
+    ctx.fillStyle = 'rgba(13, 2, 33, 0.94)';
+    ctx.fillRect(0, 0, w, h);
+    const cx = Math.round(w / 2), now = performance.now();
+    const title = s.newRecord ? '¡NUEVO RÉCORD!' : `¡ENTRAS EN EL TOP ${MAX_ENTRIES}!`;
+    ctx.save();
+    const tc = this.recordColor();
+    ctx.shadowColor = tc;
+    ctx.shadowBlur = 10;
+    drawText(ctx, title, cx, 8 + this.safe.t, { color: tc, scale: this.fitScale(title, w - 12, 2), align: 'center', shadow: null });
+    ctx.restore();
+    drawText(ctx, 'INGRESA TUS INICIALES', cx, 28 + this.safe.t, { color: COLORS.text, scale: this.fitScale('INGRESA TUS INICIALES', w - 12, 2), align: 'center', shadow: COLORS.wall });
+    drawText(ctx, `${this.placeLabel(st.position)} · ${s.score.toLocaleString('es')} PTS`, cx, 49 + this.safe.t, { color: COLORS.enemy, align: 'center' });
+
+    const L = this.initialsLayout();
+    const tri = (r, up, color) => {
+      // Triángulo de píxeles (▲ / ▼) centrado en el botón.
+      const rows = Math.max(3, Math.min(8, Math.floor(r.h * 0.5)));
+      ctx.fillStyle = color;
+      for (let k = 0; k < rows; k++) {
+        const wd = 2 * (up ? k : rows - 1 - k) + 1;
+        ctx.fillRect(Math.round(r.x + r.w / 2 - wd / 2), Math.round(r.y + r.h / 2 - rows / 2 + k), wd, 1);
+      }
+    };
+    const box = (r, color, fill) => {
+      ctx.fillStyle = fill; ctx.fillRect(r.x, r.y, r.w, r.h);
+      ctx.fillStyle = color;
+      ctx.fillRect(r.x, r.y, r.w, 1); ctx.fillRect(r.x, r.y + r.h - 1, r.w, 1);
+      ctx.fillRect(r.x, r.y, 1, r.h); ctx.fillRect(r.x + r.w - 1, r.y, 1, r.h);
+    };
+    const shake = st.shake > 0 ? (Math.floor(now / 40) % 2 ? 2 : -2) * st.shake : 0;
+    for (let i = 0; i < INITIALS_MAX; i++) {
+      const sel = i === st.cursor, blink = Math.floor(now / 350) % 2 === 0;
+      box(L.ups[i], sel ? COLORS.wall : '#3a2a55', '#140a24'); tri(L.ups[i], true, sel ? COLORS.wall : '#7d6f98');
+      box(L.downs[i], sel ? COLORS.wall : '#3a2a55', '#140a24'); tri(L.downs[i], false, sel ? COLORS.wall : '#7d6f98');
+      const r = { x: L.slots[i].x + shake, y: L.slots[i].y, w: L.slots[i].w, h: L.slots[i].h };
+      box(r, sel ? COLORS.player : '#3a2a55', sel ? '#16103a' : '#0d0221');
+      const ch = st.chars[i];
+      ctx.save();
+      if (sel) { ctx.shadowColor = COLORS.player; ctx.shadowBlur = 8; }
+      if (ch !== ' ') {
+        const sc = L.cell >= 30 ? 4 : 3;
+        drawText(ctx, ch, r.x + r.w / 2, r.y + Math.round((r.h - CELL_H * sc) / 2), { color: sel ? '#ffffff' : COLORS.player, scale: sc, align: 'center', shadow: null });
+      } else if (!sel || blink) {
+        ctx.fillStyle = sel ? COLORS.player : '#4a3d66';
+        ctx.fillRect(r.x + 4, r.y + r.h - 7, r.w - 8, 2); // casilla vacía: guion bajo
+      }
+      ctx.restore();
+    }
+    // ⌫ (flecha izquierda con "x") y CONFIRMAR
+    box(L.back, '#7d6f98', '#140a24');
+    ctx.fillStyle = COLORS.text;
+    const by = Math.round(L.back.y + L.back.h / 2), bx = Math.round(L.back.x + L.back.w / 2);
+    for (let k = 0; k < 4; k++) ctx.fillRect(bx - 8 + k, by - 3 + k, 1, 7 - 2 * k); // punta de flecha
+    ctx.fillRect(bx - 4, by - 1, 12, 3);
+    const okReady = !!this.initialsText();
+    const pulse = okReady && Math.floor(now / 250) % 2 === 0;
+    ctx.save();
+    if (okReady) { ctx.shadowColor = COLORS.wall; ctx.shadowBlur = 9; }
+    box(L.ok, okReady ? (pulse ? '#ffffff' : COLORS.wall) : '#3a2a55', okReady ? '#2a0d3a' : '#140a24');
+    ctx.restore();
+    const okTxt = 'CONFIRMAR';
+    drawText(ctx, okTxt, L.ok.x + L.ok.w / 2, L.ok.y + Math.round((L.ok.h - CELL_H * this.fitScale(okTxt, L.ok.w - 8, 2)) / 2),
+      { color: okReady ? COLORS.text : '#4a3d66', scale: this.fitScale(okTxt, L.ok.w - 8, 2), align: 'center', shadow: null });
+    if (!this.input.touchMode) {
+      drawText(ctx, 'ESCRIBE · FLECHAS: LETRA Y CASILLA · RETROCESO: BORRAR · ENTER: CONFIRMAR', cx, h - 12 - this.safe.b, { color: '#7d6f98', align: 'center' });
+    }
+  }
+
+  placeLabel(n) {
+    return ['1ST', '2ND', '3RD', '4TH', '5TH'][n - 1] || `${n}TH`;
   }
 
   newRun() {
@@ -686,10 +869,11 @@ export class Game {
     // En vertical (táctil) todo queda en pausa hasta que se gire el dispositivo.
     if (this.needsRotate) return;
     // Estas teclas funcionan siempre, incluso durante el hit-stop o muerto.
-    if (input.wasPressed('F1')) this.debug = !this.debug;
-    if (input.wasPressed('KeyM')) this.sfx.toggleMute();
+    if (input.wasPressed('F1') && this.state !== 'initials') this.debug = !this.debug;
+    const typing = this.state === 'initials'; // escribiendo la firma: M, V y F1 son letras
+    if (input.wasPressed('KeyM') && !typing) this.sfx.toggleMute();
     // V: completos ↔ desactivados (si estaban en modo ligero automático, vuelve a completos).
-    if (input.wasPressed('KeyV')) {
+    if (input.wasPressed('KeyV') && !typing) {
       if (this.fx.lite) { this.fx.lite = false; this.fx.enabled = true; } else this.fx.enabled = !this.fx.enabled;
     }
     const confirm = input.wasPressed('Space') || input.wasPressed('Enter') || input.wasPressed('NumpadEnter');
@@ -699,6 +883,7 @@ export class Game {
     // Menú modal abierto (OPCIONES / PAUSA): el juego está congelado y solo él lee la entrada.
     if (this.panel) { this.panel.update(); return; }
     if (this.state === 'menu') { this.menu.update(); return; }
+    if (this.state === 'initials') { this.updateInitials(dt); return; }
     if (this.state === 'gameover') {
       if (confirm) this.transition(() => this.newRun());
       else if (back) this.transition(() => this.openMenu());
@@ -1913,11 +2098,12 @@ export class Game {
     return Math.floor(performance.now() / 180) % 2 ? COLORS.enemy : COLORS.wall;
   }
 
-  // Tabla del Top 5 centrada en `y`. Resalta la fila de la partida `highlightId`.
+  // Tabla HIGH SCORES (estilo recreativa) centrada en `y`: puesto (1ST, 2ND…), iniciales en neón, puntos, piso, combo,
+  // máscara y fecha. La fila de la partida `highlightId` (la que se acaba de firmar) destella.
   drawRecordsTable(ctx, w, y, highlightId) {
     const cols = [
-      { label: '#', x: 0 }, { label: 'PUNTOS', x: 70, align: 'right' }, { label: 'PISO', x: 82 },
-      { label: 'COMBO', x: 116 }, { label: 'MÁSCARA', x: 152 }, { label: 'FECHA', x: 208 },
+      { label: 'POS', x: 0 }, { label: 'NOMBRE', x: 28 }, { label: 'PUNTOS', x: 122, align: 'right' }, { label: 'PISO', x: 132 },
+      { label: 'COMBO', x: 160 }, { label: 'MÁSCARA', x: 196 }, { label: 'FECHA', x: 244 },
     ];
     const tableW = 292;
     const x0 = Math.round((w - tableW) / 2);
@@ -1925,24 +2111,34 @@ export class Game {
     ctx.fillStyle = '#3a2a55';
     ctx.fillRect(x0, y + 10, tableW, 1);
     y += 14;
+    const now = performance.now();
     for (let i = 0; i < MAX_ENTRIES; i++) {
       const e = this.history.entries[i];
       const rowY = y + i * 11;
       if (!e) {
-        drawText(ctx, `${i + 1}.  ---`, x0, rowY, { color: '#4a3d66' });
+        drawText(ctx, `${this.placeLabel(i + 1)}  ---`, x0, rowY, { color: '#4a3d66' });
         continue;
       }
       const mine = e.id === highlightId;
       if (mine) {
-        ctx.fillStyle = 'rgba(255, 42, 133, 0.25)';
+        // Destello de la fila recién registrada: fondo que alterna rosa/ámbar y marcador parpadeante.
+        const f = Math.floor(now / 220) % 2;
+        ctx.fillStyle = f ? 'rgba(255, 42, 133, 0.32)' : 'rgba(255, 190, 11, 0.22)';
         ctx.fillRect(x0 - 3, rowY - 1, tableW + 6, 11);
-        if (Math.floor(performance.now() / 300) % 2) drawText(ctx, '>', x0 - 10, rowY, { color: COLORS.wall });
+        if (Math.floor(now / 300) % 2) drawText(ctx, '>', x0 - 10, rowY, { color: COLORS.wall });
       }
       const color = mine ? COLORS.player : COLORS.text;
       const floor = e.completed ? 'FIN' : e.floor ? `${e.floor}/${LEVELS.length}` : '-';
-      const values = [`${i + 1}.`, e.score.toLocaleString('es'), floor, e.date ? `X${e.combo}` : '-',
-        MASKS.find((m) => m.id === e.mask)?.name || e.maskName || '-', formatDate(e.date)];
-      cols.forEach((c, k) => drawText(ctx, values[k], x0 + c.x, rowY, { color, align: c.align || 'left' }));
+      const values = [this.placeLabel(i + 1), '', e.score.toLocaleString('es'), floor, e.date ? `X${e.combo}` : '-',
+        MASKS.find((m) => m.id === e.mask)?.name || e.maskName || '-', e.date ? formatDate(e.date).slice(0, 8) : 'ANTES'];
+      cols.forEach((c, k) => { if (k !== 1) drawText(ctx, values[k], x0 + c.x, rowY, { color, align: c.align || 'left' }); });
+      // Iniciales en neón brillante (cian / blanco cálido en la fila propia), con halo.
+      ctx.save();
+      const neon = mine ? (Math.floor(now / 220) % 2 ? '#ffffff' : COLORS.enemy) : COLORS.player;
+      ctx.shadowColor = mine ? COLORS.wall : COLORS.player;
+      ctx.shadowBlur = mine ? 9 : 5;
+      drawText(ctx, e.initials || '???', x0 + cols[1].x, rowY, { color: neon, shadow: null });
+      ctx.restore();
     }
   }
 
@@ -1972,7 +2168,7 @@ export class Game {
       drawText(ctx, `NO ENTRA EN EL TOP ${MAX_ENTRIES}`, cx, 54, { color: '#7d6f98', align: 'center' });
     }
 
-    drawText(ctx, 'MEJORES PARTIDAS', cx, 78, { color: COLORS.wall, align: 'center' });
+    drawText(ctx, 'HIGH SCORES', cx, 78, { color: COLORS.wall, align: 'center' });
     this.drawRecordsTable(ctx, w, 92, this.runId);
     if (Math.floor(performance.now() / 400) % 2 === 0) {
       // En táctil esta zona la ocupan los botones NUEVA PARTIDA / MENÚ.
@@ -1986,7 +2182,7 @@ export class Game {
     ctx.fillRect(0, 0, w, h);
     const cx = Math.round(w / 2);
     const top = Math.max(10, Math.round(h / 2 - 60));
-    drawText(ctx, 'MEJORES PARTIDAS', cx, top, { color: COLORS.wall, scale: 2, align: 'center' });
+    drawText(ctx, 'HIGH SCORES', cx, top, { color: COLORS.wall, scale: 2, align: 'center' });
     if (!this.history.entries.length) drawText(ctx, 'TODAVÍA NO HAY PARTIDAS GUARDADAS', cx, top + 26, { color: '#7d6f98', align: 'center' });
     this.drawRecordsTable(ctx, w, top + 38, this.runId);
     if (!this.input.touchMode) drawText(ctx, 'T / ESC: CERRAR', cx, top + 38 + 14 + MAX_ENTRIES * 11 + 10, { color: COLORS.player, align: 'center' });
@@ -2200,6 +2396,12 @@ export class Game {
       if (this.showRecords) this.drawRecordsOverlay(ctx, w, h);
       this.touch.drawScreenButtons(ctx);
       this.drawToast(ctx);
+      this.drawPanel(ctx, w, h);
+      this.drawCrosshair(ctx);
+      return;
+    }
+    if (this.state === 'initials') {
+      this.drawInitials(ctx, w, h);
       this.drawPanel(ctx, w, h);
       this.drawCrosshair(ctx);
       return;

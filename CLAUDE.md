@@ -205,6 +205,7 @@ Correspondencia entre las pantallas conceptuales y los valores reales de `game.s
 | PAUSA | (`game.panel`) | no es un estado: menú modal sobre `playing`/`cleared` (Esc o icono de pausa) que congela el juego |
 | PLAYING | `'playing'` · `'dead'` | `playing` incluye fuera del edificio (`inside` false) y dentro con el piso bloqueado; `dead`: `R` reintenta (instantáneo), `Enter` termina la partida |
 | LEVEL_CLEAR | `'cleared'` → `'leaving'` → `'results'` | `cleared` = edificio despejado y puerta abierta, vuelve a la moto; `leaving` = se sube y se va (saltable); `results` = rango/tiempo/puntos |
+| INITIALS | `'initials'` | solo si la partida entra en el Top 5: pantalla "¡NUEVO RÉCORD! INGRESA TUS INICIALES" antes de `gameover`; ver "Firma de récords" |
 | GAME_OVER | `'gameover'` | edificio completado o muerte definitiva; Top 5. `Espacio` partida nueva, `Esc` menú |
 
 Flujo: arranque → `menu/title` → JUGAR (o un piso desbloqueado en `floors`) → `startRunAt(i)` →
@@ -230,11 +231,21 @@ siguiente piso (`goToLevel`) … tras el último → `gameover` → `menu` o par
   jugador y salida), nº de enemigos/armados, mejor rango y mejor puntuación del piso.
 - Empezar en el piso N inicia una partida nueva desde ese piso (puntuación desde 0).
 
+## Firma de récords (iniciales de arcade, estado `'initials'`)
+- `endRun` (edificio completado o muerte definitiva) guarda la partida y, **si entra en el Top 5** (`position` > 0), abre `startInitials` en vez de la tabla: título `¡NUEVO RÉCORD!` (o `¡ENTRAS EN EL TOP 5!`), `INGRESA TUS INICIALES`, el puesto (`1ST`…) y los puntos. Al confirmar
+  (`confirmInitials` → `history.setInitials(runId, texto)`) pasa a `gameover` con la tabla y la fila recién firmada destellando. Sin puntos / fuera del Top no se pide nada.
+- **4 casillas** (`INITIALS_MAX`) con A-Z, 0-9 y blanco; al menos 1 carácter (con todo en blanco, CONFIRMAR no hace nada y la fila tiembla). Las iniciales salen **preseleccionadas con la última firma**, así que confirmar rápido es solo Enter / OK.
+- **PC**: escribir (A-Z, 0-9; Espacio = blanco; avanza solo) · Retroceso/Supr borra (y retrocede si la casilla ya estaba vacía) · ↑/↓ cambian la letra de la casilla · ←/→ cambian de casilla · Enter confirma. Mientras se escribe, `M`, `V`, `R`, `T` y F1 son letras (los atajos globales se desactivan en este estado).
+- **Táctil y ratón** (sin teclado del sistema): botones **▲ / ▼** sobre y bajo cada casilla (triángulos de píxeles), tocar una casilla la selecciona, **⌫** y un gran **CONFIRMAR** que late en neón. Tamaño por dedo (`touch.px(46)`, 22-38 px internos) y colocado con `initialsLayout()`, que comparten dibujo y puntero.
+- **Tabla HIGH SCORES** (`drawRecordsTable`, también en el menú y con `T`): `1ST/2ND/3RD…`, **iniciales en neón** con halo (`???` si no hay), puntos, piso (`n/6` o `FIN`), combo, máscara y fecha; la fila de la partida recién firmada alterna fondo rosa/ámbar, marcador `>` y las iniciales en blanco/ámbar.
+
 ## Guardado de récords (`scores-history.js`)
 - Clave `neonrush.scores.v1` en `localStorage`, JSON:
-  `{ version: 1, entries: [{ id, score, floor, completed, combo, mask, maskName, date }] }`
+  `{ version: 1, entries: [{ id, score, floor, completed, combo, mask, maskName, date, initials }] }`
   (máx. 5, ordenadas por `score` desc.). `id` = partida (`newRunId()`); `floor` = piso máximo
   alcanzado; `date` = ms epoch (null en entradas heredadas).
+- `initials` = la **firma de arcade** (1-4 caracteres A-Z / 0-9, `cleanInitials`; `null`/`???` en entradas antiguas). `record()` conserva las iniciales ya puestas al actualizar la entrada de la misma partida, y
+  `saveRun` le pone la última firma usada hasta que se firme. La **última firma** se guarda aparte en `neonrush.signature.v1` (`lastInitials()`/`saveSignature`).
 - Una partida = una entrada que se **actualiza** (misma `id`): se guarda al completar cada piso
   (`saveRun` en `results`) y al terminar (`endRun`). Partidas con 0 puntos no se guardan.
 - Lectura defensiva: JSON corrupto, `entries` que no es array o entradas inválidas se descartan

@@ -374,7 +374,7 @@ export class Menu {
     ctx.fillRect(0, 0, w, h);
     const cx = Math.round(w / 2);
     const top = Math.max(8, Math.round(h / 2 - 66));
-    drawText(ctx, 'MEJORES PARTIDAS', cx, top, { color: COLORS.wall, scale: 2, align: 'center' });
+    drawText(ctx, 'HIGH SCORES', cx, top, { color: COLORS.wall, scale: 2, align: 'center' });
     if (!g.history.entries.length) drawText(ctx, 'TODAVÍA NO HAY PARTIDAS GUARDADAS', cx, top + 24, { color: DIM, align: 'center' });
     g.drawRecordsTable(ctx, w, top + 38, null);
     drawText(ctx, g.hint('ESC / ENTER: VOLVER', 'TOCA PARA VOLVER'), cx, h - 12 - g.safe.b, { color: COLORS.player, align: 'center' });
