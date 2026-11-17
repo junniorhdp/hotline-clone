@@ -250,7 +250,7 @@ export class Enemy {
     let p = game.player;
     this.sees = p.alive && this.canSee(p, game.map);
     const pt = game.partner;
-    if (!this.sees && pt && pt.alive && this.canSee(pt, game.map)) { p = pt; this.sees = true; }
+    if (!this.sees && pt && pt.alive && !pt.away && this.canSee(pt, game.map)) { p = pt; this.sees = true; }
     this.focus = p;
     if (this.state !== 'patrol') { this.seated = false; this.smoking = false; } // se levanta / tira el cigarrillo en cuanto pasa algo
     if (this.sees) {

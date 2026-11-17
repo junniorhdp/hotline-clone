@@ -58,6 +58,12 @@ export class Particles {
     this.add({ type: 'dust', x, y, vx: rand(-8, 8), vy: -rand(10, 24), life, max: life, size: rand(2, 3) });
   }
 
+  // Gas tóxico (piso 10): nube verde que sube y se expande despacio.
+  gas(x, y) {
+    const life = rand(1.4, 2.4);
+    this.add({ type: 'dust', color: '#7ddc3a', x, y, vx: rand(-10, 10), vy: rand(-10, 10), life, max: life, size: rand(2.5, 3.6) });
+  }
+
   // Astillas de la puerta al estamparla contra alguien (salen hacia donde gira la hoja).
   splinters(x, y, angle, count = 10) {
     for (let i = 0; i < count; i++) {
@@ -201,7 +207,7 @@ export class Particles {
         pixelRect(ctx, p.x, p.y, size, size);
         continue;
       }
-      ctx.fillStyle = p.type === 'dust' ? COLORS.dust : p.type === 'chip' ? COLORS.door : p.tox ? palOf(p.tox).blood : COLORS.blood;
+      ctx.fillStyle = p.type === 'dust' ? (p.color || COLORS.dust) : p.type === 'chip' ? COLORS.door : p.tox ? palOf(p.tox).blood : COLORS.blood;
       const size = p.size > 3 ? 2 : 1;
       pixelRect(ctx, p.x, p.y, size, size);
     }

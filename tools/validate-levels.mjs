@@ -56,7 +56,7 @@ for (let i = 0; i < LEVELS.length; i++) {
   const mainDoor = L.doors.find((d) => d.main);
   console.log(`  puerta principal (${mainDoor.tx},${mainDoor.ty}) horizontal=${mainDoor.horizontal} · entrada (${L.entry.x.toFixed(0)},${L.entry.y.toFixed(0)}) umbral y<${L.entry.lockY.toFixed(0)} · moto (${L.bike.x.toFixed(0)},${L.bike.y.toFixed(0)}) · jugador (${L.player.x.toFixed(0)},${L.player.y.toFixed(0)})`);
   // 5b) rehenes (1-2 por piso: alcanzables y fuera del paso de las puertas) y actividades de los enemigos (los sentados, en casillas alcanzables)
-  if (!L.hostages.length) fail('no hay rehenes');
+  if (!L.hostages.length && !L.noHostages) fail('no hay rehenes');
   for (const hs of L.hostages) {
     if (!reach(hs.x, hs.y)) fail(`rehén en (${hs.tx},${hs.ty}) inalcanzable`);
     if (L.doors.some((d) => Math.abs(d.tx - hs.tx) <= 1 && Math.abs(d.ty - hs.ty) <= 1)) fail(`rehén (${hs.tx},${hs.ty}) pegado a una puerta`);
@@ -96,7 +96,7 @@ for (let i = 0; i < LEVELS.length; i++) {
   // 5e) blindados (piso 9): al menos 2, con espacio para flanquearlos (casillas libres alrededor), una escopeta garantizada y barricadas en la sala
   const shields = L.enemies.filter((e) => e.kind === 'shield');
   if (shields.length) {
-    if (shields.length < 2) fail(`pocos blindados (${shields.length}); se esperaban al menos 2`);
+    if (shields.length < (i === 8 ? 2 : 1)) fail(`pocos blindados (${shields.length})`);
     for (const z of shields) {
       let free = 0;
       for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) if (!isWallTile(map, z.tx + dx, z.ty + dy)) free++;
@@ -104,6 +104,29 @@ for (let i = 0; i < LEVELS.length; i++) {
     }
     if (!L.weapons.some((w) => w.type === 'shotgun')) fail('piso con blindados sin escopeta en el suelo');
     console.log(`  blindados: ${shields.length} · escopetas en el suelo ${L.weapons.filter((w) => w.type === 'shotgun').length}`);
+  }
+  // 5f) trampa de gas (piso 10): despacho sellable con 2 puertas alcanzables, ventilación en una pared con casilla exterior alcanzable desde la entrada, sin enemigos
+  //     dentro y con un recorrido de la entrada a la ventilación que ni es trivial (≥ 10 casillas) ni excede el 70 % del tiempo del gas a velocidad base
+  if (L.trap) {
+    const T = L.trap, GAS_TIME = 45, BASE_SPEED = 228;
+    if (T.doors.length !== 2) fail(`el despacho debe tener 2 puertas sellables (${T.doors.length})`);
+    for (const d of T.doors) if (!L.doors.some((x) => x.tx === d.tx && x.ty === d.ty)) fail(`puerta del despacho (${d.tx},${d.ty}) no existe`);
+    const insideRoom = (tx, ty) => tx >= T.room.x0 && tx <= T.room.x1 && ty >= T.room.y0 && ty <= T.room.y1;
+    if (L.enemies.some((e) => insideRoom(e.tx, e.ty))) fail('hay enemigos dentro del despacho sellable');
+    const v = T.vent;
+    if (!isWallTile(map, v.tx, v.ty)) fail('la ventilación no está en una pared');
+    if (isWallTile(map, Math.floor(v.sx / TILE), Math.floor(v.sy / TILE)) || insideRoom(Math.floor(v.sx / TILE), Math.floor(v.sy / TILE))) fail('la casilla exterior de la ventilación está ocupada o dentro del despacho');
+    if (!(T.trigger.x1 >= T.trigger.x0 && T.trigger.y1 >= T.trigger.y0)) fail('el centro del despacho (disparador de la trampa) es vacío');
+    const toVent = findPath(map, L.entry.x, L.entry.y, v.sx, v.sy);
+    if (!toVent) fail('la ventilación es inalcanzable desde la entrada');
+    else {
+      const need = (toVent.length * TILE) / BASE_SPEED;
+      if (toVent.length < 10) fail(`ventilación demasiado cerca de la entrada (${toVent.length} casillas)`);
+      if (need > GAS_TIME * 0.7) fail(`ventilación demasiado lejos: ${need.toFixed(1)} s de recorrido > 70 % de ${GAS_TIME} s`);
+      const toRoom = findPath(map, L.entry.x, L.entry.y, T.center.x, T.center.y);
+      if (!toRoom) fail('el centro del despacho es inalcanzable desde la entrada');
+      else console.log(`  trampa: entrada → despacho ${toRoom.length} casillas · entrada → ventilación ${toVent.length} casillas (${need.toFixed(1)} s de ${GAS_TIME})`);
+    }
   }
   // 6) cada enemigo puede llegar al jugador y a la salida (pathfinding)
   const pEntry = L.entry;

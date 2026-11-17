@@ -690,6 +690,85 @@ export const LEVELS = [
       ['bike', 7, 25, 2, 1],
     ],
   },
+  {
+    name: 'PISO 10 · EL CLÍMAX',
+    floor: 'concrete',
+    duo: true,          // hay compañero: segunda fase de selección de máscara (MÁSCARA DE APOYO) y relevo de control
+    trap: true,         // trampa de gas en el despacho (ver Game.beginTrap)
+    noHostages: true,   // sin rehenes en este piso
+    loot: ['pipe', 'bat', 'knife', 'gun', 'smg', 'shotgun'],
+    guaranteed: ['shotgun', 'smg', 'bat', 'pipe'],
+    smgChance: 0.5,
+    par: 240,
+    rows: [
+      '################################################',
+      '#........#........#..........#.........#.......#',
+      '#........#........#..........#.........#.......#',
+      '#........#........#..........#..A......#.......#',
+      '#........D........#..........#.........D.......#',
+      '#........#........D..........#.........#.......#',
+      '#...E....#.....A..#..........#......E..#.....R.#',
+      '#........#........#..........#.....?...#.......#',
+      '#........#........#..........#.........#.......#',
+      '#####D#######D#########D##########D########D####',
+      '#..............................................#',
+      '#..?...........................................#',
+      '#.............E.........................R......#',
+      '#..............................................#',
+      '#.....A....................Z...................#',
+      '#..............................................#',
+      '#...E...........................H..............#',
+      '#...................A..........................#',
+      '#...............?...................A........?.#',
+      '#..............................................#',
+      '##########D#############D#############D#########',
+      '#..............................................#',
+      '#..................B...........................#',
+      '########################N#######################',
+      '.......P........................................',
+      '................................................',
+      '................................................',
+      '................................................',
+      '................................................',
+      '################################################',
+    ],
+    // Despacho principal (sala de 10×8 con dos puertas): al entrar el primer agente, las puertas se sellan y se activa el gas. La ventilación está en la cara
+    // exterior de su pared ESTE (dentro del ala este, con enemigos de por medio): el segundo agente debe llegar hasta ella y romperla antes de que se acabe el tiempo.
+    trapRoom: [19, 1, 28, 8],
+    trapDoors: [[23, 9], [18, 5]],
+    vent: [29, 4],
+    ventSide: 'e',      // cara exterior de la pared: 's' (sur) o 'e' (este)
+    zones: [
+      ['carpet', 19, 1, 28, 8], ['wood', 1, 1, 8, 8], ['wood', 10, 1, 17, 8], ['carpet', 30, 1, 38, 8], ['wood', 40, 1, 46, 8], ['metal', 1, 10, 46, 19],
+      // Exterior: vestíbulo, calle (asfalto, rayas del carril) y plaza de la moto.
+      ['wood', 1, 21, 46, 22], ['asphalt', 0, 25, 47, 28], ['asphaltLine', 0, 27, 1, 27],
+      ['asphaltLine', 4, 27, 5, 27], ['asphaltLine', 8, 27, 9, 27], ['asphaltLine', 12, 27, 13, 27],
+      ['asphaltLine', 16, 27, 17, 27], ['asphaltLine', 20, 27, 21, 27],
+      ['asphaltLine', 24, 27, 25, 27], ['asphaltLine', 28, 27, 29, 27],
+      ['asphaltLine', 32, 27, 33, 27], ['asphaltLine', 36, 27, 37, 27],
+      ['asphaltLine', 40, 27, 41, 27], ['asphaltLine', 44, 27, 45, 27], ['asphaltBay', 6, 25, 9, 25],
+    ],
+    props: [
+      // Despacho: escritorio grande, sofá y alfombra
+      ['desk', 21, 2, 6, 1], ['sofa', 20, 6, 3, 1], ['cabinet', 19, 1, 1, 1], ['cabinet', 28, 1, 1, 1], ['rug', 22, 4, 4, 3], ['tv', 24, 1, 1, 1],
+      // Alas
+      ['desk', 2, 2, 3, 1], ['cabinet', 8, 1, 1, 1], ['sofa', 11, 7, 3, 1], ['cabinet', 17, 1, 1, 1], ['cardTable', 31, 5, 2, 2], ['cabinet', 38, 1, 1, 1],
+      ['desk', 41, 2, 3, 1], ['crates', 46, 8, 1, 1], ['barrel', 1, 8, 1, 1],
+      // Sala central: barricadas (rodeables)
+      ['crates', 8, 12, 2, 2], ['crates', 16, 15, 2, 2], ['crates', 30, 12, 2, 2], ['crates', 38, 15, 2, 2], ['shelf', 22, 14, 1, 3], ['barrel', 12, 18, 1, 1], ['barrel', 44, 11, 1, 1],
+      ['debris', 20, 11, 1, 1], ['stain', 33, 17, 1, 1], ['trash', 6, 18, 1, 1],
+      // Exterior: vestíbulo, calle y la moto (aparcada en la plaza, 2×1 casillas).
+      ['counter', 12, 21, 4, 1], ['sofa', 27, 22, 3, 1], ['cabinet', 32, 21, 1, 1],
+      ['cabinet', 33, 21, 1, 1], ['barrel', 1, 21, 1, 1], ['crates', 1, 22, 1, 1],
+      ['shelf', 46, 21, 1, 2], ['rug', 16, 21, 4, 2], ['papers', 14, 22, 1, 1],
+      ['trash', 41, 22, 1, 1], ['tv', 44, 21, 1, 1], ['stain', 40, 22, 1, 1],
+      ['crates', 4, 28, 1, 1], ['crates', 5, 28, 1, 1], ['barrel', 13, 28, 1, 1],
+      ['trash', 18, 27, 1, 1], ['stain', 24, 26, 1, 1], ['debris', 30, 27, 1, 1],
+      ['barrel', 36, 28, 1, 1], ['crates', 40, 28, 1, 1], ['crates', 41, 28, 1, 1],
+      ['crates', 41, 27, 1, 1], ['trash', 44, 25, 1, 1], ['papers', 28, 28, 1, 1],
+      ['bike', 7, 25, 2, 1],
+    ],
+  },
 ];
 
 // Muebles sólidos: bloquean movimiento, balas y visión como una pared (sirven de cobertura) y la
@@ -720,7 +799,7 @@ const ENEMY_CHARS = {
 // grunt lleve pistola. Sorteado con el `rng` del piso: R no lo cambia.
 const ENEMY_MIX = [
   { melee: 0.5, arm: 0.1 }, { melee: 0.6, arm: 0.15 }, { melee: 0.65, arm: 0.2 },
-  { melee: 0.8, arm: 0.1 }, { melee: 0.55, arm: 0.3 }, { melee: 0.6, arm: 0.15 }, { melee: 0.55, arm: 0.35 }, { melee: 0.5, arm: 0.4 }, { melee: 0.5, arm: 0.4 },
+  { melee: 0.8, arm: 0.1 }, { melee: 0.55, arm: 0.3 }, { melee: 0.6, arm: 0.15 }, { melee: 0.55, arm: 0.35 }, { melee: 0.5, arm: 0.4 }, { melee: 0.5, arm: 0.4 }, { melee: 0.5, arm: 0.4 },
 ];
 const MELEE_TYPES = ['bat', 'pipe', 'knife'];
 
@@ -952,6 +1031,22 @@ export function loadLevel(index = 0, rng = Math.random) {
   // Penumbra (`dark` y `lights` del piso, en coordenadas de LEVELS: se desplazan con el anillo de calle). `map.dark[casilla]` = 1 si está a oscuras (fuera de
   // los charcos de luz): ahí los enemigos solo te ven a la mitad de distancia (Enemy.canSee) salvo que acabes de hacer ruido (`map.reveal`). `map.lights` = luces (mundo).
   map.dark = null; map.lights = []; map.reveal = 0;
+  // Trampa de gas (`trap`, `trapRoom`, `trapDoors`, `vent` del piso, en coordenadas de LEVELS: se desplazan con el anillo de calle). `trigger` = el centro del despacho (a
+  // ≥ 2 casillas de las paredes): al pisarlo el primer agente se sellan las puertas. `vent` = casilla de PARED con la ventilación; `sx, sy` = dónde se pone quien la rompe
+  // (la casilla de suelo contigua, FUERA del despacho, al sur de la pared).
+  map.trap = null;
+  if (def.trap) {
+    const O = OUTSKIRT, [x0, y0, x1, y1] = def.trapRoom, [vx, vy] = def.vent, c = (t) => t * TILE + TILE / 2;
+    map.trap = {
+      room: { x0: x0 + O, y0: y0 + O, x1: x1 + O, y1: y1 + O },
+      trigger: { x0: x0 + O + 2, y0: y0 + O + 2, x1: x1 + O - 2, y1: y1 + O - 2 },
+      doors: def.trapDoors.map(([x, y]) => ({ tx: x + O, ty: y + O })),
+      vent: def.ventSide === 'e'
+        ? { tx: vx + O, ty: vy + O, x: c(vx + O), y: c(vy + O), sx: c(vx + O + 1), sy: c(vy + O), face: 'e' }
+        : { tx: vx + O, ty: vy + O, x: c(vx + O), y: c(vy + O), sx: c(vx + O), sy: c(vy + O + 1), face: 's' },
+      center: { x: c(Math.floor((x0 + x1) / 2) + O), y: c(Math.floor((y0 + y1) / 2) + O) },
+    };
+  }
   // Cámaras de seguridad (`def.cameras`: casilla de PARED, rumbo, barrido, velocidad): origen del cono = junto a la pared, ya en el suelo.
   map.cameras = (def.cameras || []).map(([cx, cy, base, sweep, speed]) => {
     const wx = (cx + OUTSKIRT) * TILE + TILE / 2, wy = (cy + OUTSKIRT) * TILE + TILE / 2;
@@ -1066,8 +1161,8 @@ export function loadLevel(index = 0, rng = Math.random) {
   // Actividades iniciales de los enemigos y rehenes (al azar por partida y piso: R repite lo mismo; otra partida, otro reparto).
   const actRnd = seededRandom(((Math.floor(rng() * 4294967296) ^ 0x51ed1234) >>> 0) || 1);
   placeActivities(map, enemies, actRnd, occupied, doors);
-  const hostages = placeHostages(map, enemies, actRnd, doors, mainDoor.ty, entry, occupied, index);
-  return { name: def.name, par: def.par, duo: !!def.duo, cameras: map.cameras, dark: !!def.dark, strobe: !!def.strobe, boss: !!def.boss, map, player, bike, mainDoor, entry, enemies, weapons, doors, hostages };
+  const hostages = def.noHostages ? [] : placeHostages(map, enemies, actRnd, doors, mainDoor.ty, entry, occupied, index);
+  return { name: def.name, par: def.par, trap: map.trap, noHostages: !!def.noHostages, duo: !!def.duo, cameras: map.cameras, dark: !!def.dark, strobe: !!def.strobe, boss: !!def.boss, map, player, bike, mainDoor, entry, enemies, weapons, doors, hostages };
 }
 
 // Patrulla de ida y vuelta: en el eje más despejado, o en el vertical si se fuerza.

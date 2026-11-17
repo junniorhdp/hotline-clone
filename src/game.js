@@ -21,6 +21,8 @@ import { Player, bloodLevelFor, FINISH_RANGE } from './player.js';
 import { Enemy, resetAiBudget } from './enemy.js';
 import { SecurityCams } from './cameras.js';
 import { ShieldGuard } from './shield.js';
+const GAS_TIME = 45;        // s hasta que el gas mata al agente atrapado en el despacho (piso 10)
+const VENT_TIME = 1.5;       // s que hay que mantener PATEAR/INTERACTUAR junto a la ventilación para romperla
 const RUNOVER_FLIGHT = 0.7; // s que tarda el jugador atropellado en estamparse contra la «pantalla»
 const ALARM_REACH = 18; // casillas de recorrido (a través de puertas) a las que llega un grito de alerta
 import { Door, ENEMY_PUSH_SPEED } from './doors.js';
@@ -1029,6 +1031,14 @@ export class Game {
     this.wallBloodDirty = false; // hasta la primera mancha en pared ni se dibuja la capa
     this.stains = 0;             // salpicaduras permanentes de este piso (se ve en F1)
     this.camera.setBounds(this.map.pixelW, this.map.pixelH);
+    // Trampa de gas (piso 10): hasta que el primer agente entre en el despacho el compañero aún no ha llegado (`away`). Reintentar con R tras empezar la trampa
+    // vuelve a la fase 2: primer agente atrapado y gas a 45 s, control en el compañero a la entrada.
+    this.trap = level.trap ? { ...level.trap, state: 'idle', t: GAS_TIME, hold: 0, cough: 1.2, victim: null, fade: 0 } : null;
+    this.asphyx = null;
+    if (this.trap) {
+      if (this.partner) this.partner.away = true;
+      if (this.trapRetry && retryInside) this.beginTrap(true);
+    }
     this.camera.snap(this.player.x, this.player.y);
   }
 
@@ -1108,7 +1118,7 @@ export class Game {
     this.updateMaskDrops(dt);
     for (const f of this.floatingTexts) f.t -= dt;
     this.floatingTexts = this.floatingTexts.filter((f) => f.t > 0);
-    if (this.player.alive) this.player.update(dt, this);
+    if (this.player.alive && !this.asphyx) this.player.update(dt, this);
     if (this.partner && this.partner.alive) { this.partner.idleUpdate(dt); (this.partnerPos ||= {}).x = this.partner.x; this.partnerPos.y = this.partner.y; } // el inactivo queda donde está (también al reintentar con R)
     this.barkCd = Math.max(0, (this.barkCd || 0) - dt);
     if (this.map.reveal > 0) this.map.reveal -= dt;
@@ -1128,6 +1138,7 @@ export class Game {
     const car = this.hostages.car;
     if (car && this.player.alive && (this.state === 'playing' || this.state === 'cleared') && car.hits(this.player.x, this.player.y, this.player.r)) this.runOver(car);
     if (this.runover) this.stepRunover(dt);
+    if (this.asphyx) this.stepAsphyx(dt);
     // Culpa: 3 s después de matar (o herir de muerte) a un civil, el jugador se quita la máscara y vomita (vulnerable y quieto).
     if (this.guilt) {
       const gp = this.player;
@@ -1143,7 +1154,8 @@ export class Game {
     // El bloqueo solo salta al cruzar el umbral HACIA DENTRO: y por encima del umbral Y dentro de la huella del edificio
     // (la calle de arriba y de los lados también tiene y < lockY, y ahí no se bloquea nada).
     if (this.state === 'playing' && !this.inside && this.player.alive && this.inBuilding(this.player)) this.beginLockdown();
-    if (this.state === 'playing' && this.inside && this.enemies.every((e) => !e.alive)) {
+    if (this.trap) this.updateTrap(dt);
+    if (this.state === 'playing' && this.inside && this.enemies.every((e) => !e.alive) && (!this.trap || this.trap.state === 'done')) { // con trampa: hay que resolverla antes de dar el piso por despejado
       this.state = 'cleared';
       // Se acabó la adrenalina: `setMusic('empty')` corta la música con el frenazo de cinta y
       // abre el ambiente del edificio vacío, que acompaña hasta la moto. La puerta se desbloquea.
@@ -1183,6 +1195,7 @@ export class Game {
       tx += lx;
       ty += ly;
     }
+    if (this.asphyx && this.trap && this.trap.victim) { tx = this.trap.victim.x; ty = this.trap.victim.y; } // la cámara viaja al agente que se asfixia
     this.camera.update(dt, tx, ty);
   }
 
@@ -1565,6 +1578,7 @@ export class Game {
         return { id: 'mount', label: 'MOTO', ready: true };
       }
     }
+    if (this.ventNear()) return { id: 'interact', label: 'ROMPER', ready: true }; // piso 10: romper la ventilación (toques repetidos)
     const door = this.doors.some((d) => d.inKickRange(p.x, p.y, p.angle));
     if (door) return { id: 'kick', label: 'PATEAR', ready: true };
     // Algo de la calle con lo que interactuar (contenedor, máquina, cabina, vagabundo con moneda): enciende el botón superior (ver StreetLife.nearTarget).
@@ -1625,7 +1639,7 @@ export class Game {
     this.particles.sparks(door.cx, door.cy, -Math.PI / 2, 12, 1.2);
     this.camera.addShake(8);
     this.fx.kick(0.8);
-    this.showCallout('SALIDAS BLOQUEADAS', COLORS.blood);
+    if (door.main) this.showCallout('SALIDAS BLOQUEADAS', COLORS.blood); // las puertas del despacho sellado tienen su propio cartel (¡TRAMPA!)
   }
 
   showCallout(text, color, seconds = 2.4, sub = null) {
@@ -1699,7 +1713,7 @@ export class Game {
         this.killPlayer(Math.atan2(b.vy, b.vx));
         b.alive = false;
         b.hitWall = false;
-      } else if (this.partner && this.partner.alive && segmentPointDistance(b.px, b.py, b.x, b.y, this.partner.x, this.partner.y) < this.partner.r + b.r) {
+      } else if (this.partner && this.partner.alive && !this.partner.away && segmentPointDistance(b.px, b.py, b.x, b.y, this.partner.x, this.partner.y) < this.partner.r + b.r) {
         this.killPartner(Math.atan2(b.vy, b.vx)); // las balas enemigas también alcanzan al compañero inactivo
         b.alive = false;
         b.hitWall = false;
@@ -2151,9 +2165,11 @@ export class Game {
   }
 
   // Relevo: el control pasa al otro agente en un fotograma (cámara al instante, 0,25 s sin atacar para que la pulsación no se vuelva un golpe).
-  swapControl() {
+  swapControl(force = false) {
     const a = this.player, b = this.partner;
-    if (!b || !b.alive || !a.alive || (this.state !== 'playing' && this.state !== 'cleared') || a.exec || a.vomit || this.panel) return false;
+    if (!b || !b.alive || !a.alive) return false;
+    if (!force && ((this.state !== 'playing' && this.state !== 'cleared') || a.exec || a.vomit || this.panel)) return false;
+    a.cancelExecution();
     this.player = b; this.partner = a;
     this.swapBundles();
     this.swapped = !this.swapped;
@@ -2165,6 +2181,172 @@ export class Game {
     this.fx.kick(0.3);
     this.touch.haptic(20);
     return true;
+  }
+
+  // --- Trampa de gas del piso 10 (tanda B: docs/prompt-nivel-10-climax.md) -----------------------------------------------------------------------
+  // idle → (el primer agente pisa el centro del despacho) → gas → (el compañero rompe la ventilación) → done | (tiempo 0) → failed (asfixia).
+  ventNear() {
+    const T = this.trap, p = this.player;
+    if (!T || T.state !== 'gas' || !p.alive) return false;
+    const r = T.room, tx = Math.floor(p.x / TILE), ty = Math.floor(p.y / TILE);
+    return Math.hypot(p.x - T.vent.sx, p.y - T.vent.sy) < 30 && !(tx >= r.x0 && tx <= r.x1 && ty >= r.y0 && ty <= r.y1); // fuera del despacho
+  }
+
+  beginTrap(retry = false) {
+    const T = this.trap, a = this.player, b = this.partner;
+    if (!T || T.state !== 'idle' || !b) return;
+    T.state = 'gas'; T.t = GAS_TIME; T.hold = 0; T.victim = a; T.cough = 1.2; T.fade = 1;
+    this.trapRetry = true;
+    for (const d of T.doors) {
+      const door = this.doors.find((x) => x.tx === d.tx && x.ty === d.ty);
+      if (!door) continue;
+      if (retry) { door.locked = true; door.closing = false; door.offset = 0; door.angVel = 0; } else door.lock(); // reintento: ya selladas
+    }
+    if (retry) { a.x = T.center.x; a.y = T.center.y; }
+    b.away = false;
+    b.x = this.entry.x; b.y = this.entry.y; b.angle = -Math.PI / 2; // el compañero llega por la entrada del edificio
+    this.swapControl(true);
+    if (!retry) {
+      this.showCallout('¡TRAMPA!', COLORS.blood, 2.6, 'GAS TÓXICO · ROMPE LA VENTILACIÓN');
+      this.camera.addShake(10);
+      this.fx.kick(0.8);
+    }
+    this.sfx.play('lockdown');
+    this.touch.haptic([60, 40, 60]);
+  }
+
+  updateTrap(dt) {
+    const T = this.trap, p = this.player;
+    if (T.state === 'idle') {
+      const q = T.trigger, tx = Math.floor(p.x / TILE), ty = Math.floor(p.y / TILE);
+      if (this.state === 'playing' && this.inside && p.alive && p.agentId === 'main' && tx >= q.x0 && tx <= q.x1 && ty >= q.y0 && ty <= q.y1) this.beginTrap(false);
+      return;
+    }
+    if (T.state === 'done') { T.fade = Math.max(0, T.fade - dt * 0.4); return; } // el gas se disipa despacio
+    if (T.state !== 'gas' || this.state !== 'playing') return; // el reloj corre solo jugando (se congela en forcejeos, menús y pausa: update no llega aquí)
+    const victim = T.victim;
+    if (!p.exec) T.t -= dt; // y se congela en las ejecuciones
+    // Ventilación: mantener PATEAR/INTERACTUAR junto a la pared (en táctil, 3-4 toques).
+    const near = this.ventNear();
+    const tap = this.keys.pressed('kick') || this.keys.pressed('execute');
+    const held = this.keys.down('kick') || this.keys.down('execute');
+    if (near && held) T.hold += dt;
+    else if (near && tap) T.hold += 0.4;
+    else T.hold = Math.max(0, T.hold - dt * 0.6);
+    if (near && T.hold > 0 && Math.random() < 0.5) this.particles.sparks(T.vent.sx, T.vent.sy - 14, -Math.PI / 2, 2, 0.7);
+    if (T.hold >= VENT_TIME) { this.trapSolved(); return; }
+    // Gas en el despacho y tos del agente atrapado
+    T.cough -= dt;
+    if (victim && victim.alive && T.cough <= 0) {
+      T.cough = 1.6 + Math.random() * 1.4;
+      const sc = this.camera.worldToScreen(victim.x, victim.y);
+      if (sc.x > 0 && sc.x < this.scene.width && sc.y > 0 && sc.y < this.scene.height) { // la tos solo se ve si el agente está en pantalla (si no, el texto se clavaría en el borde)
+        this.addFloat(victim.x, victim.y - 26, ['¡COF!', '¡COF, COF!', '¡AGH!'][Math.floor(Math.random() * 3)], '#9be32a', 1, 1.1);
+        this.camera.addShake(2);
+      }
+    }
+    if (Math.random() < 0.5) { const r = T.room; this.particles.gas((r.x0 + Math.random() * (r.x1 - r.x0 + 1)) * TILE, (r.y0 + Math.random() * (r.y1 - r.y0 + 1)) * TILE); }
+    if (T.t <= 0) this.trapFail();
+  }
+
+  trapSolved() {
+    const T = this.trap, left = Math.max(0, Math.round(T.t));
+    T.state = 'done'; T.fade = 1; T.hold = 0;
+    this.trapRetry = false;
+    for (const d of T.doors) { const door = this.doors.find((x) => x.tx === d.tx && x.ty === d.ty); if (door) door.unlock(); }
+    this.particles.sparks(T.vent.sx, T.vent.sy - 14, -Math.PI / 2, 24, 1.4);
+    this.particles.dust(T.vent.sx, T.vent.sy - 10, 14);
+    this.camera.addShake(14);
+    this.fx.kick(0.8);
+    this.sfx.play('unlock');
+    this.sfx.play('crunch');
+    const bonus = 1000 + left * 20;
+    this.score.addBonus(bonus);
+    this.showCallout('VENTILACIÓN ROTA', COLORS.player, 2.6, `EL GAS SE DISIPA · +${bonus}`);
+    if (T.victim && T.victim.alive) this.addFloat(T.victim.x, T.victim.y - 26, '¡ESTOY BIEN!', COLORS.player, 1, 1.6);
+  }
+
+  // Tiempo agotado: el agente atrapado se asfixia (la cámara viaja hasta él, cae, la pantalla se apaga en verde) y sale la pantalla de muerte.
+  trapFail() {
+    const T = this.trap;
+    T.state = 'failed';
+    this.state = 'dead';
+    this.deathMsg = 'SE QUEDÓ SIN AIRE';
+    this.asphyx = { t: 0, fell: false };
+    this.camera.addShake(4);
+  }
+
+  stepAsphyx(dt) {
+    const A = this.asphyx, v = this.trap && this.trap.victim;
+    A.t += dt;
+    if (v && !A.fell && A.t >= 1.3) {
+      A.fell = true;
+      v.alive = false;
+      this.drawCorpse(v.x, v.y, 0.6, 'playerCorpse');
+      this.camera.addShake(8);
+      this.sfx.play('death');
+    }
+  }
+
+  // Gas en pantalla: tinte verde y viñeta que se cierran con el tiempo (no estorban al que controlas: el gas está en el despacho), y la cinemática de asfixia.
+  drawGas(ctx, w, h) {
+    const T = this.trap, A = this.asphyx;
+    if (!T || (T.state !== 'gas' && T.state !== 'done' && T.state !== 'failed')) return;
+    const k = T.state === 'done' ? T.fade * (1 - T.t / GAS_TIME) : T.state === 'failed' ? 1 : 1 - T.t / GAS_TIME;
+    if (k <= 0.005) return;
+    ctx.save();
+    ctx.fillStyle = `rgba(70,200,60,${0.03 + 0.14 * k})`;
+    ctx.fillRect(0, 0, w, h);
+    for (let i = 0; i < 6; i++) { // viñeta escalonada (más ancha cuanto más gas)
+      const inset = i * 3, a = (0.07 + 0.1 * k) * (1 - i / 6) * (0.5 + k);
+      ctx.fillStyle = `rgba(8,40,10,${a})`;
+      ctx.fillRect(inset, inset, w - 2 * inset, 3); ctx.fillRect(inset, h - 3 - inset, w - 2 * inset, 3);
+      ctx.fillRect(inset, inset, 3, h - 2 * inset); ctx.fillRect(w - 3 - inset, inset, 3, h - 2 * inset);
+    }
+    if (A) { ctx.fillStyle = `rgba(10,50,10,${Math.min(0.88, A.t / 2.2 * 0.88)})`; ctx.fillRect(0, 0, w, h); }
+    ctx.restore();
+  }
+
+  // Temporizador del gas (arriba al centro): cifra grande y barra; rojo y parpadeante bajo 10 s.
+  drawTrapHud(ctx, w, h) {
+    const T = this.trap;
+    if (!T || T.state !== 'gas' || this.state !== 'playing') return;
+    const cx = Math.round(w / 2), t = Math.max(0, T.t), low = t < 10, y = 38 + this.safe.t;
+    const col = low ? (Math.floor(performance.now() / 180) % 2 ? COLORS.blood : '#ffffff') : '#9be32a';
+    const txt = `GAS ${Math.ceil(t)}`;
+    drawText(ctx, txt, cx, y, { color: col, scale: 2, align: 'center', shadow: COLORS.background });
+    const bw = 90, bx = cx - bw / 2, by = y + 17;
+    ctx.fillStyle = '#05000f'; ctx.fillRect(bx - 1, by - 1, bw + 2, 6);
+    ctx.fillStyle = col; ctx.fillRect(bx, by, Math.round(bw * (t / GAS_TIME)), 4);
+    // Aviso junto a la ventilación
+    if (this.ventNear()) {
+      const s = this.camera.worldToScreen(T.vent.sx, T.vent.sy + 20), msg = this.hint(`MANTÉN ${this.keys.label('kick')} · ROMPER VENTILACIÓN`, 'BOTA (TOCA VARIAS VECES) · ROMPER');
+      const p = this.keepOnScreen(s.x, s.y, measureText(msg), 8);
+      drawText(ctx, msg, p.x, p.y, { color: '#9be32a', align: 'center', shadow: COLORS.background });
+      if (T.hold > 0) { const bw2 = 40, bx2 = Math.round(p.x - bw2 / 2), by2 = Math.round(p.y + 11); ctx.fillStyle = '#05000f'; ctx.fillRect(bx2 - 1, by2 - 1, bw2 + 2, 5); ctx.fillStyle = '#9be32a'; ctx.fillRect(bx2, by2, Math.round(bw2 * Math.min(1, T.hold / VENT_TIME)), 3); }
+    }
+  }
+
+  // Rejilla de ventilación en la cara sur de la pared del despacho (sobre las paredes): chapa con ranuras; al romperse queda un hueco oscuro que expulsa humo.
+  drawVent(ctx) {
+    const T = this.trap;
+    if (!T) return;
+    const v = T.vent, east = v.face === 'e', broken = T.state === 'done';
+    const x = east ? v.x + TILE / 2 - 3 : v.x, y = east ? v.y : v.y + TILE / 2 - 10;
+    ctx.save();
+    if (east) { ctx.translate(x, y); ctx.rotate(-Math.PI / 2); ctx.translate(-x, -y); } // la rejilla se dibuja de lado en la cara este (mismo dibujo girado)
+    ctx.fillStyle = '#0a0a14'; pixelRect(ctx, x - 12, y - 2, 12, 6);
+    if (broken) {
+      ctx.fillStyle = '#02020a'; pixelRect(ctx, x - 10, y - 1, 10, 5);
+      ctx.fillStyle = '#3a3a52'; pixelRect(ctx, x - 12, y + 4, 3, 1); pixelRect(ctx, x + 6, y + 2, 4, 1);
+      if (Math.random() < 0.08) this.particles.smoke(east ? v.sx : x + (Math.random() - 0.5) * 12, east ? v.sy : y);
+    } else {
+      ctx.fillStyle = '#6b6b85'; pixelRect(ctx, x - 11, y - 1, 11, 5);
+      ctx.fillStyle = '#14141e'; for (let i = 0; i < 4; i++) pixelRect(ctx, x - 10, y + i, 9, 1);
+      const on = T.state === 'gas' && Math.floor(performance.now() / 300) % 2;
+      ctx.fillStyle = on ? '#7ddc3a' : '#3a3a52'; pixelRect(ctx, x + 1, y - 2, 2, 2); // piloto: parpadea mientras hay gas
+    }
+    ctx.restore();
   }
 
   // El compañero inactivo cae de un golpe (bala o cuerpo a cuerpo): Game Over con su propio mensaje.
@@ -2613,6 +2795,7 @@ export class Game {
     ctx.drawImage(this.wallLayer, 0, 0, pixelW, pixelH);
     if (this.wallBloodDirty && this.goreOn) ctx.drawImage(this.wallBloodLayer, 0, 0, pixelW, pixelH);
     this.cams.drawBodies(ctx); // cámaras montadas en las paredes
+    this.drawVent(ctx); // ventilación del despacho (piso 10)
     this.hostages.drawOver(ctx, performance.now() / 1000); // auto de extracción (con las aberturas de la valla por donde entra y sale)
     if (over) {
       // Encima de la valla: el portón que se abre (o la abertura del carril), y después la moto con el jugador.
@@ -2627,6 +2810,7 @@ export class Game {
 
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     this.drawStrobe(ctx);
+    this.drawGas(ctx, this.scene.width, this.scene.height);
     this.drawScuffleFx(ctx);
     this.renderHud(ctx);
     this.drawScuffleUI(ctx);
@@ -2638,8 +2822,12 @@ export class Game {
   // El compañero inactivo: se dibuja con su máscara y su ropa, con una marca sobre la cabeza (nombre de su máscara) para distinguirlo.
   drawPartner(ctx) {
     const t = this.partner;
-    if (!t || !t.alive || !['playing', 'cleared', 'scuffle', 'dead'].includes(this.state)) return;
+    if (!t || !t.alive || t.away || !['playing', 'cleared', 'scuffle', 'dead'].includes(this.state)) return;
+    const T = this.trap, gassed = T && T.state === 'gas' && T.victim === t, k = gassed ? 1 - T.t / GAS_TIME : 0;
+    const ox = t.x;
+    if (gassed) t.x += Math.sin(performance.now() / 70) * (0.5 + k * 2.5); // tambaleo del agente atrapado en el gas
     t.draw(ctx);
+    t.x = ox;
     const time = performance.now() / 1000;
     const name = this.partnerMask ? this.partnerMask.name : '';
     drawText(ctx, name, t.x, t.y - t.r - 14, { color: '#9d8fb8', scale: WORLD_PX, align: 'center' });
@@ -3284,6 +3472,7 @@ export class Game {
     this.street.drawHud(ctx, w, h);
     this.hostages.drawHud(ctx, w, h);
     this.hostages.drawLeaveAsk(ctx, w, h);
+    this.drawTrapHud(ctx, w, h);
     this.drawExecutePrompt(ctx);
     const boss = this.enemies.find((e) => e.kind === 'boss' && e.alive && e.awake);
     if (boss && this.state !== 'cleared') drawBossBar(ctx, boss, w, 32 + this.safe.t);
@@ -3315,7 +3504,7 @@ export class Game {
       ctx.globalAlpha = this.partner.alive ? 0.9 : 0.35;
       ctx.drawImage(bloodyMaskPortrait(this.partnerMask, this.goreOn ? this.partner.bloodLevel : 0, 'male', this.partnerBlood.maskBits), px, py, 14, 14);
       ctx.globalAlpha = 1;
-      drawText(ctx, this.partner.alive ? 'APOYO' : 'CAÍDO', px + (tl ? 0 : 18), py + (tl ? 17 : 1), { color: this.partner.alive ? '#7d6f98' : COLORS.blood });
+      drawText(ctx, !this.partner.alive ? 'CAÍDO' : this.partner.away ? 'EN CAMINO' : this.trap && this.trap.state === 'gas' && this.trap.victim === this.partner ? 'ATRAPADO' : 'APOYO', px + (tl ? 0 : 18), py + (tl ? 17 : 1), { color: this.partner.alive ? '#7d6f98' : COLORS.blood });
       if (!tl) drawText(ctx, this.partnerMask.name, px + 18, py + 9, { color: '#5b4f78' });
     }
 
@@ -3366,7 +3555,7 @@ export class Game {
       drawText(ctx, this.hint('ESPACIO · CLIC: SALTAR', 'TOCA: SALTAR'), cx, h - CINE_BAR + 4, { color: '#9d8fb8', align: 'center' });
     }
     if (this.state === 'dead') this.drawRunover(ctx, w, h);
-    if (this.state === 'dead') {
+    if (this.state === 'dead' && !(this.asphyx && this.asphyx.t < 2.6)) { // (con la cinemática de asfixia, la franja sale al final)
       // En táctil la franja crece para alojar los botones REINTENTAR / TERMINAR / RÉCORDS.
       const touch = this.input.touchMode;
       const bandH = touch ? 26 + 8 + this.touch.buttonSize('X').h + 8 : 52;
