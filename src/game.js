@@ -19,6 +19,7 @@ import { weaponCategory } from './weapons.js';
 import { buildOptionsMenu, buildPauseMenu } from './options-menu.js';
 import { Player, bloodLevelFor, FINISH_RANGE } from './player.js';
 import { Enemy, resetAiBudget } from './enemy.js';
+import { SecurityCams } from './cameras.js';
 const RUNOVER_FLIGHT = 0.7; // s que tarda el jugador atropellado en estamparse contra la «pantalla»
 const ALARM_REACH = 18; // casillas de recorrido (a través de puertas) a las que llega un grito de alerta
 import { Door, ENEMY_PUSH_SPEED } from './doors.js';
@@ -957,6 +958,7 @@ export class Game {
     this.guilt = null;
     this.street = new StreetLife(this); // contenedores, moneda, máquina, cabina y vagabundo de la calle
     this.runover = null; // atropello en curso (ver runOver)
+    this.cams = new SecurityCams(this, level.cameras || []); // cámaras de seguridad y operador (piso 8)
     this.hostages = new Hostages(this, level.hostages || []); // rehenes atados a sillas dentro del edificio (ver hostages.js)
     this.pools = [];
     // masks (selección) | arriving (llega en moto) | playing (fuera o dentro: ver `inside`) | dead |
@@ -1079,6 +1081,7 @@ export class Game {
     if (this.map.reveal > 0) this.map.reveal -= dt;
     resetAiBudget(this.input.touchMode); // tope de rutas y búsquedas de cobertura por fotograma (reparte el coste de las alarmas)
     for (const e of this.enemies) if (e.alive) e.update(dt, this);
+    this.cams.update(dt);
 
     this.updateDoors(dt);
     this.updateBullets(dt);
@@ -2217,11 +2220,21 @@ export class Game {
     }
   }
 
+  // Alerta general (operador de cámaras): todos los enemigos vivos que no estén ya en combate, derribados o en pánico corren hacia (x, y), desfasados hasta 0,8 s
+  // para repartir las rutas (el presupuesto de BFS por fotograma hace el resto). El jefe no responde.
+  generalAlarm(x, y) {
+    for (const e of this.enemies) {
+      if (!e.alive || e.kind === 'boss') continue;
+      e.answerAlarm(x, y, Math.random() * 0.8);
+    }
+  }
+
   // Un enemigo da la voz (te ha visto o ha encontrado un cadáver): los de las salas contiguas (hasta ALARM_REACH casillas de recorrido, atravesando
   // puertas) se ponen en estado de combate y corren a la zona, los más lejanos un poco después. Una pasada de BFS por alarma (con enfriamiento de 5 s
   // por enemigo), nada por fotograma.
   raiseAlarm(src, x, y) {
     if (src.shoutCd > 0) return;
+    if (src.kind === 'operator') { src.shoutCd = 5; this.generalAlarm(x, y); return; } // el operador que te ve da la alerta a TODO el edificio
     src.shoutCd = 5;
     const m = this.map, W = m.w;
     if (!this._alarmDist || this._alarmDist.length !== W * m.h) this._alarmDist = new Int16Array(W * m.h);
@@ -2445,6 +2458,7 @@ export class Game {
     if (!over) this.drawBike(ctx);
     this.drawObjectiveMarker(ctx);
     this.particles.drawGround(ctx);
+    this.cams.drawCones(ctx); // conos de las cámaras de seguridad, sobre el suelo
     // Muebles sobre la sangre (lo que cae debajo queda oculto) y bajo los personajes.
     ctx.drawImage(this.propsLayer, 0, 0, pixelW, pixelH);
     this.sewer.draw(ctx); // sobre los muebles de la calle: la cabeza nunca queda tapada ni cortada
@@ -2473,6 +2487,7 @@ export class Game {
     ctx.globalAlpha = 1;
     ctx.drawImage(this.wallLayer, 0, 0, pixelW, pixelH);
     if (this.wallBloodDirty && this.goreOn) ctx.drawImage(this.wallBloodLayer, 0, 0, pixelW, pixelH);
+    this.cams.drawBodies(ctx); // cámaras montadas en las paredes
     this.hostages.drawOver(ctx, performance.now() / 1000); // auto de extracción (con las aberturas de la valla por donde entra y sale)
     if (over) {
       // Encima de la valla: el portón que se abre (o la abertura del carril), y después la moto con el jugador.
@@ -2562,6 +2577,7 @@ export class Game {
   }
 
   renderDebug(ctx) {
+    this.cams.drawDebug(ctx); // conos de las cámaras de seguridad (piso 8)
     for (const e of this.enemies) if (e.alive) e.drawDebug(ctx, this);
     for (const d of this.doors) d.drawDebug(ctx);
     if (this.player.alive) this.player.drawDebug(ctx);

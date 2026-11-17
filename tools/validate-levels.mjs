@@ -7,6 +7,7 @@
 // Uso: `npm run check:levels` (sale con error si algo falla).
 import { LEVELS, loadLevel, isWallTile, TILE, findPath } from '../src/map.js';
 let bad = 0;
+let prevEnemies = 0;
 const fail = (m) => { bad++; console.log('  ✗ ' + m); };
 for (let i = 0; i < LEVELS.length; i++) {
   const L = loadLevel(i, () => 0.5);
@@ -73,6 +74,25 @@ for (let i = 0; i < LEVELS.length; i++) {
     const total = map.dark.reduce((x, y) => x + y, 0);
     console.log(`  penumbra: ${total} casillas a oscuras · ${map.lights.length} luces · enemigos en sombra ${nd}/${L.enemies.length}`);
   }
+  // 5d) cámaras de seguridad y operador (piso 8): cámaras en una casilla de pared con el origen del cono libre, un único operador sentado en una sala
+  //     alcanzable pero lejos de la entrada, y dificultad progresiva (a partir del piso 7 no hay menos enemigos que en el anterior)
+  if (map.cameras && map.cameras.length) {
+    for (const c of map.cameras) {
+      if (!isWallTile(map, c.tx, c.ty)) fail(`cámara (${c.tx},${c.ty}) no está en una pared`);
+      if (isWallTile(map, Math.floor(c.x / TILE), Math.floor(c.y / TILE))) fail(`cámara (${c.tx},${c.ty}) con el origen del cono dentro de una pared`);
+    }
+    const ops = L.enemies.filter((e) => e.kind === 'operator');
+    if (ops.length !== 1) fail(`debe haber exactamente 1 operador de cámaras (hay ${ops.length})`);
+    for (const o of ops) {
+      if (o.activity !== 'sit') fail('el operador no está sentado frente a los monitores');
+      if (!reach(o.x, o.y)) fail('operador inalcanzable');
+      const pth = findPath(map, L.entry.x, L.entry.y, o.x, o.y);
+      if (!pth || pth.length < 20) fail(`operador demasiado cerca de la entrada (${pth ? pth.length : '?'} casillas)`);
+      else console.log(`  cámaras: ${map.cameras.length} · operador a ${pth.length} casillas de la entrada`);
+    }
+  }
+  if (i >= 7 && prevEnemies > L.enemies.length) fail(`menos enemigos (${L.enemies.length}) que el piso anterior (${prevEnemies})`);
+  if (i >= 6) prevEnemies = L.enemies.length;
   // 6) cada enemigo puede llegar al jugador y a la salida (pathfinding)
   const pEntry = L.entry;
   const noPath = L.enemies.filter((e) => !findPath(map, e.x, e.y, pEntry.x, pEntry.y));

@@ -439,6 +439,7 @@ const RECOLORS = {
   enemyCorpse: ['lying', { b: '#8c6a00', B: '#5c4500', s: '#9a5a40', S: '#6e3c2a' }],
   // Corredor (rosa, cuerpo a cuerpo) y guardia pesado (chaleco granate y mangas de acero).
   enemyRunner: ['enemy', { y: '#ff4fa3', Y: '#a31f66', u: '#ffc2e0', c: '#05d9e8', C: '#037f8c', m: '#9ff6ff' }],
+  enemyOperator: ['enemy', { y: '#2ab7a9', Y: '#187a70' }], // operador de cámaras: camisa verde azulada
   enemyHeavy: ['enemyArmed', { v: '#8a1c2b', V: '#4a0f18', y: '#6b6b85', Y: '#3a3a52' }],
   runnerCorpse: ['lying', { b: '#a31f66', B: '#6b1243', s: '#9a5a40', S: '#6e3c2a' }],
   heavyCorpse: ['lying', { b: '#4a0f18', B: '#2a0710', s: '#9a5a40', S: '#6e3c2a' }],

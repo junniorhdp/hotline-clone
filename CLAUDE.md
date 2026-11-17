@@ -61,6 +61,7 @@ HTML5 Canvas, JavaScript Vanilla (ES Modules) y Vite. Sin frameworks ni librerí
   - `pixelfont.js` — fuente bitmap 5×7 propia (con tildes y Ñ) y `drawText`; cachea cada texto renderizado.
   - `input.js` — teclado, ratón y dedos (Pointer Events); distingue "mantenido" de "pulsado este paso".
   - `keybinds.js` — controles de PC reasignables (`KEY_CONFIG`, `KeyBinds`, `keyLabel`). Ver "Controles de PC reasignables".
+  - `cameras.js` — cámaras de seguridad del piso 8 y alerta general del operador (`SecurityCams`).
   - `hostages.js` — rehenes atados a sillas dentro del edificio, golpe de advertencia y extracción (`Hostages`). Ver "Actividades de los enemigos y rehenes".
   - `extraction.js` — `ExtractionCar`: el auto que recoge a 2 o más rehenes.
   - `exits.js` — `BikeExit`: la salida de la moto al acabar el piso (portón, carril lateral o salto). Ver "Salida de la moto".
@@ -88,7 +89,7 @@ HTML5 Canvas, JavaScript Vanilla (ES Modules) y Vite. Sin frameworks ni librerí
   sangre, sin recargar la página. Audio, efectos y `Score` persisten entre reinicios.
 
 ## Niveles y flujo
-- **Campaña de 7 pisos** (`LEVELS`; pisos 8 y 9 previstos, ver `docs/`): 1 Recepción · 2 Oficinas · 3 Ático · **4 El Club** · **5 Almacén** · **6 Penthouse (jefe)** · **7 Apagón (penumbra)**. Los
+- **Campaña de 8 pisos** (`LEVELS`; el 9 previsto, ver `docs/`): 1 Recepción · 2 Oficinas · 3 Ático · **4 El Club** · **5 Almacén** · **6 Penthouse (jefe)** · **7 Apagón (penumbra)** · **8 Seguridad (cámaras)**. Los
   tres últimos se generaron con una herramienta que compone salas y puertas, comparten el exterior del piso 3 (vestíbulo, puerta
   principal, calle y moto) y pasan `npm run check:levels`:
   - **Piso 4 · EL CLUB** (`strobe: true`): salas VIP estrechas (7×6) a los lados, pasillos de 2 casillas y una pista de baile de 24×19 con
@@ -105,6 +106,11 @@ HTML5 Canvas, JavaScript Vanilla (ES Modules) y Vite. Sin frameworks ni librerí
     - **Visión reducida**: con el jugador en una casilla a oscuras, `Enemy.canSee` limita la distancia a **la mitad de `VIEW_DIST`** (170 u; `CLOSE_SENSE` no cambia). Un **ruido del jugador** (`makeNoise` desde su posición: disparo, golpe, patada) pone `map.reveal` = 0,8 s y lo delata aunque esté en sombra. Medido: en sombra lo ven a 160 u pero no a 192; con luz a 288; tras un ruido, a 192.
     - **Dibujo** (`renderDark` en `decor.js`, `game.darkLayer`, se regenera con las demás capas): capa estática a media resolución que oscurece casillas (alfa 0,6; más suave en el borde de cada charco) y suma el resplandor de las luces (anillos de píxeles con `lighter`). Se dibuja tras enemigos, balas y objetos y **antes del jugador**, así que él siempre se ve y los demás se difuminan. Un `drawImage` por fotograma, sin coste apreciable.
     - `check:levels` valida los pisos oscuros: luces dentro del mapa y fuera de paredes, entrada / jugador / moto sin oscuridad y al menos 3 enemigos en sombra y 3 a la luz.
+  - **Piso 8 · SEGURIDAD** (`cameras`, letra `O`; prompt en `docs/prompt-nivel-8-seguridad.md`; `cameras.js`, `SecurityCams`, `game.cams`): pasillo central con 5 salas arriba y 4 abajo, 13 enemigos, **7 cámaras de seguridad** y una **sala de control** (arriba a la derecha, dos puertas, tres monitores y consola) donde está sentado el **operador** (`kind 'operator'`, desarmado, camisa verde azulada con auricular; `placeActivities` lo fuerza a `sit`).
+    - **Cámaras** (`def.cameras = [casilla de PARED x, y, rumbo, barrido ±, velocidad]`, `map.cameras` con el origen del cono ya en el suelo): cono de **240 u y ±0,4 rad** que barre (`rumbo + seno · barrido`). Con el jugador dentro del cono **y con línea de visión** el indicador sube en **0,6 s** (decae a ×1,2 si sale). Conos ámbar en el suelo (`drawCones`, rojos y más intensos al detectar), cuerpos con piloto parpadeante sobre las paredes (`drawBodies`); F1 dibuja los conos.
+    - **Operador y alerta general**: al llenarse un indicador, si el operador está vivo y no tumbado, saca el **walkie-talkie** (1,3 s, `¡INTRUSO EN LA CÁMARA!`, dibujo del walkie con antena parpadeante) y entonces `Game.generalAlarm` pone a **todos los enemigos vivos** (no el jefe) en `answerAlarm` hacia donde te vio la cámara, desfasados hasta 0,8 s (el presupuesto de BFS por fotograma reparte las rutas); cartel `¡ALERTA GENERAL!`. Mientras una cámara te vea repite la posición cada 6 s. El operador que te ve él mismo también da la alerta general (`raiseAlarm`).
+    - **Contraataque**: **matar al operador** (cualquier causa) deja las cámaras **ciegas para siempre** (`CÁMARAS CIEGAS`, **+500** si la alarma aún no había saltado; chispas en las cámaras). Matarlo o tumbarlo **durante** el aviso lo corta (`¡AVISO CORTADO!`). Con el operador tumbado no hay aviso. Las cámaras solo detectan con el jugador dentro del edificio y en `playing`.
+    - `check:levels` (5d): cámaras en casilla de pared con el origen del cono libre, exactamente 1 operador sentado, alcanzable y a ≥ 20 casillas de la entrada, y a partir del piso 7 no menos enemigos que en el anterior (7: 12, 8: 13).
 - Los pisos nuevos usan `loadLevel` normal; `loadLevel` devuelve además `strobe` y `boss`. El selector de pisos muestra una **ventana
   deslizante** de tarjetas cuando no caben todas (`floorsLayout`: `first`/`perPage`, flechas `<` `>` y toque en los bordes).
 - Los pisos están en `LEVELS` (`src/map.js`): `{ name, floor, par, rows, zones, props, loot, … }`.

@@ -71,7 +71,8 @@ export class Enemy {
     this.fleeTarget = null;
     this.fleeRepath = 0;
     this.refreshMelee();
-    this.sprite = kind === 'runner' ? 'enemyRunner' : kind === 'heavy' ? 'enemyHeavy' : (weapon ? 'enemyArmed' : 'enemy');
+    this.radioT = 0;        // (operador) s que le quedan de aviso por el walkie-talkie
+    this.sprite = kind === 'operator' ? 'enemyOperator' : kind === 'runner' ? 'enemyRunner' : kind === 'heavy' ? 'enemyHeavy' : (weapon ? 'enemyArmed' : 'enemy');
     this.corpseSprite = kind === 'runner' ? 'runnerCorpse' : kind === 'heavy' ? 'heavyCorpse' : (weapon ? 'armedCorpse' : 'enemyCorpse');
     this.gunDef = weapon ? ENEMY_WEAPONS[weapon.type] : null;
     this.burstLeft = 0;     // balas que quedan de la ráfaga en curso
@@ -680,6 +681,10 @@ export class Enemy {
     if (resting && this.seated) {
       drawSprite(ctx, 'fist', 11, 6);
       drawSprite(ctx, 'fist', 11, -6);
+      if (this.kind === 'operator') { // auricular y, al dar el aviso, el walkie-talkie junto a la cara (con la antena roja parpadeando)
+        ctx.fillStyle = '#05d9e8'; pixelRect(ctx, -1, -7, 1, 3);
+        if (this.radioT > 0) { ctx.fillStyle = '#14141e'; pixelRect(ctx, 6, -10, 4, 6); ctx.fillStyle = Math.floor(time * 8) % 2 ? '#ff2a4a' : '#9d8fb8'; pixelRect(ctx, 8, -12, 1, 2); }
+      }
     } else if (resting && this.activity === 'smoke') {
       const up = this.smoking ? Math.min(1, Math.min(this.smokeT - 1.9, 3.9 - this.smokeT) / 0.4) : 0; // 0 abajo · 1 en la boca
       drawSprite(ctx, 'fist', 10 - 3 * up, 8 - 5 * up);
