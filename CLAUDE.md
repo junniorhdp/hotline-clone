@@ -60,6 +60,7 @@ HTML5 Canvas, JavaScript Vanilla (ES Modules) y Vite. Sin frameworks ni librerí
   - `pixelfont.js` — fuente bitmap 5×7 propia (con tildes y Ñ) y `drawText`; cachea cada texto renderizado.
   - `input.js` — teclado, ratón y dedos (Pointer Events); distingue "mantenido" de "pulsado este paso".
   - `keybinds.js` — controles de PC reasignables (`KEY_CONFIG`, `KeyBinds`, `keyLabel`). Ver "Controles de PC reasignables".
+  - `exits.js` — `BikeExit`: la salida de la moto al acabar el piso (portón, carril lateral o salto). Ver "Salida de la moto".
   - `street.js` — vida de la calle: contenedores con armas oxidadas, monedas, máquina expendedora (lata = buff), cabina telefónica (pista o reto), fogatas y daño/penalización de civiles. Ver "Perímetro exterior y alcantarilla".
   - `npcs.js` — `Vagrant`: los vagabundos (aspecto, estados: huida, agonía, duelo, gratitud; dibujo).
   - `sewer.js` — easter egg de la calle: `Sewer` (tapa de alcantarilla que se desliza y cocodrilo que sonríe). Ver "Perímetro exterior y alcantarilla".
@@ -137,7 +138,7 @@ Cada piso empieza **en la calle**, no dentro. El ciclo (`game.js`) es:
    2. `drawGoalPanel`: al apagarse el cartel (`goalAge` cuenta desde entonces) sube desde abajo un panel `REGRESA A LA MOTO`
    (centro inferior; en escritorio por encima de la línea de controles) con borde cian que late y flecha parpadeante.
    El marco pasa a la moto (`MOTO`).
-5. **Fuga** (`state 'leaving'`): al **rozar la moto** (`touchingBike`: su borde + `MOUNT_MARGIN`) el
+5. **Fuga** (`state 'leaving'`; la salida se elige **al azar**, ver "Salida de la moto"): al **rozar la moto** (`touchingBike`: su borde + `MOUNT_MARGIN`) el
    jugador se sube (0,4 s) y la moto acelera hasta salir de la pantalla (1,35 s) con polvo y el motor
    (`playMotoDeparture`, ver "La moto"); después fundido y resultados (`finishFloor`). También se puede saltar con
    Espacio/clic. **El piso solo se completa así**: no basta con limpiar el edificio.
@@ -197,6 +198,15 @@ Cada piso empieza **en la calle**, no dentro. El ciclo (`game.js`) es:
   - Comprobar después que nadie se atasca simulando movimiento real (`moveAndSlide`) y la
     navegación de los enemigos (`Enemy.goTo`) hacia el jugador, patrullas, armas y la entrada.
 
+### Salida de la moto (`exits.js`, `BikeExit`)
+Como la calle está cerrada por la valla perimetral, la moto ya no se va "a través" de ella: al arrancar la fuga (`startLeaving`) se elige **al azar (33 % cada una; medido 91/110/99 de 300)** una de tres salidas. La moto sigue una trayectoria precalculada (`buildPath`: polilínea con las curvas suavizadas) con aceleración constante
+(`place(t2)`: distancia ∝ t²; el faro y el humo van en el sistema de la moto, que ahora tiene rumbo `angle`, altura `z` y tamaño `sc`). La cámara amplía sus límites `EXIT_EXTRA` (340 u) hacia donde sale, la carretera de fuera la pinta `drawRoad` y lo que va **encima de la valla** (hojas del portón, abertura) `drawOver`;
+la moto y el jugador se dibujan **después de las paredes** mientras dura la fuga (`over` en `render`), así que no los tapa la valla. La cinemática no usa colisiones, pero la elección busca sitio libre (fila despejada / columna despejada al sur; si no hay, cae al carril).
+- **Portón** (`gate`, 2,3 s): un sector de 3 casillas de la valla sur se abre (dos hojas de reja que se deslizan, luces naranjas de aviso, sonido `unlock`); la moto acelera hacia una columna despejada al este, **gira 90°** con una curva y cruza hacia una carretera (acera y asfalto con raya amarilla) fuera del mapa.
+- **Carril lateral** (`lane`, 1,35 s): la valla del extremo este de la calle se abre (hueco de asfalto con postes) y la moto acelera en línea recta por el **callejón despejado** (se escoge la fila libre más cercana a la suya), con paredes de neón a los lados fuera del mapa.
+- **Salto** (`jump`, 2,3 s): aparece una **rampa improvisada** (tablones sobre cajas, franjas de aviso; cae desde arriba con sonido y polvo) pegada a la valla sur; la moto gira al sur, sube y **vuela por encima de la valla** (altura 80, tamaño ×1,5, balanceo, sombra que se reduce), con sacudida, chispas y el cartel `¡SALTO ÉPICO!`.
+- **Llegada**: la valla del extremo oeste de la calle también se abre (`BikeExit.drawArrivalGap`) para que entre la moto. Saltar la cinemática (Espacio/Enter/clic) sigue yendo directo a los resultados.
+
 ## Perímetro exterior y alcantarilla
 - **Anillo de calle** (`withOutskirts` en `map.js`, `OUTSKIRT` = 6 casillas): al cargar un piso se rodea el mapa de `LEVELS` por **arriba, izquierda y derecha** (al sur ya está la calle del propio piso)
   con calle nocturna desierta. Lo escrito en `LEVELS` **no cambia**: `rows`, `zones` y `props` se desplazan (6, 6) al cargar, así que los pisos se siguen diseñando con sus coordenadas de siempre. La miniatura
@@ -245,7 +255,7 @@ Cada piso empieza **en la calle**, no dentro. El ciclo (`game.js`) es:
     (`bloodLevel` ≥ 2) **se asustan**: tiemblan, abren los ojos, se apartan sin salirse de su rincón y gritan frases distintas en una burbuja pegada a la pantalla. No pueden entrar al edificio (zona vetada `ban`).
   - **Estados del vagabundo** (`Vagrant.state`): `idle` · `scared` · `flee` · `cower` · **`agony`** · **`mourn`** · **`happy`** · `dead`. Las **armas oxidadas** (`poison`) no hieren a un civil: lo **envenenan** (`poisonHit`): cae, **agoniza** el `poisonTime` del arma (3,6 s tubo, 2,2 s cuchillo) con gotas verdes y **muere con sangre verde tóxica**
     (`toxic` → `Game.bleed(..., tox)`: partículas, charcos y paredes, igual que en los enemigos). Cuenta como herido al golpe y como muerto al morir (si el piso acaba mientras agoniza, ya cuenta como muerto: `civilianPenalty`).
-  - **Culpa y vómito** (`Game.guilt`, `Player.startVomit/updateVomit`): al **matar o herir de muerte** a un civil (muerte directa, o el golpe envenenado) empieza una cuenta atrás de **3 s** (`StreetLife.startGuilt`, solo corre en `playing`); al acabar el jugador **se quita la máscara** (queda en su mano; el HUD la apaga),
+  - **Culpa y vómito** (`Game.guilt`, `Player.startVomit/updateVomit`): al **matar o herir de muerte** a un civil (muerte directa, o el golpe envenenado) empieza una cuenta atrás de **3 s** (`StreetLife.startGuilt`; corre en `playing` **y en `cleared`**, así que no se pierde si el piso se despeja enseguida; se congela en pausa, forcejeo y ejecuciones). **Garantía**: `startLeaving` no arranca mientras haya culpa pendiente o vómito en curso: si intentas subir a la moto con la culpa en cuenta atrás, el vómito empieza ya (`guilt.t = 0`) y la fuga arranca cuando termina; al acabar el jugador **se quita la máscara** (queda en su mano; el HUD la apaga),
     se encorva y **vomita 3 arcadas** (2,7 s en total) con partículas y charco **amarillo verdoso** (paleta `VOMIT`, `Game.vomitSplat`: no mancha las suelas ni cuenta como sangre) y sonido `retch`. Mientras tanto está **quieto y vulnerable** (sin mover, atacar ni recoger; `killPlayer` lo cancela). Al terminar se vuelve a poner la máscara (si la llevaba) y hay 0,4 s de espera antes de atacar.
   - **Duelo de los demás civiles** (`civilianDied` → `Vagrant.mourn`): los que quedan vivos a menos de 340 u de la muerte entran en **pánico profundo**: corren (55 u/s) hasta el cuerpo y se **acurrucan** junto a él (más bajos, cubriéndose la cara) **llorando** (lágrimas animadas, frases entrecortadas en burbuja azul y sonido `sob`) hasta que se reinicia el piso. Los que huían de un golpe pasan al duelo al acabar de huir.
   - **Darle una moneda a un vagabundo**: con una moneda en mano aparece `ESPACIO · DAR MONEDA` bajo cada vagabundo al que se pueda dar (`canGift`: una sola vez por persona; ni heridos, ni de duelo, ni muertos); al darla se pone **feliz y agradecido** 7 s (sonrisa, corazón, frases de gracias en burbuja dorada, ya no se asusta) y da **+300 puntos** (`¡BUENA ACCIÓN!`).
@@ -584,7 +594,7 @@ cambia de régimen todo el rato y se tiene que poder cortar limpia. Es Web Audio
 ### Estadísticas del intento (`game.stats`, `statsSummary`, `drawStatsPanel`)
 - Se cuentan por **intento de piso** (`newStats()` en `reset()`, así que R las reinicia): `attacks` (golpes cuerpo a cuerpo —sin patadas a puertas ni ejecuciones— y disparos, `recordAttack`), `hits` (golpes que conectan y disparos
   cuyas balas alcanzan a alguien, `recordShotHit` por `b.shot`; el disparo defensivo y el contraataque cuentan como acierto), `kills` (cada `killEnemy`) y `uses` por arma (puños = `fists`). Resumen: `TIEMPO: m:ss` (`game.time`), `PRECISIÓN: hits/attacks`
-  (`--` sin ataques), `BAJAS` y `ARMA MÁS USADA` (la que más veces se ha usado en el intento, con su nombre de `WEAPON_DEFS`; no la de más bajas, porque en un piso se cambia de arma).
+  (`--` sin ataques), `BAJAS` y `MÁS USADA` (el arma que más veces se ha usado en el intento, con su nombre corto `short` de `WEAPON_DEFS` si lo tiene —p. ej. `CUCH. CARNICERO`—; el panel ensancha lo justo, hasta 190 px, para que etiqueta y valor no se solapen: `statsPanelWidth`; no la de más bajas, porque en un piso se cambia de arma).
 - Un **mini panel flotante** (marco neón, 4 líneas) sale en los **resultados** (a la izquierda del bloque en pantallas de ≥ 400 px; en estrechas, una línea `BAJAS · PRECISIÓN · ARMA`; la instantánea queda en `results.stats`) y en la **pantalla de muerte**, bajo la franja `HAS MUERTO`.
 
 ### Ritmo: el jugador y la IA

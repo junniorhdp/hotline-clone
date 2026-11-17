@@ -17,14 +17,14 @@ export const WEAPON_DEFS = {
   // cae, no se levanta y muere solo a los ~3,6 s (o lo rematas antes), con sangre verde tóxica (ver Game.poisonEnemy). Contra el jefe pega como un tubo.
   rustpipe: { name: 'TUBO OXIDADO', melee: true, knockdown: false, poison: true, range: 36, arc: Math.PI * 0.75, cooldown: 0.34, swingTime: 0.13, shake: 2.5 },
   // Cuchillo oxidado (contenedores): corto y MUY rápido; igual que el tubo oxidado noquea e intoxica, pero el veneno es más corto (2,2 s).
-  rustknife: { name: 'CUCHILLO OXIDADO', melee: true, knockdown: false, poison: true, poisonTime: 2.2, range: 28, arc: Math.PI * 0.6, cooldown: 0.22, swingTime: 0.1, shake: 2 },
+  rustknife: { name: 'CUCHILLO OXIDADO', short: 'CUCH. OXIDADO', melee: true, knockdown: false, poison: true, poisonTime: 2.2, range: 28, arc: Math.PI * 0.6, cooldown: 0.22, swingTime: 0.1, shake: 2 },
   // Palanca (contenedores): pesada y sin veneno; derriba siempre (no mata) con un arco amplio y deja al enemigo aturdido un 60 % más de tiempo
   // (más ventana para rematar o huir). Lenta de recuperar.
   crowbar: { name: 'PALANCA', melee: true, knockdown: true, downMul: 1.6, range: 38, arc: Math.PI * 0.9, cooldown: 0.46, swingTime: 0.17, shake: 4 },
   // Cuchillo de carnicero: EXCLUSIVO de la máscara BLADE (tiburón), que empieza cada piso con él; no está en el reparto de armas ni en los contenedores.
   // Ventajas sobre el cuchillo normal: más alcance (38 contra 30), arco más amplio, golpe más pesado y una EJECUCIÓN mucho más rápida (2 hachazos en 0,44 s
   // contra 3 puñaladas en 0,7 s); contra el jefe quita más vida. Los enemigos no lo recogen.
-  cleaver: { name: 'CUCHILLO DE CARNICERO', melee: true, knockdown: false, range: 38, arc: Math.PI * 0.8, cooldown: 0.27, swingTime: 0.12, shake: 3.5 },
+  cleaver: { name: 'CUCHILLO DE CARNICERO', short: 'CUCH. CARNICERO', melee: true, knockdown: false, range: 38, arc: Math.PI * 0.8, cooldown: 0.27, swingTime: 0.12, shake: 3.5 },
   // Subfusil: automático (`auto`: dispara mientras se mantiene el clic), poco preciso.
   smg: { name: 'SUBFUSIL', melee: false, auto: true, cooldown: 0.075, maxAmmo: 30, bulletSpeed: 950, pellets: 1, spread: 0.12, range: Infinity, shake: 1.6, sound: 'smg', noise: 560 },
 };

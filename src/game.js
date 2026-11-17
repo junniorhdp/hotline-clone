@@ -12,6 +12,7 @@ import { Boss, drawBossBar } from './boss.js';
 import { bloodyMaskPortrait, PORTRAIT_PAD, BLOOD_DROPS, villainPortrait, villainDef, AGENTS, drawGenderIcon, drawAgentPreview, drawPadlock } from './portraits.js';
 import { Ads } from './ads.js';
 import { Sewer } from './sewer.js';
+import { BikeExit, EXIT_EXTRA } from './exits.js';
 import { StreetLife, newStreetRun } from './street.js';
 import { weaponCategory } from './weapons.js';
 import { buildOptionsMenu, buildPauseMenu } from './options-menu.js';
@@ -205,6 +206,7 @@ export class Game {
     this.entered = false;
     this.entryWeapon = null;
     this.cine = null;      // cinemática en curso: { kind: 'arrive' | 'leave', t }
+    this.exit = null;      // salida de la moto elegida al azar para la fuga (portón, carril lateral o salto): ver exits.js
     this.callout = null;   // aviso grande temporal: { text, color, t, max, sub }
     this.scuffle = null;   // forcejeo en curso: { e, bar, t, mult, ... } (estado 'scuffle')
     this.scuffleCount = 0; // forcejeos de este piso: cada uno endurece al enemigo (se conserva con R)
@@ -1073,7 +1075,7 @@ export class Game {
     if (this.guilt) {
       const gp = this.player;
       if (!gp.alive || this.state === 'dead') this.guilt = null;
-      else if (this.state === 'playing' && !this.panel && !gp.exec && !gp.vomit && (this.guilt.t -= dt) <= 0) { this.guilt = null; gp.startVomit(this); }
+      else if ((this.state === 'playing' || this.state === 'cleared') && !this.panel && !gp.exec && !gp.vomit && (this.guilt.t -= dt) <= 0) { this.guilt = null; gp.startVomit(this); }
     }
 
     this.bullets = this.bullets.filter((b) => b.alive);
@@ -1182,19 +1184,19 @@ export class Game {
         p.y = lerp(c.from.y, b.park.y, e);
         p.angle = c.from.angle + angleDiff(0, c.from.angle) * e;
       } else {
-        const t2 = c.t - LEAVE_BOARD;
-        const accel = (2 * (this.map.pixelW + 120 - b.park.x)) / (LEAVE_RIDE * LEAVE_RIDE);
+        const t2 = c.t - LEAVE_BOARD, ex = this.exit;
         b.riding = true;
-        b.x = b.park.x + 0.5 * accel * t2 * t2;
-        p.x = b.x - 4;
-        p.y = b.y;
-        p.angle = 0;
-        if (Math.random() < 0.6) this.particles.dust(b.x - 24, b.y + rand(-4, 4), 1);
-        // Escape: humo gris que se queda atrás (más denso al arrancar) y chispas de neón cian/magenta.
+        ex.place(t2, b, this);                       // trayectoria, giro y salto de la salida elegida
+        const ca = Math.cos(b.angle), sa = Math.sin(b.angle);
+        p.x = b.x - 4 * ca;
+        p.y = b.y - 4 * sa - b.z;
+        p.angle = b.angle;
+        // Escape: polvo y humo gris que se quedan atrás (más denso al arrancar) y chispas de neón cian/magenta.
+        if (!b.z && Math.random() < 0.6) this.particles.dust(b.x - 24 * ca + rand(-4, 4), b.y - 24 * sa + rand(-4, 4), 1);
         const smoke = t2 < 0.35 ? 3 : 1;
-        for (let i = 0; i < smoke; i++) this.particles.dust(b.x - 20 - rand(0, 6), b.y + 3 + rand(-2, 2), 1);
-        if (Math.random() < 0.45) this.particles.neon(b.x - 22, b.y + 3, Math.PI + rand(-0.3, 0.3), 1, 0.25);
-        if (t2 >= LEAVE_RIDE) { this.finishLeaving(); return; }
+        for (let i = 0; i < smoke; i++) this.particles.dust(b.x - (20 + rand(0, 6)) * ca + rand(-2, 2), b.y - (20 + rand(0, 6)) * sa + rand(-2, 2), 1);
+        if (Math.random() < 0.45) this.particles.neon(b.x - 22 * ca, b.y - 22 * sa - b.z, b.angle + Math.PI + rand(-0.3, 0.3), 1, 0.25);
+        if (t2 >= ex.dur) { this.finishLeaving(); return; }
       }
     }
     const follow = b.riding ? b : p;
@@ -1499,14 +1501,23 @@ export class Game {
 
   // Edificio despejado y de vuelta en la moto: se sube y se va; al salir de la pantalla, los resultados.
   startLeaving() {
+    // Culpa pendiente (o vomitando): el piso no se cierra hasta que el jugador haya vomitado. Si se intenta subir a la moto con la culpa en cuenta
+    // atrás, el vómito empieza ya y la fuga arranca cuando termina (el jugador sigue junto a la moto).
+    if (this.guilt || this.player.vomit) { if (this.guilt) this.guilt.t = 0; return; }
     const p = this.player;
     this.state = 'leaving';
+    // Salida al azar (33 % cada una): portón en la valla sur, carril lateral o salto sobre una rampa (ver exits.js). La cámara amplía sus límites
+    // en esa dirección para seguir a la moto fuera del mapa.
+    this.exit = BikeExit.random(this);
+    const m = this.map;
+    this.camera.setBounds(m.pixelW + (this.exit.kind === 'lane' ? EXIT_EXTRA : 0), m.pixelH + (this.exit.kind === 'lane' ? 0 : EXIT_EXTRA));
     this.cine = { kind: 'leave', t: 0, from: { x: p.x, y: p.y, angle: p.angle } };
-    this.sfx.playMotoDeparture({ board: LEAVE_BOARD, ride: LEAVE_RIDE });
+    this.sfx.playMotoDeparture({ board: LEAVE_BOARD, ride: this.exit.dur });
   }
 
   finishLeaving() {
     this.cine = null;
+    this.exit = null;
     this.transition(() => this.finishFloor());
   }
 
@@ -1858,13 +1869,24 @@ export class Game {
       time: `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`,
       accuracy: st.attacks > 0 ? `${Math.round((st.hits / st.attacks) * 100)}%` : '--',
       kills: st.kills,
-      favorite: fav ? (WEAPON_DEFS[fav[0]] ? WEAPON_DEFS[fav[0]].name : fav[0].toUpperCase()) : '--',
+      favorite: fav ? (WEAPON_DEFS[fav[0]] ? WEAPON_DEFS[fav[0]].short || WEAPON_DEFS[fav[0]].name : fav[0].toUpperCase()) : '--', // nombre corto si lo tiene (cabe en el panel)
     };
   }
 
   // Mini panel flotante (marco neón, 4 líneas) en (x, y); devuelve su alto.
+  // Líneas del panel: etiqueta + valor. La etiqueta del arma es corta ("MÁS USADA") para dejar sitio a nombres largos.
+  statsRows(sum) {
+    return [['TIEMPO', sum.time], ['PRECISIÓN', sum.accuracy], ['BAJAS', String(sum.kills)], ['MÁS USADA', sum.favorite]];
+  }
+
+  // Ancho del panel: el de siempre (156) o el que haga falta para que etiqueta y valor de cada línea no se solapen (tope 190).
+  statsPanelWidth(sum) {
+    const need = Math.max(...this.statsRows(sum).map(([l, v]) => measureText(`${l}:`) + measureText(v) + 22));
+    return clamp(Math.ceil(need), 156, 190);
+  }
+
   drawStatsPanel(ctx, x, y, sum) {
-    const w = 156, h = 53;
+    const w = this.statsPanelWidth(sum), h = 53;
     ctx.fillStyle = 'rgba(13, 2, 33, 0.9)';
     ctx.fillRect(x, y, w, h);
     ctx.fillStyle = COLORS.player;
@@ -1872,8 +1894,7 @@ export class Game {
     ctx.fillStyle = COLORS.wall;
     ctx.fillRect(x, y, 1, h); ctx.fillRect(x + w - 1, y, 1, h);
     drawText(ctx, 'ESTADÍSTICAS', x + w / 2, y + 4, { color: '#9d8fb8', align: 'center' });
-    const rows = [['TIEMPO', sum.time], ['PRECISIÓN', sum.accuracy], ['BAJAS', String(sum.kills)], ['ARMA MÁS USADA', sum.favorite]];
-    rows.forEach(([label, value], i) => {
+    this.statsRows(sum).forEach(([label, value], i) => {
       const ry = y + 15 + i * 9;
       drawText(ctx, `${label}:`, x + 6, ry, { color: '#9d8fb8' });
       drawText(ctx, value, x + w - 6, ry, { color: COLORS.text, align: 'right' });
@@ -2238,9 +2259,11 @@ export class Game {
 
     this.camera.apply(ctx);
     ctx.drawImage(this.floorLayer, 0, 0, pixelW, pixelH);
+    const over = this.state === 'leaving' || this.state === 'arriving'; // moto y jugador se dibujan DESPUÉS de las paredes (pasan por la abertura de la valla)
+    if (this.state === 'leaving' && this.exit) this.exit.drawRoad(ctx); // carretera de fuera (y la rampa del salto)
     ctx.drawImage(this.bloodLayer, 0, 0, pixelW, pixelH);
     if (this.goreOn) this.prints.draw(ctx); // sobre baldosas y sangre, bajo todo lo demás
-    this.drawBike(ctx);
+    if (!over) this.drawBike(ctx);
     this.drawObjectiveMarker(ctx);
     this.particles.drawGround(ctx);
     // Muebles sobre la sangre (lo que cae debajo queda oculto) y bajo los personajes.
@@ -2257,7 +2280,7 @@ export class Game {
     this.drawPoison(ctx);
     if (this.player.alive) {
       if (this.state === 'playing' || this.state === 'cleared') this.player.drawAim(ctx, this);
-      this.player.draw(ctx);
+      if (!over) this.player.draw(ctx);
     }
     this.particles.draw(ctx);
     for (const d of this.doors) d.draw(ctx);
@@ -2269,6 +2292,13 @@ export class Game {
     ctx.globalAlpha = 1;
     ctx.drawImage(this.wallLayer, 0, 0, pixelW, pixelH);
     if (this.wallBloodDirty && this.goreOn) ctx.drawImage(this.wallBloodLayer, 0, 0, pixelW, pixelH);
+    if (over) {
+      // Encima de la valla: el portón que se abre (o la abertura del carril), y después la moto con el jugador.
+      if (this.state === 'leaving' && this.exit) this.exit.drawOver(ctx);
+      else if (this.state === 'arriving') BikeExit.drawArrivalGap(ctx, this);
+      this.drawBike(ctx);
+      if (this.player.alive) this.player.draw(ctx);
+    }
 
     if (this.debug) this.renderDebug(ctx);
 
@@ -2288,13 +2318,16 @@ export class Game {
   drawBike(ctx) {
     const b = this.bike;
     if (!b) return;
-    drawSprite(ctx, 'bikeShadow', b.x + 3, b.y + 3, 0, { alpha: 0.5 });
+    const a = b.angle || 0, z = b.z || 0, sc = b.sc || 1; // rumbo, altura del salto y tamaño (la salida elegida los mueve: ver exits.js)
+    drawSprite(ctx, 'bikeShadow', b.x + 3, b.y + 3, a, { alpha: 0.5 * (1 - Math.min(0.7, z / 120)), scale: WORLD_PX * (1 - Math.min(0.4, z / 200)) });
     // Fuga en moto: el faro proyecta un cono de luz semitransparente hacia delante (se abre y se apaga con la distancia),
-    // en bloques de píxeles y sumado, y su luz crece con la velocidad.
+    // en bloques de píxeles y sumado, y su luz crece con la velocidad. Se dibuja en el sistema de la moto (gira con ella).
     if (this.state === 'leaving' && this.cine && this.cine.t >= LEAVE_BOARD) {
-      const t2 = this.cine.t - LEAVE_BOARD, hx = b.x + 16, hy = b.y + 1;
+      const t2 = this.cine.t - LEAVE_BOARD;
       const power = Math.min(1, t2 / 0.5);
       ctx.save();
+      ctx.translate(b.x, b.y - z);
+      ctx.rotate(a);
       ctx.globalCompositeOperation = 'lighter';
       ctx.fillStyle = '#fff2b0';
       const N = 22;
@@ -2302,13 +2335,13 @@ export class Game {
         const k = i / N;
         ctx.globalAlpha = 0.26 * power * (1 - k) * (1 - k * 0.4);
         const half = 2 + i * 1.5;
-        pixelRect(ctx, hx + i * 7, hy - half, 4, Math.max(1, Math.round((2 * half) / WORLD_PX)));
+        pixelRect(ctx, 16 + i * 7, 1 - half, 4, Math.max(1, Math.round((2 * half) / WORLD_PX)));
       }
       ctx.globalAlpha = 0.6 * power;
-      pixelDisc(ctx, hx + 2, hy, 3, WORLD_PX);
+      pixelDisc(ctx, 9, 0.5, 3, WORLD_PX);
       ctx.restore();
     }
-    drawSprite(ctx, 'bike', b.x, b.y, 0);
+    drawSprite(ctx, 'bike', b.x, b.y - z, a, { scale: WORLD_PX * sc });
   }
 
   // Marco neón con flecha hacia lo que toca hacer: entrar por la puerta principal (fuera, antes de
@@ -2990,7 +3023,7 @@ export class Game {
       drawText(ctx, 'HAS MUERTO', cx, Math.round(h / 2) - 22, { color: COLORS.blood, scale: this.fitScale('HAS MUERTO', w - 12, 3), align: 'center' });
       if (!touch) drawText(ctx, 'R REINTENTAR PISO · ENTER TERMINAR PARTIDA · T RÉCORDS', cx, Math.round(h / 2) + 10, { color: COLORS.text, align: 'center' });
       if (this.showRecords) this.drawRecordsOverlay(ctx, w, h);
-      else this.drawStatsPanel(ctx, Math.round(cx - 78), Math.round(h / 2) - 26 + bandH + 6, this.statsSummary());
+      else { const ss = this.statsSummary(); this.drawStatsPanel(ctx, Math.round(cx - this.statsPanelWidth(ss) / 2), Math.round(h / 2) - 26 + bandH + 6, ss); }
       this.touch.drawScreenButtons(ctx);
     }
     this.touch.draw(ctx);
