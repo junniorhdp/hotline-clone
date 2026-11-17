@@ -54,6 +54,14 @@ for (let i = 0; i < LEVELS.length; i++) {
   if (!(L.entry.y < L.entry.lockY + 1)) fail(`entrada (${L.entry.y}) no pasa el umbral (${L.entry.lockY})`);
   const mainDoor = L.doors.find((d) => d.main);
   console.log(`  puerta principal (${mainDoor.tx},${mainDoor.ty}) horizontal=${mainDoor.horizontal} · entrada (${L.entry.x.toFixed(0)},${L.entry.y.toFixed(0)}) umbral y<${L.entry.lockY.toFixed(0)} · moto (${L.bike.x.toFixed(0)},${L.bike.y.toFixed(0)}) · jugador (${L.player.x.toFixed(0)},${L.player.y.toFixed(0)})`);
+  // 5b) rehenes (1-2 por piso: alcanzables y fuera del paso de las puertas) y actividades de los enemigos (los sentados, en casillas alcanzables)
+  if (!L.hostages.length) fail('no hay rehenes');
+  for (const hs of L.hostages) {
+    if (!reach(hs.x, hs.y)) fail(`rehén en (${hs.tx},${hs.ty}) inalcanzable`);
+    if (L.doors.some((d) => Math.abs(d.tx - hs.tx) <= 1 && Math.abs(d.ty - hs.ty) <= 1)) fail(`rehén (${hs.tx},${hs.ty}) pegado a una puerta`);
+  }
+  for (const e of L.enemies) if ((e.activity === 'sit' || e.activity === 'smoke' || e.activity === 'watch') && !reach(e.x, e.y)) fail(`enemigo ${e.activity} en (${e.tx},${e.ty}) inalcanzable`);
+  console.log(`  actividades: ${['patrol', 'watch', 'smoke', 'sit'].map((k) => k + ' ' + L.enemies.filter((e) => (e.activity || 'patrol') === k).length).join(' · ')} · rehenes ${L.hostages.length}`);
   // 6) cada enemigo puede llegar al jugador y a la salida (pathfinding)
   const pEntry = L.entry;
   const noPath = L.enemies.filter((e) => !findPath(map, e.x, e.y, pEntry.x, pEntry.y));

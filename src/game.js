@@ -14,6 +14,7 @@ import { Ads } from './ads.js';
 import { Sewer } from './sewer.js';
 import { BikeExit, EXIT_EXTRA } from './exits.js';
 import { StreetLife, newStreetRun } from './street.js';
+import { Hostages } from './hostages.js';
 import { weaponCategory } from './weapons.js';
 import { buildOptionsMenu, buildPauseMenu } from './options-menu.js';
 import { Player, bloodLevelFor, FINISH_RANGE } from './player.js';
@@ -553,6 +554,7 @@ export class Game {
     const en = new Enemy(e.x, e.y, e.patrol, weapon, e.kind, e.melee);
     // Portador: solo si su máscara aún no está desbloqueada (si no, es un enemigo normal).
     if (e.carrier && !this.settings.isMaskUnlocked(e.carrier)) en.setCarrier(e.carrier);
+    if (e.activity && e.activity !== 'patrol') en.setActivity(e.activity, e.seatAngle ?? null); // fumando, sentado o vigilando (ver placeActivities en map.js)
     return en;
   }
 
@@ -824,9 +826,14 @@ export class Game {
     const civ = this.street.civilianPenalty();
     civ.penalty = Math.min(civ.penalty, Math.max(0, this.score.levelScore));
     if (civ.penalty > 0) this.score.addBonus(-civ.penalty);
+    // Rehenes abatidos por el jugador: −2000 cada uno (los liberados ya sumaron +1500 al soltarlos).
+    const hs = this.hostages.summary();
+    hs.penalty = Math.min(hs.penalty, Math.max(0, this.score.levelScore));
+    if (hs.penalty > 0) this.score.addBonus(-hs.penalty);
     this.results = this.score.finishLevel(this.time, this.par, this.enemies.length);
     this.results.challenge = challenge;
     this.results.civilians = civ.penalty > 0 ? civ : null;
+    this.results.hostages = hs.total > 0 ? hs : null;
     this.results.last = this.levelIndex === LEVELS.length - 1;
     this.results.stats = this.statsSummary(); // el panel se queda fijo aunque luego se reinicie el estado
     // Se guarda al completar cada piso: si se cierra la pestaña, el progreso ya cuenta.
@@ -946,6 +953,7 @@ export class Game {
     this.sewer.bind(this);
     this.guilt = null;
     this.street = new StreetLife(this); // contenedores, moneda, máquina, cabina y vagabundo de la calle
+    this.hostages = new Hostages(this, level.hostages || []); // rehenes atados a sillas dentro del edificio (ver hostages.js)
     this.pools = [];
     // masks (selección) | arriving (llega en moto) | playing (fuera o dentro: ver `inside`) | dead |
     // cleared (despejado: vuelve a la moto) | leaving (se sube y se va) | results
@@ -1071,6 +1079,7 @@ export class Game {
     this.prints.update(dt);
     this.sewer.update(dt, this);
     this.street.update(dt);
+    this.hostages.update(dt);
     // Culpa: 3 s después de matar (o herir de muerte) a un civil, el jugador se quita la máscara y vomita (vulnerable y quieto).
     if (this.guilt) {
       const gp = this.player;
@@ -1498,7 +1507,7 @@ export class Game {
     const door = this.doors.some((d) => d.inKickRange(p.x, p.y, p.angle));
     if (door) return { id: 'kick', label: 'PATEAR', ready: true };
     // Algo de la calle con lo que interactuar (contenedor, máquina, cabina, vagabundo con moneda): enciende el botón superior (ver StreetLife.nearTarget).
-    if (this.street && (this.state === 'playing' || this.state === 'cleared') && this.street.nearTarget()) return { id: 'interact', label: 'INTERACTUAR', ready: true };
+    if ((this.state === 'playing' || this.state === 'cleared') && ((this.street && this.street.nearTarget()) || (this.hostages && this.hostages.nearTarget()))) return { id: 'interact', label: 'INTERACTUAR', ready: true };
     return { id: 'attack', label: 'ATACAR', ready: false };
   }
 
@@ -1607,6 +1616,7 @@ export class Game {
 
       if (b.owner === 'player') {
         if (this.street.bulletHit(b)) { b.alive = false; b.hitWall = false; continue; } // civil de la calle: la bala se detiene en él
+        if (this.hostages.bulletHit(b)) { b.alive = false; b.hitWall = false; continue; } // rehén: la bala lo mata (penalización y culpa)
         for (const e of this.enemies) {
           if (!e.alive) continue;
           if (segmentPointDistance(b.px, b.py, b.x, b.y, e.x, e.y) < e.r + b.r) {
@@ -1965,7 +1975,7 @@ export class Game {
     const cx = clamp(x, sf.l + margin + tw / 2, Math.max(sf.l + margin + tw / 2, right - tw / 2));
     let cy = clamp(y, sf.t + margin, Math.max(sf.t + margin, h - sf.b - margin - th));
     // Y esquivan el HUD de las esquinas de arriba (izquierda: arma, máscara y, en táctil, REINICIAR/PAUSA; derecha: puntos y piso): se bajan por debajo.
-    const rz = { x: w - sf.r - 134, b: 66 + sf.t }, lz = { x: sf.l + (touch ? 78 : 118), b: (touch ? 114 : 52) + sf.t };
+    const rz = { x: w - sf.r - 134, b: 66 + sf.t }, lz = { x: sf.l + (touch ? 78 : 118), b: (touch ? 84 : 52) + sf.t };
     for (let k = 0; k < 2; k++) {
       if (cx + tw / 2 > rz.x && cy < rz.b) cy = rz.b;
       if (cx - tw / 2 < lz.x && cy < lz.b) cy = lz.b;
@@ -2283,6 +2293,7 @@ export class Game {
     ctx.drawImage(this.propsLayer, 0, 0, pixelW, pixelH);
     this.sewer.draw(ctx); // sobre los muebles de la calle: la cabeza nunca queda tapada ni cortada
     this.street.draw(ctx);
+    this.hostages.draw(ctx);
     for (const e of this.enemies) if (e.alive && e.state === 'down') e.draw(ctx, this.time, this);
     this.drawExecuteMarks(ctx);
     this.drawLockMark(ctx);
@@ -2546,6 +2557,7 @@ export class Game {
       ['COMBO MÁXIMO', `X${r.maxCombo}`],
       ['BONUS DE TIEMPO', `+${r.timeBonus.toLocaleString('es')}`],
       ...(r.challenge ? [['RETO', r.challenge.ok ? `CUMPLIDO +${r.challenge.bonus}` : 'FALLIDO']] : []),
+      ...(r.hostages ? [['REHENES', `${r.hostages.saved}/${r.hostages.total} LIBERADOS${r.hostages.killed ? ` · ${r.hostages.killed} MUERTO${r.hostages.killed > 1 ? 'S' : ''} -${r.hostages.penalty.toLocaleString('es')}` : ''}`]] : []),
       ...(r.civilians ? [['CIVILES', `-${r.civilians.penalty.toLocaleString('es')} (${[r.civilians.hurt && `${r.civilians.hurt} HERIDO${r.civilians.hurt > 1 ? 'S' : ''}`, r.civilians.killed && `${r.civilians.killed} MUERTO${r.civilians.killed > 1 ? 'S' : ''}`].filter(Boolean).join(' · ')})`]] : []),
       ['PUNTOS DEL PISO', r.levelScore.toLocaleString('es')],
       ['PUNTUACIÓN TOTAL', r.total.toLocaleString('es')],
@@ -2957,6 +2969,7 @@ export class Game {
     this.drawPopups(ctx);
     this.drawFloatingTexts(ctx);
     this.street.drawHud(ctx, w, h);
+    this.hostages.drawHud(ctx, w, h);
     this.drawExecutePrompt(ctx);
     const boss = this.enemies.find((e) => e.kind === 'boss' && e.alive && e.awake);
     if (boss && this.state !== 'cleared') drawBossBar(ctx, boss, w, 32 + this.safe.t);

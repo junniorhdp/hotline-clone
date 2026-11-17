@@ -505,6 +505,88 @@ const ENEMY_MIX = [
   { melee: 0.8, arm: 0.1 }, { melee: 0.55, arm: 0.3 }, { melee: 0.6, arm: 0.15 },
 ];
 const MELEE_TYPES = ['bat', 'pipe', 'knife'];
+
+// --- Actividades de los enemigos y rehenes -----------------------------------------------------------------------------------
+// Dentro del edificio no todos patrullan una ruta: cada grunt/pesado recibe al azar (por partida y piso) una actividad inicial mientras no sabe
+// de ti: 'patrol' (la ruta de siempre), 'watch' (vigila su sector girando la mirada), 'smoke' (fuma, distraído) o 'sit' (sentado a una mesa).
+// Además se atan rehenes a sillas en algunas habitaciones (ver hostages.js).
+const SIT_PROPS = new Set(['desk', 'cardTable', 'cashTable', 'counter', 'bed']);
+const EXTERIOR_ZONES = new Set(['asphalt', 'asphaltLine', 'asphaltBay', 'sidewalk']);
+
+function placeActivities(map, enemies, rnd, occupied, doors) {
+  const T = TILE;
+  const zoneAt = (tx, ty) => map.zone[ty * map.w + tx];
+  const nearDoor = (tx, ty) => doors.some((d) => Math.abs(d.tx - tx) <= 2 && Math.abs(d.ty - ty) <= 2);
+  const taken = new Set();
+  for (const e of enemies) {
+    if (e.kind === 'boss' || e.carrier) continue;                      // el jefe y los portadores de máscara no cambian
+    const r = rnd();
+    let act = e.kind === 'runner' ? 'patrol' : e.kind === 'heavy' ? (r < 0.6 ? 'watch' : 'patrol') : r < 0.42 ? 'patrol' : r < 0.68 ? 'watch' : r < 0.86 ? 'smoke' : 'sit';
+    if (e.axis === 'none') act = 'watch';                              // los que por diseño no se mueven, vigilan
+    if (act === 'sit') {
+      // Una casilla libre junto a una mesa/escritorio/barra de su misma sala (a ≤ 7 casillas y a la vista): se sienta de cara a ella.
+      const etx = Math.floor(e.x / T), ety = Math.floor(e.y / T), ez = zoneAt(etx, ety);
+      let best = null, bd = 7;
+      for (const p of map.props) {
+        if (!SIT_PROPS.has(p.type)) continue;
+        for (let ty = p.y - 1; ty <= p.y + p.h; ty++) for (let tx = p.x - 1; tx <= p.x + p.w; tx++) {
+          const inX = tx >= p.x && tx < p.x + p.w, inY = ty >= p.y && ty < p.y + p.h;
+          if (inX === inY) continue;                                   // solo los cuatro lados (ni dentro ni en diagonal)
+          if (tx < 0 || ty < 0 || tx >= map.w || ty >= map.h || isWallTile(map, tx, ty) || taken.has(tx + ',' + ty) || nearDoor(tx, ty) || zoneAt(tx, ty) !== ez) continue;
+          if (occupied.has(ty * map.w + tx) && !(tx === etx && ty === ety)) continue;
+          const d = Math.hypot(tx - etx, ty - ety);
+          if (d >= bd || !lineOfSight(map, e.x, e.y, tx * T + T / 2, ty * T + T / 2)) continue;
+          best = { tx, ty, p }; bd = d;
+        }
+      }
+      if (best) {
+        taken.add(best.tx + ',' + best.ty);
+        e.x = best.tx * T + T / 2; e.y = best.ty * T + T / 2; e.tx = best.tx; e.ty = best.ty;
+        e.seatAngle = Math.atan2((best.p.y + best.p.h / 2) * T - e.y, (best.p.x + best.p.w / 2) * T - e.x);
+      } else act = 'watch';
+    }
+    e.activity = act;
+    if (act !== 'patrol') e.patrol = [{ x: e.x, y: e.y }];           // sin ruta: se queda en su sitio
+  }
+}
+
+// Rehenes: 1 en el piso 1 y 1-2 en los demás, atados a una silla en una SALA (no pasillo) vigilada (hay un enemigo de la misma sala a ≤ 7 casillas),
+// lejos de las puertas y de la entrada. Devuelve [{ tx, ty, x, y, look }].
+function placeHostages(map, enemies, rnd, doors, mainDoorTy, entry, occupied, index) {
+  const T = TILE;
+  const zoneAt = (tx, ty) => map.zone[ty * map.w + tx];
+  const want = index === 0 ? 1 : 1 + (rnd() < 0.5 ? 1 : 0);
+  const guards = enemies.filter((e) => e.kind !== 'boss');
+  const collect = (allowFloor) => {
+    const out = [];
+    for (let ty = 1; ty < mainDoorTy - 3; ty++) for (let tx = 1; tx < map.w - 1; tx++) {
+      if (isWallTile(map, tx, ty) || occupied.has(ty * map.w + tx)) continue;
+      const z = zoneAt(tx, ty);
+      if (EXTERIOR_ZONES.has(z) || (!allowFloor && z === map.floor)) continue;
+      if (doors.some((d) => Math.abs(d.tx - tx) <= 2 && Math.abs(d.ty - ty) <= 2)) continue;
+      let free = 0;
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) if (!isWallTile(map, tx + dx, ty + dy)) free++;
+      if (free < 3) continue;                                          // no encajonado contra una esquina
+      if (Math.hypot(tx * T + T / 2 - entry.x, ty * T + T / 2 - entry.y) < 6 * T) continue;
+      if (!guards.some((e) => zoneAt(Math.floor(e.x / T), Math.floor(e.y / T)) === z && Math.hypot(e.x - tx * T - T / 2, e.y - ty * T - T / 2) <= 7 * T)) continue;
+      out.push([tx, ty]);
+    }
+    return out;
+  };
+  let cands = collect(false);
+  if (!cands.length) cands = collect(true);
+  for (let i = cands.length - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); [cands[i], cands[j]] = [cands[j], cands[i]]; }
+  const pick = (a) => a[Math.floor(rnd() * a.length)];
+  const out = [];
+  for (const [tx, ty] of cands) {
+    if (out.length >= want) break;
+    if (out.some((h) => Math.hypot(h.tx - tx, h.ty - ty) < 8)) continue;
+    out.push({ tx, ty, x: tx * T + T / 2, y: ty * T + T / 2,
+      look: { shirt: pick(['#e8e4f0', '#7aa8d8', '#d8a85a', '#9ad88a', '#d88aa8']), hair: pick(['#140a08', '#4a2a14', '#8a6a3a', '#b8b0a0', '#7a2a1a']), skin: pick(['#d9a67a', '#b9825a', '#8a5a3a', '#f0c8a0']), gender: pick(['m', 'f']) },
+      facing: Math.floor(rnd() * 4) * (Math.PI / 2) });
+  }
+  return out;
+}
 // Enemigo portador de máscara por piso (índice en LEVELS): lleva puesta una máscara bloqueada y su ventaja (ver Enemy.setCarrier). Solo
 // aparece si la máscara aún no está desbloqueada (lo decide Game.makeEnemy). Se escoge al más alejado de la entrada (hay que ir a por él).
 const CARRIERS = { 1: 'guepardo', 2: 'tiburon', 3: 'buho' };
@@ -729,7 +811,11 @@ export function loadLevel(index = 0, rng = Math.random) {
     const type = i < def.guaranteed.length ? def.guaranteed[i] : def.loot[Math.floor(rng() * def.loot.length)];
     weapons.push({ type, x: slot.x, y: slot.y });
   });
-  return { name: def.name, par: def.par, strobe: !!def.strobe, boss: !!def.boss, map, player, bike, mainDoor, entry, enemies, weapons, doors };
+  // Actividades iniciales de los enemigos y rehenes (al azar por partida y piso: R repite lo mismo; otra partida, otro reparto).
+  const actRnd = seededRandom(((Math.floor(rng() * 4294967296) ^ 0x51ed1234) >>> 0) || 1);
+  placeActivities(map, enemies, actRnd, occupied, doors);
+  const hostages = placeHostages(map, enemies, actRnd, doors, mainDoor.ty, entry, occupied, index);
+  return { name: def.name, par: def.par, strobe: !!def.strobe, boss: !!def.boss, map, player, bike, mainDoor, entry, enemies, weapons, doors, hostages };
 }
 
 // Patrulla de ida y vuelta: en el eje más despejado, o en el vertical si se fuerza.

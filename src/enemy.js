@@ -81,6 +81,24 @@ export class Enemy {
     this.repath = 0;
     const first = patrol[0];
     this.angle = Math.atan2(first.y - y, first.x - x) || 0;
+    // Actividad mientras no sabe de ti (estado 'patrol'): patrullar la ruta, vigilar un punto girando la mirada, fumar o estar sentado a una mesa.
+    this.activity = 'patrol';
+    this.home = { x, y, angle: this.angle };
+    this.seated = false;       // sentado (dibuja la silla y los brazos sobre la mesa)
+    this.relaxDelay = 0;       // s extra que tarda en reaccionar al verte si lo pillas relajado
+    this.scanT = 0; this.scanAngle = this.angle;
+    this.smokeT = Math.random() * 4; this.smoking = false; this.puffed = false; this.tipT = 0;
+  }
+
+  // Asigna la actividad inicial (la elige loadLevel al azar por partida y piso). 'sit' lleva el rumbo hacia la mesa.
+  setActivity(kind, angle = null) {
+    this.activity = kind || 'patrol';
+    if (angle !== null) { this.angle = angle; this.home.angle = angle; }
+    else this.home.angle = this.angle;
+    this.home.x = this.x; this.home.y = this.y;
+    this.seated = kind === 'sit';
+    this.relaxDelay = kind === 'smoke' ? 0.35 : kind === 'sit' ? 0.5 : 0; // fumando o sentado te ven más tarde
+    this.scanAngle = this.home.angle;
   }
 
   // Alcance y preparación del golpe según lo que lleve (puños, bate, tubo o cuchillo); el corredor es más rápido.
@@ -163,11 +181,13 @@ export class Enemy {
 
     const p = game.player;
     this.sees = p.alive && this.canSee(p, game.map);
+    if (this.state !== 'patrol') { this.seated = false; this.smoking = false; } // se levanta / tira el cigarrillo en cuanto pasa algo
     if (this.sees) {
       this.target = { x: p.x, y: p.y };
       if (this.state !== 'alert' && this.state !== 'chase' && this.state !== 'panic') {
+        const relaxed = this.state === 'patrol' ? this.relaxDelay : 0; // pillado fumando o sentado: tarda más en reaccionar
         this.state = 'alert';
-        this.timer = REACTION_TIME;
+        this.timer = REACTION_TIME + relaxed;
         game.playAt('alert', this.x, this.y);
       }
     }
@@ -194,7 +214,7 @@ export class Enemy {
     }
 
     switch (this.state) {
-      case 'patrol': this.updatePatrol(dt, game.map); break;
+      case 'patrol': this.updatePatrol(dt, game.map, game); break;
       case 'alert':
         this.turnTowards(Math.atan2(this.target.y - this.y, this.target.x - this.x), 14, dt);
         this.timer -= dt;
@@ -219,7 +239,37 @@ export class Enemy {
     this.windup = this.aim = this.burstLeft = 0;
   }
 
-  updatePatrol(dt, map) {
+  // Actividad en reposo (vigilar, fumar, sentado): se queda en su sitio (vuelve a él si lo ha dejado tras investigar o perseguir) y hace lo suyo.
+  updateActivity(dt, map, game) {
+    const h = this.home;
+    if (Math.hypot(h.x - this.x, h.y - this.y) > ARRIVE_DIST + 2) {
+      this.seated = false; this.smoking = false;
+      this.goTo(h.x, h.y, PATROL_SPEED, dt, map);
+      return;
+    }
+    if (this.activity === 'sit') {
+      this.seated = true;
+      this.turnTowards(h.angle + Math.sin(game.time * 0.6 + h.x) * 0.12, 3, dt); // mira la mesa, con pequeños movimientos de cabeza
+    } else if (this.activity === 'watch') {
+      // Vigilancia orgánica: cada pocos segundos fija la mirada en otro punto de su sector (±80°) y gira despacio hacia él.
+      this.scanT -= dt;
+      if (this.scanT <= 0) { this.scanT = 1.1 + Math.random() * 1.9; this.scanAngle = h.angle + (Math.random() - 0.5) * 2.8; }
+      this.turnTowards(this.scanAngle, 2.4, dt);
+    } else if (this.activity === 'smoke') {
+      // Ciclo de 4,2 s: quieto · sube el cigarrillo · calada (humo) · lo baja · pausa. Mira distraído hacia un lado.
+      this.smokeT = (this.smokeT + dt) % 4.2;
+      this.smoking = this.smokeT > 1.9 && this.smokeT < 3.9;
+      this.turnTowards(h.angle + Math.sin(this.smokeT * 0.7) * 0.5, 1.2, dt);
+      const mx = this.x + Math.cos(this.angle) * 12, my = this.y + Math.sin(this.angle) * 12;
+      if (this.smokeT > 2.9 && !this.puffed) { this.puffed = true; for (let i = 0; i < 3; i++) game.particles.smoke(mx, my); }
+      if (this.smokeT < 0.2) this.puffed = false;
+      this.tipT -= dt;
+      if (this.tipT <= 0) { this.tipT = 0.5; game.particles.smoke(this.x + Math.cos(this.angle) * 14 - Math.sin(this.angle) * 8, this.y + Math.sin(this.angle) * 14 + Math.cos(this.angle) * 8); }
+    }
+  }
+
+  updatePatrol(dt, map, game) {
+    if (this.activity !== 'patrol') { this.updateActivity(dt, map, game); return; }
     if (this.wait > 0) {
       this.wait -= dt;
       // Barrido de la mirada más amplio (±26°): vigilan en vez de quedarse mirando al frente.
@@ -455,9 +505,25 @@ export class Enemy {
     ctx.translate(this.x + trem, this.y);
     ctx.save();
     ctx.rotate(this.angle);
+    // Sentado: silla detrás y los dos puños sobre la mesa; fumando: cigarrillo con brasa (se lleva a la boca durante la calada).
+    const resting = this.state === 'patrol';
+    if (resting && this.seated) {
+      ctx.fillStyle = '#14100a'; pixelRect(ctx, -15, -9, 5, 19);
+      ctx.fillStyle = '#5b4a2a'; pixelRect(ctx, -14, -8, 3, 17);
+      ctx.fillStyle = '#3a2f1a'; pixelRect(ctx, -10, -7, 4, 15);
+    }
     // Puños; durante la preparación del golpe el brazo se echa hacia atrás.
     const wind = this.windup / this.windupTime;
-    if (this.weapon) {
+    if (resting && this.seated) {
+      drawSprite(ctx, 'fist', 11, 6);
+      drawSprite(ctx, 'fist', 11, -6);
+    } else if (resting && this.activity === 'smoke') {
+      const up = this.smoking ? Math.min(1, Math.min(this.smokeT - 1.9, 3.9 - this.smokeT) / 0.4) : 0; // 0 abajo · 1 en la boca
+      drawSprite(ctx, 'fist', 10 - 3 * up, 8 - 5 * up);
+      drawSprite(ctx, 'fist', 10, -8);
+      ctx.fillStyle = '#eeeeee'; pixelRect(ctx, 11 - 3 * up, 7 - 5 * up, 3, 1);
+      ctx.fillStyle = Math.floor(time * 6) % 3 ? '#ff7a1a' : '#ffd166'; pixelRect(ctx, 17 - 3 * up, 7 - 5 * up, 1, 1);
+    } else if (this.weapon) {
       drawSprite(ctx, 'fist', 10, 6);
       drawWeaponShape(ctx, this.weapon.type, 10, 6, 0);
     } else if (this.meleeWeapon) {
@@ -574,6 +640,6 @@ export class Enemy {
     ctx.strokeStyle = COLORS.debug;
     ctx.strokeRect(this.x - this.r, this.y - this.r, this.r * 2, this.r * 2);
     const extra = this.aim > 0 ? ` AIM ${this.aim.toFixed(2)}` : this.windup > 0 ? ` WINDUP ${this.windup.toFixed(2)}` : '';
-    drawText(ctx, this.state + (this.weapon ? ' [GUN]' : '') + extra, this.x, this.y + this.r + 4, { color: COLORS.debug, scale: WORLD_PX, align: 'center' });
+    drawText(ctx, this.state + (this.activity !== 'patrol' ? ` [${this.activity.toUpperCase()}]` : '') + (this.weapon ? ' [GUN]' : '') + extra, this.x, this.y + this.r + 4, { color: COLORS.debug, scale: WORLD_PX, align: 'center' });
   }
 }

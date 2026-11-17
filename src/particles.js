@@ -52,6 +52,12 @@ export class Particles {
     }
   }
 
+  // Humo suave que sube despacio (cigarrillos): gotas de polvo gris de vida larga que casi no se desplazan por los lados.
+  smoke(x, y) {
+    const life = rand(0.9, 1.5);
+    this.add({ type: 'dust', x, y, vx: rand(-8, 8), vy: -rand(10, 24), life, max: life, size: rand(2, 3) });
+  }
+
   // Astillas de la puerta al estamparla contra alguien (salen hacia donde gira la hoja).
   splinters(x, y, angle, count = 10) {
     for (let i = 0; i < count; i++) {
