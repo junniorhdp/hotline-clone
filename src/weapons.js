@@ -13,6 +13,9 @@ export const WEAPON_DEFS = {
   knife: { name: 'CUCHILLO', melee: true, knockdown: false, range: 30, arc: Math.PI * 0.6, cooldown: 0.25, swingTime: 0.1, shake: 2 },
   // Tubo de hierro: letal como el bate pero más rápido y con algo menos de alcance.
   pipe: { name: 'TUBO', melee: true, knockdown: false, range: 36, arc: Math.PI * 0.75, cooldown: 0.3, swingTime: 0.13, shake: 2.5 },
+  // Tubo oxidado (solo se encuentra en los contenedores de la calle): no mata de golpe, ENVENENA (`poison`): el enemigo
+  // va a un 60 % de velocidad y cae solo al cabo de unos segundos (ver Game.poisonEnemy). Contra el jefe pega como un tubo.
+  rustpipe: { name: 'TUBO OXIDADO', melee: true, knockdown: false, poison: true, range: 36, arc: Math.PI * 0.75, cooldown: 0.34, swingTime: 0.13, shake: 2.5 },
   // Subfusil: automático (`auto`: dispara mientras se mantiene el clic), poco preciso.
   smg: { name: 'SUBFUSIL', melee: false, auto: true, cooldown: 0.075, maxAmmo: 30, bulletSpeed: 950, pellets: 1, spread: 0.12, range: Infinity, shake: 1.6, sound: 'smg', noise: 560 },
 };
@@ -28,7 +31,7 @@ export const ENEMY_WEAPONS = {
 
 // Categorías de armamento (matriz de combate, ver Game.enemyStrike): `unarmed` (puños), `blunt` (bate, tubo),
 // `blade` (cuchillo) y `gun` (pistola, escopeta, subfusil). `null`/undefined = puños.
-const CATEGORY = { bat: 'blunt', pipe: 'blunt', knife: 'blade', gun: 'gun', shotgun: 'gun', smg: 'gun' };
+const CATEGORY = { bat: 'blunt', pipe: 'blunt', rustpipe: 'blunt', knife: 'blade', gun: 'gun', shotgun: 'gun', smg: 'gun' };
 export function weaponCategory(type) {
   return CATEGORY[type] || 'unarmed';
 }
@@ -63,7 +66,7 @@ export function segmentPointDistance(x0, y0, x1, y1, px, py) {
 
 // Dibuja un arma en coordenadas locales; (x, y) es la empuñadura y apunta hacia +X.
 // Píxel del sprite que hace de empuñadura (el resto del arma se extiende hacia +X).
-const GRIP = { bat: [1, 1], gun: [1, 2], shotgun: [3, 1], knife: [1, 1], pipe: [1, 1], smg: [1, 1] };
+const GRIP = { bat: [1, 1], gun: [1, 2], shotgun: [3, 1], knife: [1, 1], pipe: [1, 1], rustpipe: [1, 1], smg: [1, 1] };
 
 export function drawWeaponShape(ctx, type, x, y, angle, dim = false, scale = WORLD_PX) {
   const [ox, oy] = GRIP[type];

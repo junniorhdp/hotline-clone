@@ -9,7 +9,8 @@ const NEXT_DELAY = [25, 60];        // s entre apariciones (aleatorio)
 const SEE_MIN = 190, SEE_MAX = 480; // se elige una tapa que el jugador pueda ver, pero no pegada a él
 const SCARE_DIST = 150;             // si el jugador se acerca a menos de esto, se esconde de inmediato
 const SLIDE = 0.7, RISE = 0.6, GRIN = 3.6, SINK = 0.5, CLOSE = 0.7, PANIC_SINK = 0.18, PANIC_CLOSE = 0.3;
-const COVER_SHIFT = 11;             // px internos que se desliza la tapa
+const COVER_SHIFT = 16;             // px internos que se desliza la tapa
+const SCALE = 1.5;                  // tamaño de la cabeza respecto al diseño base (más visible al pasar corriendo)
 
 export class Sewer {
   constructor(covers) {
@@ -96,30 +97,33 @@ export class Sewer {
     const cx = Math.round(c.x / WORLD_PX) + off, cy = Math.round(c.y / WORLD_PX);
     const px = (x, y, w, h, col) => { ctx.fillStyle = col; pixelRect(ctx, x * WORLD_PX, y * WORLD_PX, w, h); };
     // sombra y disco de hierro con anillo, ranuras y óxido
-    ctx.fillStyle = '#05030a'; pixelDisc(ctx, cx + 1, cy + 1, 7, WORLD_PX);
-    ctx.fillStyle = '#14101f'; pixelDisc(ctx, cx, cy, 7, WORLD_PX);
-    ctx.fillStyle = '#4a4566'; pixelDisc(ctx, cx, cy, 6, WORLD_PX);
-    ctx.fillStyle = '#322e4a'; pixelDisc(ctx, cx, cy, 5, WORLD_PX);
-    for (let i = -4; i <= 4; i += 2) px(cx + i, cy - 3, 1, 7, '#26223a');
-    px(cx - 4, cy - 5, 4, 1, '#5d5880');
-    px(cx + 2, cy + 2, 2, 1, '#6a3a22');
+    ctx.fillStyle = '#05030a'; pixelDisc(ctx, cx + 1, cy + 1, 11, WORLD_PX);
+    ctx.fillStyle = '#14101f'; pixelDisc(ctx, cx, cy, 11, WORLD_PX);
+    ctx.fillStyle = '#4a4566'; pixelDisc(ctx, cx, cy, 10, WORLD_PX);
+    ctx.fillStyle = '#322e4a'; pixelDisc(ctx, cx, cy, 8, WORLD_PX);
+    for (let k = -6; k <= 6; k += 3) px(cx + k, cy - 5, 1, 11, '#26223a');
+    px(cx - 6, cy - 8, 6, 1, '#5d5880');
+    px(cx + 3, cy + 3, 3, 1, '#6a3a22');
   }
 
-  // Cabeza de cocodrilo vista desde arriba, asomando de la boca del agujero en la dirección `face`.
+  // Cabeza de cocodrilo vista desde arriba (a escala SCALE respecto al diseño base), asomando de la boca del agujero
+  // en la dirección `face`. Al sonreír, los dientes destellan: halo aditivo pulsante y destellos en cruz.
   drawHead(ctx, c) {
+    const S = SCALE;
     const cx = c.x / WORLD_PX, cy = c.y / WORLD_PX; // en píxeles internos
     const fx = [1, 0, -1, 0][c.face], fy = [0, 1, 0, -1][c.face];
-    const base = -20 + c.rise * 16; // origen local de la cabeza respecto al centro del agujero
+    const base = -20 + c.rise * 16; // origen local de la cabeza respecto al centro del agujero (diseño base)
     // Recorte: solo se ve lo que está sobre el agujero o delante de él (la cabeza sale de dentro).
     ctx.save();
     ctx.beginPath();
-    const x0 = Math.min(-8, 8 + fx * 22), x1 = Math.max(-8, 8 + fx * 22), y0 = Math.min(-8, 8 + fy * 22), y1 = Math.max(-8, 8 + fy * 22);
+    const r0 = Math.round(12 * S / 1.5), far = Math.round(34 * S / 1.5);
+    const x0 = Math.min(-r0, r0 + fx * far), x1 = Math.max(-r0, r0 + fx * far), y0 = Math.min(-r0, r0 + fy * far), y1 = Math.max(-r0, r0 + fy * far);
     ctx.rect((cx + x0) * WORLD_PX, (cy + y0) * WORLD_PX, (x1 - x0) * WORLD_PX, (y1 - y0) * WORLD_PX);
     ctx.clip();
-    // Rectángulo en coordenadas locales (u hacia donde mira, v lateral), en píxeles internos.
+    // Rectángulo en coordenadas locales del diseño base (u hacia donde mira, v lateral), escalado y alineado a píxeles.
     const R = (u, v, du, dv, col) => {
-      const ax = cx + fx * u - fy * v, ay = cy + fy * u + fx * v;
-      const bx = cx + fx * (u + du) - fy * (v + dv), by = cy + fy * (u + du) + fx * (v + dv);
+      const ax = cx + Math.round((fx * u - fy * v) * S), ay = cy + Math.round((fy * u + fx * v) * S);
+      const bx = cx + Math.round((fx * (u + du) - fy * (v + dv)) * S), by = cy + Math.round((fy * (u + du) + fx * (v + dv)) * S);
       ctx.fillStyle = col;
       pixelRect(ctx, Math.min(ax, bx) * WORLD_PX, Math.min(ay, by) * WORLD_PX, Math.max(1, Math.abs(bx - ax)), Math.max(1, Math.abs(by - ay)));
     };
@@ -129,7 +133,7 @@ export class Sewer {
     R(u0 - 3, -6, 19, 12, '#07120a');
     R(u0 - 4, -6, 9, 12, '#14310f'); R(u0 - 3, -5, 7, 10, '#3f9a3a'); R(u0 - 2, -4, 4, 8, '#56b84a');
     R(u0 + 5, -4, 9, 8, '#14310f'); R(u0 + 5, -3, 8, 6, '#3f9a3a'); R(u0 + 6, -2, 6, 4, '#56b84a');
-    for (let i = 0; i < 3; i++) R(u0 - 2 + i * 2, -1 + (i % 2), 1, 1, '#2a6a28'); // escamas del lomo
+    for (let k = 0; k < 3; k++) R(u0 - 2 + k * 2, -1 + (k % 2), 1, 1, '#2a6a28'); // escamas del lomo
     R(u0 + 11, -2, 1, 1, '#0b1a0b'); R(u0 + 11, 1, 1, 1, '#0b1a0b');              // fosas nasales
     // ojos saltones; parpadean de vez en cuando
     const blink = (this.clock * 1.3 + c.tx * 0.37) % 3 < 0.18;
@@ -143,8 +147,20 @@ export class Sewer {
       const jaw = '#e8f4d0';
       R(u0 + 6, -4, 7, 1, jaw); R(u0 + 6, 3, 7, 1, jaw);
       R(u0 + 5, -5, 1, 1, jaw); R(u0 + 5, 4, 1, 1, jaw); // comisuras en alto: sonríe
-      for (let i = 0; i < 4; i++) { R(u0 + 7 + i * 2, -3, 1, 1, '#ffffff'); R(u0 + 7 + i * 2, 2, 1, 1, '#ffffff'); }
-      R(u0 + 7 + (Math.floor(this.clock * 6) % 4) * 2, -3, 1, 1, '#fffbd0'); // destello en un diente
+      for (let k = 0; k < 4; k++) { R(u0 + 7 + k * 2, -3, 1, 1, '#ffffff'); R(u0 + 7 + k * 2, 2, 1, 1, '#ffffff'); }
+      // Destello: halo aditivo que late sobre toda la dentadura y una chispa en cruz que salta de diente en diente.
+      const pulse = 0.5 + 0.5 * Math.sin(this.clock * 9);
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.globalAlpha = (0.25 + 0.35 * pulse) * grin;
+      R(u0 + 6, -4, 7, 2, '#fff6c8'); R(u0 + 6, 2, 7, 2, '#fff6c8');
+      ctx.restore();
+      const step = Math.floor(this.clock * 5) % 4, side = Math.floor(this.clock * 2.5) % 2 ? -3 : 2;
+      const sx = u0 + 7 + step * 2;
+      R(sx, side, 1, 1, '#ffffff');
+      R(sx - 1, side, 1, 1, '#fffbd0'); R(sx + 1, side, 1, 1, '#fffbd0'); // brazos de la cruz (en el eje del hocico)
+      R(sx, side - 1, 1, 1, '#fffbd0'); R(sx, side + 1, 1, 1, '#fffbd0');
+      R(sx - 2, side, 1, 1, '#ffffff'); R(sx + 2, side, 1, 1, '#ffffff');
     }
     ctx.restore();
   }

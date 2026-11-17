@@ -100,6 +100,22 @@ const SOUNDS = {
     s.noise({ dur: 0.35, gain: 0.45 * v, filter: 'lowpass', freq: 1800, freqTo: 250 });
     s.tone({ type: 'sine', from: 160, to: 45, dur: 0.25, gain: 0.35 * v });
   },
+  // Calle: teléfono público (dos timbrazos), moneda y lata de la máquina expendedora.
+  phoneRing(s, v) {
+    for (let i = 0; i < 2; i++) {
+      s.tone({ type: 'square', from: 1250, to: 1250, dur: 0.07, gain: 0.07 * v, delay: i * 0.14 });
+      s.tone({ type: 'square', from: 1650, to: 1650, dur: 0.07, gain: 0.06 * v, delay: i * 0.14 + 0.07 });
+    }
+  },
+  coin(s, v) {
+    s.tone({ type: 'square', from: 988, to: 988, dur: 0.07, gain: 0.12 * v });
+    s.tone({ type: 'square', from: 1319, to: 1319, dur: 0.22, gain: 0.12 * v, delay: 0.07 });
+  },
+  can(s, v) {
+    s.noise({ dur: 0.12, gain: 0.35 * v, filter: 'highpass', freq: 3000 });
+    s.noise({ dur: 0.5, gain: 0.25 * v, filter: 'bandpass', freq: 5000, freqTo: 3500, q: 1.5, delay: 0.12 });
+    s.tone({ type: 'sine', from: 520, to: 780, dur: 0.18, gain: 0.14 * v, delay: 0.3 });
+  },
   ricochet(s, v) {
     s.tone({ type: 'triangle', from: 2600, to: 1200, dur: 0.06, gain: 0.06 * v });
     s.noise({ dur: 0.03, gain: 0.08 * v, filter: 'highpass', freq: 3000 });

@@ -17,6 +17,8 @@ const PALETTE = {
   d: '#ff7ab8', D: '#b8326e',               // puerta
   w: '#fff6d6', o: '#ffd166',               // fogonazo / latón
   z: '#c9c3e6', Z: '#7a7499',               // metal (tubo)
+  e: '#c2682a', E: '#6e3a1a',               // óxido (tubo oxidado)
+  n: '#7ad03a',                             // veneno
   b: '#ffbe0b', B: '#b38600',               // cuerpo genérico (plantilla tumbado)
   p: '#7a2f8f', P: '#4d1a63', t: '#ff4fa3',   // pelo violeta (cola de caballo) y goma
   q: '#ff4fa3',                              // raya rosa de la bomber femenina
@@ -165,6 +167,7 @@ const DEFS = {
   shotgun: ['PPPP..........', 'PpqpPPPPPPPPPP', 'PPPPPPP.......'],
   knife: ['PPPpqqqqq', 'PPPpqqqq.'],
   pipe: ['kzzzzzzzzzzzzk', 'kZZZZZZZZZZZZk'],
+  rustpipe: ['kEeEeeZeEeeEnk', 'kEEeEEeEEZEEnk'],
   smg: ['PPPPPPPPPP', 'PqqqqqqqPP', 'PpPPpP....', 'PP..PP....', '....PP....'],
   door: ['dddddddddddddddd', 'dDDDDDDDDDDDDDDd', 'kkkkkkkkkkkkkkkk'],
   muzzle: ['..w..', '.wow.', 'wooow', '.wow.', '..w..'],

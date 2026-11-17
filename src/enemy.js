@@ -142,6 +142,14 @@ export class Enemy {
   }
 
   update(dt, game) {
+    // Veneno del tubo oxidado: lentitud (el enemigo vive a un 60 % del ritmo) y, al acabarse, muere.
+    if (this.poison > 0) {
+      this.poison -= dt;
+      this.poisonTick = (this.poisonTick || 0) - dt;
+      if (this.poisonTick <= 0) { this.poisonTick = 0.45; game.particles.dust(this.x, this.y, 2); }
+      if (this.poison <= 0) { game.killEnemy(this, this.poisonAngle || 0, 'poison'); return; }
+      dt *= 0.6;
+    }
     if (this.state === 'down') {
       if (this.executing) return; // el temblor del golpe que viene: el aturdimiento se congela
       this.timer -= dt;
@@ -324,7 +332,7 @@ export class Enemy {
     for (const k of game.pickups) {
       if (!k.alive || k.flying) continue;
       const def = WEAPON_DEFS[k.type];
-      if (!def || (!def.melee && !(k.ammo > 0))) continue;
+      if (!def || (!def.melee && !(k.ammo > 0)) || (def.melee && !ENEMY_MELEE[k.type])) continue;
       if (Math.hypot(k.x - p.x, k.y - p.y) < 40) continue;
       const d = Math.hypot(k.x - this.x, k.y - this.y);
       if (d >= bestD) continue;

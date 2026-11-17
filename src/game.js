@@ -12,6 +12,7 @@ import { Boss, drawBossBar } from './boss.js';
 import { bloodyMaskPortrait, villainPortrait, villainDef, AGENTS, drawGenderIcon, drawAgentPreview, drawPadlock } from './portraits.js';
 import { Ads } from './ads.js';
 import { Sewer } from './sewer.js';
+import { StreetLife, newStreetRun } from './street.js';
 import { weaponCategory } from './weapons.js';
 import { buildOptionsMenu, buildPauseMenu } from './options-menu.js';
 import { Player, bloodLevelFor, FINISH_RANGE } from './player.js';
@@ -62,6 +63,7 @@ const KILL_FEEL = {
   // Ejecución de un derribado: el charco más grande, el salpicado más abierto y la sacudida más
   // fuerte del juego. Hacia donde va el golpe (de jugador a enemigo) sale lo más denso.
   execution: { power: 2.2, wide: 1.3, shake: 14, stop: HITSTOP.execution, fx: 1 },
+  poison: { power: 1, wide: 0.7, shake: 4, stop: 0.03, fx: 0.25 }, // muere envenenado (tubo oxidado)
 };
 // Llegada y fuga en moto (cinemáticas, en segundos).
 const BIKE_START_X = -64;       // la moto entra desde fuera de la pantalla, por la izquierda
@@ -207,6 +209,8 @@ export class Game {
     this.keys.onChange = () => this.settings.save();
     this.ads = new Ads(this); // gestor de pausa para un SDK de anuncios (ads.js); sin SDK no hace nada
     this.stats = this.newStats(); // estadísticas del intento (ver recordAttack / statsSummary)
+    this.buff = null;      // lata de la máquina expendedora: { t, max } (+velocidad, +cadencia; solo esta partida)
+    this.streetRun = newStreetRun(); // moneda, teléfono y reto del piso (sobrevive a R; se reinicia por piso)
     this.maskDrops = [];   // máscaras caídas de un portador: { x, y, mask, t } (ver dropMask)
     this.panel = null;   // menú modal abierto (OPCIONES / PAUSA, options-menu.js): congela el juego
     this.toast = null;
@@ -321,6 +325,7 @@ export class Game {
   // selección de máscara.
   goToLevel(index) {
     this.levelIndex = index;
+    this.streetRun = newStreetRun();
     this.score.startLevel();
     this.scuffleCount = 0;
     this.gore = 0; // el siguiente piso se empieza limpio: ropa y máscara sin sangre
@@ -787,7 +792,9 @@ export class Game {
   // Al pisar la salida (con la pantalla ya en negro): resultados, Top 5 y estadísticas del piso.
   finishFloor() {
     this.state = 'results';
+    const challenge = this.street.settle(); // reto de la cabina telefónica (suma su bonus antes del rango)
     this.results = this.score.finishLevel(this.time, this.par, this.enemies.length);
+    this.results.challenge = challenge;
     this.results.last = this.levelIndex === LEVELS.length - 1;
     this.results.stats = this.statsSummary(); // el panel se queda fijo aunque luego se reinicie el estado
     // Se guarda al completar cada piso: si se cierra la pestaña, el progreso ya cuenta.
@@ -798,6 +805,8 @@ export class Game {
   // Partida nueva empezando en el piso `index` (desde el menú o el selector de pisos).
   startRunAt(index) {
     this.runId = newRunId();
+    this.buff = null;
+    this.streetRun = newStreetRun();
     this.score.newRun(this.history.best());
     this.gore = 0;
     this.scuffleCount = 0;
@@ -903,6 +912,7 @@ export class Game {
     this.prints.clear();
     this.sewer = new Sewer(this.map.sewers); // easter egg: cocodrilo en la alcantarilla
     this.sewer.bind(this);
+    this.street = new StreetLife(this); // contenedores, moneda, máquina, cabina y vagabundo de la calle
     this.pools = [];
     // masks (selección) | arriving (llega en moto) | playing (fuera o dentro: ver `inside`) | dead |
     // cleared (despejado: vuelve a la moto) | leaving (se sube y se va) | results
@@ -1025,6 +1035,7 @@ export class Game {
     this.particles.update(dt, this.map, (kind, p) => this.bake(kind, p));
     this.prints.update(dt);
     this.sewer.update(dt, this);
+    this.street.update(dt);
 
     this.bullets = this.bullets.filter((b) => b.alive);
     this.pickups = this.pickups.filter((p) => p.alive);
@@ -1613,6 +1624,35 @@ export class Game {
   }
 
   // `cause` es el estilo de la baja para la puntuación (ver STYLE en score.js).
+  // Tubo oxidado: no mata, envenena. El enemigo va a un 60 % del ritmo (ver Enemy.update) y cae solo a los 3,6 s (causa 'poison').
+  poisonEnemy(e, angle) {
+    if (!e.alive) return;
+    if (e.poison > 0) { e.poison = Math.max(e.poison, 2.6); return; } // otro golpe renueva el veneno
+    e.poison = 3.6;
+    e.poisonAngle = angle;
+    e.poisonTick = 0;
+    e.flash = 0.2;
+    this.addFloat(e.x, e.y - 18, 'ENVENENADO', '#7ad03a', 1, 1.2);
+    this.particles.dust(e.x, e.y, 6);
+    this.camera.addShake(3);
+    this.hitstop = Math.max(this.hitstop, 0.04);
+    this.sfx.play('hit', 0.7);
+  }
+
+  // Burbujas verdes subiendo sobre los enemigos envenenados.
+  drawPoison(ctx) {
+    for (const e of this.enemies) {
+      if (!e.alive || !(e.poison > 0)) continue;
+      ctx.fillStyle = 'rgba(122, 208, 58, 0.22)';
+      pixelDisc(ctx, e.x / WORLD_PX, e.y / WORLD_PX, 9, WORLD_PX);
+      ctx.fillStyle = '#7ad03a';
+      for (let k = 0; k < 3; k++) {
+        const ph = (this.time * 1.6 + k * 0.33) % 1;
+        pixelRect(ctx, e.x + (k - 1) * 8 + Math.sin(this.time * 5 + k * 2) * 3, e.y - 6 - ph * 18, 1, 1);
+      }
+    }
+  }
+
   killEnemy(e, angle, cause = 'bullet', src = null) {
     if (!e.alive) return;
     // El jefe absorbe los golpes que no lo matan (coraza, vida): ver Boss.guardKill.
@@ -2082,6 +2122,7 @@ export class Game {
     this.particles.drawGround(ctx);
     // Muebles sobre la sangre (lo que cae debajo queda oculto) y bajo los personajes.
     ctx.drawImage(this.propsLayer, 0, 0, pixelW, pixelH);
+    this.street.draw(ctx);
     for (const e of this.enemies) if (e.alive && e.state === 'down') e.draw(ctx, this.time, this);
     this.drawExecuteMarks(ctx);
     this.drawLockMark(ctx);
@@ -2089,6 +2130,7 @@ export class Game {
     this.drawMaskDrops(ctx);
     for (const b of this.bullets) b.draw(ctx);
     for (const e of this.enemies) if (e.standing) e.draw(ctx, this.time, this);
+    this.drawPoison(ctx);
     if (this.player.alive) {
       if (this.state === 'playing' || this.state === 'cleared') this.player.drawAim(ctx, this);
       this.player.draw(ctx);
@@ -2303,6 +2345,7 @@ export class Game {
       ['TIEMPO', `${r.time.toFixed(2)} S (PAR ${r.par} S)`],
       ['COMBO MÁXIMO', `X${r.maxCombo}`],
       ['BONUS DE TIEMPO', `+${r.timeBonus.toLocaleString('es')}`],
+      ...(r.challenge ? [['RETO', r.challenge.ok ? `CUMPLIDO +${r.challenge.bonus}` : 'FALLIDO']] : []),
       ['PUNTOS DEL PISO', r.levelScore.toLocaleString('es')],
       ['PUNTUACIÓN TOTAL', r.total.toLocaleString('es')],
       ['RÉCORD', this.bestScore.toLocaleString('es')],
@@ -2711,6 +2754,7 @@ export class Game {
     }
     this.drawPopups(ctx);
     this.drawFloatingTexts(ctx);
+    this.street.drawHud(ctx, w, h);
     this.drawExecutePrompt(ctx);
     const boss = this.enemies.find((e) => e.kind === 'boss' && e.alive && e.awake);
     if (boss && this.state !== 'cleared') drawBossBar(ctx, boss, w, 32 + this.safe.t);

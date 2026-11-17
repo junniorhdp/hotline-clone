@@ -264,6 +264,27 @@ const PROP_ART = {
     ctx.fillStyle = '#ffe08a'; pixelDisc(ctx, cx, cy, 1);
     rect(ctx, '#fff6c8', cx, cy, 1, 1);
   },
+  // Máquina expendedora (vista desde arriba): carcasa roja con el techo y una franja de neón en el frente (arriba).
+  vending(ctx, x, y, w, h, rnd) {
+    box(ctx, '#8a1f3a', x + 1, y + 1, w - 2, h - 2);
+    rect(ctx, '#b8325a', x + 2, y + 2, w - 4, 2);
+    rect(ctx, '#5a1226', x + 2, y + h - 3, w - 4, 1);
+    rect(ctx, '#05d9e8', x + 3, y + 5, w - 6, 1);          // neón del frente
+    rect(ctx, '#9ff6ff', x + 3, y + 5, 3, 1);
+    for (let i = 0; i < 3; i++) rect(ctx, rnd() < 0.5 ? '#ffbe0b' : '#ff4fa3', x + 3 + i * 4, y + 8, 3, 3); // latas
+    rect(ctx, '#140a24', x + w - 5, y + 11, 3, 2);         // ranura
+  },
+  // Cabina telefónica: techo azul oscuro con cristales y el teléfono dentro.
+  phone(ctx, x, y, w, h, rnd) {
+    box(ctx, '#1c3a6e', x + 1, y + 1, w - 2, h - 2);
+    rect(ctx, '#2f5fa8', x + 2, y + 2, w - 4, 1);
+    rect(ctx, '#0e1f3d', x + 2, y + h - 3, w - 4, 1);
+    rect(ctx, '#7ad0ff', x + 3, y + 4, w - 6, 5);           // techo acristalado
+    rect(ctx, '#bfeaff', x + 4, y + 5, 3, 1);
+    rect(ctx, '#05d9e8', x + 3, y + 3, w - 6, 1);
+    dots(ctx, '#0e1f3d', x + 3, y + 4, w - 6, 5, 3, rnd);
+    rect(ctx, '#ffbe0b', x + 6, y + h - 5, 4, 1);           // rótulo
+  },
   // Contenedor de basura (2×1 o 1×2): tapa verde oscuro con asas y óxido.
   dumpster(ctx, x, y, w, h, rnd) {
     box(ctx, '#2a5a3a', x + 1, y + 1, w - 2, h - 2);
@@ -334,10 +355,10 @@ const DECO_ART = {
   // Base de la alcantarilla: el agujero oscuro con su marco (la tapa la dibuja sewer.js y se desliza).
   sewer(ctx, x, y, w, h) {
     const cx = x + w / 2, cy = y + h / 2;
-    ctx.fillStyle = '#0a0712'; pixelDisc(ctx, cx, cy, 7);
-    ctx.fillStyle = '#2a2540'; pixelDisc(ctx, cx, cy, 6);
-    ctx.fillStyle = '#04030a'; pixelDisc(ctx, cx, cy, 5);
-    ctx.fillStyle = '#0b2a2a'; pixelDisc(ctx, cx, cy + 1, 3);
+    ctx.fillStyle = '#0a0712'; pixelDisc(ctx, cx, cy, 11);
+    ctx.fillStyle = '#2a2540'; pixelDisc(ctx, cx, cy, 10);
+    ctx.fillStyle = '#04030a'; pixelDisc(ctx, cx, cy, 8);
+    ctx.fillStyle = '#0b2a2a'; pixelDisc(ctx, cx, cy + 1, 5);
   },
   debris(ctx, x, y, w, h, rnd) {
     for (let i = 0; i < 6; i++) {

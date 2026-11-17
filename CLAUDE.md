@@ -60,6 +60,7 @@ HTML5 Canvas, JavaScript Vanilla (ES Modules) y Vite. Sin frameworks ni librerí
   - `pixelfont.js` — fuente bitmap 5×7 propia (con tildes y Ñ) y `drawText`; cachea cada texto renderizado.
   - `input.js` — teclado, ratón y dedos (Pointer Events); distingue "mantenido" de "pulsado este paso".
   - `keybinds.js` — controles de PC reasignables (`KEY_CONFIG`, `KeyBinds`, `keyLabel`). Ver "Controles de PC reasignables".
+  - `street.js` — vida de la calle: contenedores con el tubo oxidado, moneda, máquina expendedora (lata = buff), cabina telefónica (pista o reto) y el vagabundo NPC. Ver "Perímetro exterior y alcantarilla".
   - `sewer.js` — easter egg de la calle: `Sewer` (tapa de alcantarilla que se desliza y cocodrilo que sonríe). Ver "Perímetro exterior y alcantarilla".
   - `ads.js` — gestor de pausa para un SDK de anuncios (Poki / CrazyGames): `triggerInterstitial` / `triggerRewarded`. Ver "Anuncios (ads.js)".
   - `settings.js` — ajustes del jugador: lista declarativa `OPTIONS` + gestor `Settings` (`localStorage`). Ver "Ajustes y menús".
@@ -206,7 +207,21 @@ Cada piso empieza **en la calle**, no dentro. El ciclo (`game.js`) es:
 - **Cocodrilo** (`Sewer`, `game.sewer`, se recrea en `reset()`; `map.sewers` = tapas): temporizador aleatorio (1.ª vez 14-28 s, luego 25-60 s). Elige una tapa a 190-480 u del jugador (visible). Fases:
   `slide` (la tapa se desliza 11 px al lado contrario del jugador, 0,7 s, sonido `manholeScrape`) → `rise` (0,6 s, `crocUp`) → `grin` (3,6 s: mira al jugador en los 4 ejes, parpadea, sonrisa con dientes que destellan) → `sink` → `close`.
   **Se esconde de golpe** (`scare`: hunde la cabeza en 0,18 s y cierra en 0,3 s) si el jugador está a < 150 u o si `makeNoise` suena a menos de min(radio, 520) de la tapa (disparos, golpes fuertes). Es solo dibujo y sonido:
-  no colisiona ni hace daño. Se dibuja con `pixelRect`/`pixelDisc` tras las huellas y antes de la moto.
+  no colisiona ni hace daño. Se dibuja con `pixelRect`/`pixelDisc` tras las huellas y antes de la moto. La cabeza va a **×1,5** (`SCALE`; el agujero y la tapa también, `COVER_SHIFT` 16 px) y al sonreír los
+  **dientes destellan**: halo aditivo que late sobre la dentadura y una chispa en cruz que salta de diente en diente.
+- **Vida de la calle** (`street.js`, `StreetLife`, `game.street`; posiciones en `map.street`: `vending`, `phone`, `npc`, `coin`, generadas por `withOutskirts`). Todo opcional, sin tocar el combate. Se interactúa con
+  **PATEAR/INTERACTUAR** (Espacio / F, o el botón de patada táctil) a ≤ 28 u del borde del objeto; sale el aviso `ESPACIO · …` sobre él. El estado que sobrevive a **R** vive en `game.streetRun`
+  (`coins`, `coinTaken`, `phoneDone`, `challenge`; se reinicia en cada piso y partida); lo demás (contenedores abiertos) se rehace con el reset.
+  - **Contenedores** (`dumpster`, sólidos): se **registran** una vez (tapa abierta, polvo, `knock`). El primero de cada piso siempre guarda un **TUBO OXIDADO** y los demás un 40 % (sorteo con semilla por partida y piso); el tubo sale despedido junto al jugador como `Pickup`.
+  - **Tubo oxidado** (`rustpipe`, `WEAPON_DEFS`, categoría `blunt`, solo se consigue en la calle; sprite oxidado con veneno verde): **no mata, envenena** (`poison: true` → `Game.poisonEnemy`): el enemigo vive a un **60 % de ritmo** (`Enemy.update` escala `dt`) y **muere solo a los 3,6 s**
+    (causa `poison`: `STYLE` 350 VENENO, `KILL_FEEL.poison`). Otro golpe renueva el veneno; burbujas verdes (`drawPoison`). El jefe no se envenena (pega como un tubo: `MELEE_DMG`/`EXEC_DMG`). Ejecuta igual que el tubo y los enemigos no lo recogen (`nearestWeapon` exige `ENEMY_MELEE`).
+  - **Moneda + máquina + lata**: una **moneda** escondida en un rincón de la calle (esquinas; destello fino, más visible de cerca; se recoge a ≤ 18 u; `MONEDA xN` arriba). La **máquina expendedora** (`vending`, en la acera de arriba) con una moneda da una **LATA NEÓN**: `game.buff = { t: 45, max: 45 }`,
+    **+18 % de velocidad y −20 % de espera entre ataques** (`BUFF_SPEED`/`BUFF_COOLDOWN` en `player.js`). El tiempo **solo corre dentro del edificio** (`inside`, jugando); es solo de la partida actual (se borra al empezar partida, no se guarda). Barra `LATA NEÓN 44S` arriba al centro.
+  - **Cabina telefónica** (`phone`, en la acera): **suena al llegar** (timbre cada 1,8 s con `phoneRing` + ondas parpadeantes) hasta contestar o entrar al edificio. Al contestar sale un cuadro abajo: una **pista de lore** o (60 %) un **reto opcional** con bonus
+    (sin disparar +2000 · despejar en < 80 % del par +1500 · combo ×4 +1800). El reto se resuelve en `finishFloor` (`street.settle()` → `Score.addBonus`, antes del rango) y sale en los resultados como `RETO: CUMPLIDO +n / FALLIDO`. (`nogun` mira las estadísticas del último intento.)
+  - **Vagabundo** (NPC del callejón junto al contenedor del borde derecho): no se puede atacar (no es entidad de combate). **Tranquilo** dice frases si te acercas (< 90 u); si te acercas (< 150 u) **armado** (cualquier arma en la mano) o **manchado de sangre** (`bloodLevel` ≥ 2) **se asusta**: tiembla, ojos abiertos, se aparta
+    sin salirse de su rincón y grita frases distintas (armado / sangre) en una burbuja pegada a la pantalla.
+- **Puerta principal**: **no cambia**. Antes de entrar y tras despejar el piso se cruza libremente en ambos sentidos; solo se bloquea durante el combate (`SALIDAS BLOQUEADAS`, ver "Llegada en moto, bloqueo del edificio y fuga"), que es la mecánica central del piso. Los objetos de la calle se pueden usar antes de entrar y tras despejar (estado `cleared`).
 
 ## Pantallas y estados (`game.state`)
 Correspondencia entre las pantallas conceptuales y los valores reales de `game.state`:

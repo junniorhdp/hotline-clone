@@ -13,6 +13,8 @@ const DODGE_BOOST = 0.3;      // fracción extra de velocidad en el primer insta
 const DODGE_TURN_COS = 0.35;  // giro de más de ~70° respecto al rumbo anterior
 const DODGE_DECAY = 0.13;     // s: constante de caída del empujón
 const PICKUP_RADIUS = 30;
+const BUFF_SPEED = 1.18;       // lata de la máquina expendedora (game.buff): +18 % de velocidad…
+const BUFF_COOLDOWN = 0.8;     // …y -20 % de espera entre ataques
 const THROW_SPEED = 720;
 const NOISE_RADIUS_KICK = 260;
 export const FINISH_RANGE = 34;      // distancia (además del radio) para rematar; cubre el empuje del derribo
@@ -24,6 +26,7 @@ export const EXEC_STYLES = {
   smash: { time: 0.42, hits: [0.27] },              // arma de fuego vacía: culatazo de arriba abajo
   bat: { time: 0.64, hits: [0.44] },                // bate: swing enorme y lento hacia la cabeza
   pipe: { time: 0.58, hits: [0.2, 0.4] },           // tubo: dos golpes secos
+  rustpipe: { time: 0.58, hits: [0.2, 0.4] },       // tubo oxidado: igual que el tubo
   knife: { time: 0.7, hits: [0.17, 0.3, 0.44] },    // cuchillo: tres puñaladas
   shoot: { time: 0.42, hits: [0.27] },              // pistola: disparo a quemarropa
   blast: { time: 0.52, hits: [0.32] },              // escopeta: descarga con gran retroceso
@@ -140,7 +143,7 @@ export class Player {
       this.hx = mx;
       this.hy = my;
       this.moving = true;
-      const speed = SPEED * this.perks.speedMul * mag * (1 + this.boost);
+      const speed = SPEED * this.perks.speedMul * mag * (1 + this.boost) * (game.buff ? BUFF_SPEED : 1);
       const hit = moveAndSlide(map, this, mx * speed * dt, my * speed * dt);
       if ((hit.hitX || hit.hitY) && this.bumpCd <= 0) {
         game.particles.dust(this.x + (hit.hitX ? Math.sign(mx) * this.r : 0), this.y + (hit.hitY ? Math.sign(my) * this.r : 0), 4);
@@ -362,7 +365,7 @@ export class Player {
 
   attack(game) {
     const def = this.def;
-    this.cooldown = def.cooldown;
+    this.cooldown = def.cooldown * (game.buff ? BUFF_COOLDOWN : 1);
 
     // 1) Remate: con cualquier arma, si hay un derribado a tiro empieza la ejecución (en vez de
     //    un golpe al aire).
@@ -385,6 +388,7 @@ export class Player {
         if (inMeleeArc(this.x, this.y, this.angle, reachDef, e) && lineOfSight(game.map, this.x, this.y, e.x, e.y)) {
           // Con la máscara OSO los puños también matan al instante.
           if (def.knockdown && !this.perks.meleeLethal) game.knockDown(e, this.angle, 'fists');
+          else if (def.poison && !e.guardKill) game.poisonEnemy(e, this.angle); // tubo oxidado: envenena
           else game.killEnemy(e, this.angle, 'melee');
           hit = true;
         }

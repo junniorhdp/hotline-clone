@@ -12,6 +12,7 @@ export const STYLE = {
   melee: { points: 250, label: 'CUERPO A CUERPO' },
   bullet: { points: 150, label: 'DISPARO' },
   fists: { points: 100, label: 'DERRIBO' },
+  poison: { points: 350, label: 'VENENO' },
 };
 
 // Umbrales de rango sobre (puntos del piso / (enemigos × 600)).
@@ -73,6 +74,12 @@ export class Score {
     }
     for (const p of this.popups) { p.life -= dt; p.y -= 28 * dt; }
     this.popups = this.popups.filter((p) => p.life > 0);
+  }
+
+  // Puntos extra sueltos (p. ej. el reto de la cabina telefónica).
+  addBonus(points) {
+    this.levelScore += points;
+    this.total += points;
   }
 
   // Cierra el piso: bonus de tiempo y rango.

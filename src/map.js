@@ -480,7 +480,7 @@ export const LEVELS = [
 // IA los rodea con el pathfinding. El resto de tipos de `props` son decoración de suelo.
 // El arte de cada tipo está en decor.js.
 export const SOLID_PROPS = new Set(['desk', 'deskFlipped', 'counter', 'sofa', 'cashTable', 'shelf', 'tv',
-  'cabinet', 'crates', 'barrel', 'toilet', 'sink', 'cardTable', 'bed', 'bike', 'lamp', 'dumpster']);
+  'cabinet', 'crates', 'barrel', 'toilet', 'sink', 'cardTable', 'bed', 'bike', 'lamp', 'dumpster', 'vending', 'phone']);
 export const DECOR_PROPS = new Set(['rug', 'debris', 'trash', 'stain', 'papers', 'sewer']);
 // Celdas de la cuadrícula: 0 suelo · 1 pared estructural · 2 mueble sólido.
 const CELL_WALL = 1;
@@ -548,7 +548,28 @@ function withOutskirts(def, index) {
   add('dumpster', M + 6 + Math.floor(rnd() * 6), 1, 2, 1);
   add('dumpster', M + w - 14 + Math.floor(rnd() * 6), 1, 2, 1);
   add('dumpster', 1, M + 6 + Math.floor(rnd() * 5), 1, 2);
-  add('dumpster', W - 2, M + 12 + Math.floor(rnd() * 5), 1, 2);
+  const alleyY = M + 12 + Math.floor(rnd() * 5);
+  add('dumpster', W - 2, alleyY, 1, 2);
+  // Callejón: el vagabundo (NPC) pegado al contenedor del borde, con un barril al lado.
+  const npcTile = take(W - 3, alleyY) ? { tx: W - 3, ty: alleyY } : null;
+  add('barrel', W - 3, alleyY + 1);
+  // Máquina expendedora y cabina telefónica en la acera de arriba (las farolas ya ocupan algunas casillas).
+  const onSidewalk = (type, from, step) => {
+    for (let k = 0; k < 24; k++) {
+      const x = from + k * step;
+      if (x < M || x >= M + w) continue;
+      if (take(x, M - 1)) { props.push([type, x, M - 1, 1, 1]); return { tx: x, ty: M - 1 }; }
+    }
+    return null;
+  };
+  const vending = onSidewalk('vending', M + 6 + Math.floor(rnd() * 4), 1);
+  const phone = onSidewalk('phone', M + w - 7 - Math.floor(rnd() * 4), -1);
+  // Moneda escondida en un rincón de la calle (esquinas del perímetro).
+  const corners = [[1, 1], [W - 2, 1], [1, H - 2], [W - 2, H - 2]];
+  for (let i = corners.length - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); [corners[i], corners[j]] = [corners[j], corners[i]]; }
+  const cc = corners.find(([x, y]) => !free.has(x + ',' + y)) || corners[0];
+  const cell = (c) => (c ? { tx: c.tx, ty: c.ty, x: c.tx * TILE + TILE / 2, y: c.ty * TILE + TILE / 2 } : null);
+  const streetInfo = { vending: cell(vending), phone: cell(phone), npc: cell(npcTile), coin: cell({ tx: cc[0], ty: cc[1] }) };
   for (let i = 0; i < 26; i++) {
     const side = Math.floor(rnd() * 3);
     const x = side === 0 ? 1 + Math.floor(rnd() * (W - 2)) : side === 1 ? 1 + Math.floor(rnd() * (M - 2)) : W - M + 1 + Math.floor(rnd() * (M - 2));
@@ -560,13 +581,13 @@ function withOutskirts(def, index) {
   for (const [x, y] of [[M + Math.floor(w * 0.3) + Math.floor(rnd() * 4), 3], [3, M + 9 + Math.floor(rnd() * 4)], [W - 4, M + 7 + Math.floor(rnd() * 4)], [M + Math.floor(w * 0.72), 3]]) {
     if (take(x, y)) { props.push(['sewer', x, y]); sewers.push({ tx: x, ty: y }); }
   }
-  return { rows, zones, props, sewers };
+  return { rows, zones, props, sewers, street: streetInfo };
 }
 
 // `rng` (0..1) decide las armas aleatorias; el juego pasa uno con semilla por partida y piso.
 export function loadLevel(index = 0, rng = Math.random) {
   const def = LEVELS[index];
-  const { rows, zones: defZones, props: defProps, sewers } = withOutskirts(def, index);
+  const { rows, zones: defZones, props: defProps, sewers, street } = withOutskirts(def, index);
   const h = rows.length;
   const w = rows[0].length;
   const grid = new Uint8Array(w * h);
@@ -597,6 +618,7 @@ export function loadLevel(index = 0, rng = Math.random) {
   if (mainDoors.length !== 1) throw new Error(`${def.name}: tiene que haber exactamente una puerta principal (N)`);
 
   // Zonas de suelo (habitaciones): rectángulos [tipo, x0, y0, x1, y1]; el resto usa `floor`.
+  map.street = street; // máquina, cabina, NPC del callejón y moneda (ver street.js)
   map.sewers = sewers.map((c) => ({ ...c, x: c.tx * TILE + TILE / 2, y: c.ty * TILE + TILE / 2 }));
   map.floor = def.floor;
   map.zone = new Array(w * h).fill(def.floor);
