@@ -6,7 +6,7 @@ En todas: mantener lo anterior (rehenes, IA táctica, frases, salida de la moto,
 ## Decisiones de diseño (cámbialas aquí si no te gustan)
 - **Dos agentes**: JACK y VEX dejan de ser solo cosméticos en este piso: `game.player` es el personaje activo y `game.partner` el otro. Cada uno lleva su **propia máscara** (la del partner se elige entre las ya desbloqueadas, distinta a la del primero si es posible) y su propia sangre acumulada.
 - **El jefe del piso 6 no aparece**; el piso 10 no tiene rehenes ni moto de huida: se sale por la puerta principal al acabar (resultados directos).
-- **El tiempo** es de 45 s, fijo (constante `GAS_TIME`), y **se congela** durante forcejeos, ejecuciones, menús y pausa.
+- **El tiempo** es de 60 s (antes 45), fijo (constante `GAS_TIME`), y **se congela** durante forcejeos, ejecuciones, menús y pausa.
 - **Dificultad**: no menos enemigos que el piso 9 (13) entre las dos fases.
 
 ---

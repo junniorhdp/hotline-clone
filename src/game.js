@@ -21,7 +21,7 @@ import { Player, bloodLevelFor, FINISH_RANGE } from './player.js';
 import { Enemy, resetAiBudget } from './enemy.js';
 import { SecurityCams } from './cameras.js';
 import { ShieldGuard } from './shield.js';
-const GAS_TIME = 45;        // s hasta que el gas mata al agente atrapado en el despacho (piso 10)
+const GAS_TIME = 60;        // s hasta que el gas mata al agente atrapado en el despacho (piso 10)
 const VENT_TIME = 1.5;       // s que hay que mantener PATEAR/INTERACTUAR junto a la ventilación para romperla
 const FINAL_KEEP = 6;        // enemigos que quedan al reintentar la fase final con R (los 6 más lejos del despacho)
 // Oleadas del perímetro (piso 10): cada enemigo aparece por un extremo de la calle ('w' oeste, 'e' este) y va a por el jugador.
@@ -1138,6 +1138,7 @@ export class Game {
     this.floatingTexts = this.floatingTexts.filter((f) => f.t > 0);
     if (this.player.alive && !this.asphyx) this.player.update(dt, this);
     if (this.final && this.state === 'playing') this.updateFinal(dt);
+    else if (this.state === 'playing' && this.trap && this.trap.state === 'done' && this.partner && this.partner.immortal) this.updateAlly(dt); // el liberado cubre la zona hasta el reencuentro
     if (this.partner && this.partner.alive) { this.partner.idleUpdate(dt); (this.partnerPos ||= {}).x = this.partner.x; this.partnerPos.y = this.partner.y; } // el inactivo queda donde está (también al reintentar con R)
     this.barkCd = Math.max(0, (this.barkCd || 0) - dt);
     if (this.map.reveal > 0) this.map.reveal -= dt;
@@ -2339,7 +2340,7 @@ export class Game {
       a.angle = Math.atan2(tgt.y - a.y, tgt.x - a.x);
       if (a.fireCd <= 0) { this.allyShoot(a); a.fireCd = 0.26; }
     }
-    if (F.role !== 'perimetro' || F.done || (tgt && bd < 150)) return;
+    if (!F || F.role !== 'perimetro' || F.done || (tgt && bd < 150)) return; // sin fase final (liberado, antes del reencuentro): se queda en su sitio
     let goal = null, gd = Infinity;
     for (const e of this.enemies) if (e.alive && !e.wave) { const d = Math.hypot(e.x - a.x, e.y - a.y); if (d < gd) { gd = d; goal = e; } }
     if (!goal) return;
@@ -2582,7 +2583,12 @@ export class Game {
     const bonus = 1000 + left * 20;
     this.score.addBonus(bonus);
     this.showCallout('VENTILACIÓN ROTA', COLORS.player, 2.6, `EL GAS SE DISIPA · +${bonus}`);
-    if (T.victim && T.victim.alive) this.addFloat(T.victim.x, T.victim.y - 26, '¡ESTOY BIEN!', COLORS.player, 1, 1.6);
+    const v = T.victim;
+    if (v && v.alive) {
+      // El agente liberado se defiende solo hasta el reencuentro: pasa a ser el aliado de IA (inmortal, subfusil sin límite, dispara a todo enemigo con visión).
+      v.immortal = true; v.weapon = { type: 'smg', ammo: 9999 }; v.fireCd = 0.4;
+      this.addFloat(v.x, v.y - 26, '¡ESTOY BIEN! ¡TE CUBRO!', COLORS.player, 1, 1.8);
+    }
   }
 
   // Tiempo agotado: el agente atrapado se asfixia (la cámara viaja hasta él, cae, la pantalla se apaga en verde) y sale la pantalla de muerte.

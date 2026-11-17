@@ -108,7 +108,7 @@ for (let i = 0; i < LEVELS.length; i++) {
   // 5f) trampa de gas (piso 10): despacho sellable con 2 puertas alcanzables, ventilación en una pared con casilla exterior alcanzable desde la entrada, sin enemigos
   //     dentro y con un recorrido de la entrada a la ventilación que ni es trivial (≥ 10 casillas) ni excede el 70 % del tiempo del gas a velocidad base
   if (L.trap) {
-    const T = L.trap, GAS_TIME = 45, BASE_SPEED = 228;
+    const T = L.trap, GAS_TIME = 60, BASE_SPEED = 228;
     if (T.doors.length !== 2) fail(`el despacho debe tener 2 puertas sellables (${T.doors.length})`);
     for (const d of T.doors) if (!L.doors.some((x) => x.tx === d.tx && x.ty === d.ty)) fail(`puerta del despacho (${d.tx},${d.ty}) no existe`);
     const insideRoom = (tx, ty) => tx >= T.room.x0 && tx <= T.room.x1 && ty >= T.room.y0 && ty <= T.room.y1;
