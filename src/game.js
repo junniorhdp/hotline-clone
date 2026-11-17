@@ -958,6 +958,7 @@ export class Game {
     this.guilt = null;
     this.street = new StreetLife(this); // contenedores, moneda, máquina, cabina y vagabundo de la calle
     this.runover = null; // atropello en curso (ver runOver)
+    this.leaveAsk = 0;   // rehenes sin rescatar de los que se avisa junto a la moto (0 = nada que avisar)
     this.cams = new SecurityCams(this, level.cameras || []); // cámaras de seguridad y operador (piso 8)
     this.hostages = new Hostages(this, level.hostages || []); // rehenes atados a sillas dentro del edificio (ver hostages.js)
     this.pools = [];
@@ -1119,7 +1120,17 @@ export class Game {
       this.sfx.play('unlock');
       this.showCallout('PISO COMPLETADO', COLORS.player, 2.8, '¡EDIFICIO LIMPIO!'); // el objetivo (REGRESA A LA MOTO) sale al apagarse
     }
-    if (this.state === 'cleared' && this.player.alive && this.touchingBike()) this.startLeaving();
+    // Junto a la moto con el piso despejado: si no quedan rehenes atados, la fuga arranca sola; si quedan, solo se AVISA (el rescate es opcional) y el jugador decide:
+    // ESPACIO / F (BOTA en táctil) para irse igualmente, o volver a por ellos.
+    this.leaveAsk = 0;
+    if (this.state === 'cleared' && this.player.alive && this.touchingBike()) {
+      const miss = this.hostages.pending();
+      if (miss === 0) this.startLeaving();
+      else {
+        this.leaveAsk = miss;
+        if (this.keys.pressed('kick') || this.keys.pressed('execute')) this.startLeaving();
+      }
+    }
 
     let tx = this.player.x, ty = this.player.y;
     if (this.player.alive) {
@@ -1534,6 +1545,7 @@ export class Game {
     // Culpa pendiente (o vomitando): el piso no se cierra hasta que el jugador haya vomitado. Si se intenta subir a la moto con la culpa en cuenta
     // atrás, el vómito empieza ya y la fuga arranca cuando termina (el jugador sigue junto a la moto).
     if (this.guilt || this.player.vomit) { if (this.guilt) this.guilt.t = 0; return; }
+    this.hostages.refresh(true); // repartir con los rehenes rescatados AHORA: 1 → moto, 2 o más → auto (ninguno en la moto)
     // Extracción de rehenes: la fuga espera a que el rehén esté junto a la moto o a que los rehenes estén en el auto (ver Hostages.extractionBusy).
     if (this.hostages.extractionBusy()) {
       if (performance.now() - (this.waitHintAt || 0) > 1500) { this.waitHintAt = performance.now(); this.addFloat(this.player.x, this.player.y - 22, '¡ESPERA A LOS REHENES!', '#9be32a', 1, 1.4); }
@@ -3145,6 +3157,7 @@ export class Game {
     this.drawFloatingTexts(ctx);
     this.street.drawHud(ctx, w, h);
     this.hostages.drawHud(ctx, w, h);
+    this.hostages.drawLeaveAsk(ctx, w, h);
     this.drawExecutePrompt(ctx);
     const boss = this.enemies.find((e) => e.kind === 'boss' && e.alive && e.awake);
     if (boss && this.state !== 'cleared') drawBossBar(ctx, boss, w, 32 + this.safe.t);

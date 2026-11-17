@@ -59,6 +59,7 @@ export class Hostages {
     this.list = data.map((d) => new Hostage(d));
     this.clock = 0;
     this.planned = false;       // ¿ya se ha decidido cómo salen (moto o auto)?
+    this.outside = false;       // el jugador ya ha salido a la calle con el piso despejado (a partir de ahí se planifica la extracción)
     this.mode = null;           // null | 'bike' | 'car'
     this.group = [];            // los rehenes que salen
     this.car = null;
@@ -106,7 +107,7 @@ export class Hostages {
       }
     }
     // Con el piso despejado y el jugador ya en la calle se decide cómo salen los rehenes liberados.
-    if (!this.planned && g.state === 'cleared' && p.alive && p.y > g.entry.y + 70) this.plan();
+    this.refresh(false);
     this.stepExtraction(dt);
     // Liberar: PATEAR/INTERACTUAR (Espacio / F; en táctil el botón de la bota) junto a un rehén atado.
     if ((g.state === 'playing' || g.state === 'cleared') && p.alive && !g.panel && !p.exec && !p.vomit && (g.keys.pressed('kick') || g.keys.pressed('execute'))) {
@@ -133,15 +134,34 @@ export class Hostages {
   }
 
   // --- Extracción ---------------------------------------------------------------------------------
-  // Decide cómo salen los rehenes ya liberados: 1 → se sube a la moto; 2 o más → auto de extracción.
-  plan() {
+  // Rehenes liberados que aún no van en la moto ni en el auto (corriendo a la entrada, esperando o saliendo).
+  rescued() { return this.list.filter((h) => h.state === 'freed' || h.state === 'waiting' || h.state === 'exiting' || h.state === 'ready'); }
+
+  // Rehenes que siguen atados (sin rescatar): el aviso al irse del piso.
+  pending() { return this.list.filter((h) => h.state === 'tied').length; }
+
+  // Replanifica la extracción con los rehenes rescatados AHORA (se llama cada fotograma y al arrancar la fuga; `force` = el jugador ya está en la moto). Regla estricta:
+  // rescatados === 1 → ese único rehén va en la moto; rescatados >= 2 → NINGUNO va en la moto: todos esperan al auto de extracción. Si cambia el número (se libera
+  // otro tras decidirlo, o muere uno), se vuelve a repartir, así ningún rehén se queda sin plaza («rehén fantasma»). Mientras suben al auto no se toca el grupo.
+  refresh(force) {
+    const g = this.game, p = g.player;
+    if (!this.outside && (force || (g.state === 'cleared' && p.alive && p.y > g.entry.y + 88))) this.outside = true;
+    if (!this.outside) return;
+    if (this.car && (this.car.phase === 'board' || this.car.phase === 'hold')) return;
+    const cur = this.rescued();
+    if (this.planned && cur.length === this.group.length && cur.every((h) => this.group.includes(h))) return;
+    this.plan(cur);
+  }
+
+  plan(group) {
     const g = this.game;
     this.planned = true;
     this.plannedAt = this.clock;
-    this.group = this.list.filter((h) => h.state === 'freed' || h.state === 'waiting' || h.state === 'exiting');
-    this.mode = this.group.length >= 2 ? 'car' : this.group.length === 1 ? 'bike' : null;
-    if (this.mode === 'car') this.car = new ExtractionCar(g);
-    this.group.forEach((h, i) => { h.slot = i; if (h.state === 'waiting' || h.state === 'exiting') { h.state = 'exiting'; this.aim(h); } });
+    this.group = group;
+    this.mode = group.length >= 2 ? 'car' : group.length === 1 ? 'bike' : null;
+    if (this.mode === 'car') { if (!this.car || this.car.phase === 'depart' || this.car.phase === 'gone') this.car = new ExtractionCar(g); }
+    else if (this.car && (this.car.phase === 'wait' || this.car.phase === 'arrive' || this.car.phase === 'idle')) this.car = null; // ya no hacen falta dos o más: sin auto
+    group.forEach((h, i) => { h.slot = i; if (h.state === 'waiting' || h.state === 'exiting' || h.state === 'ready') { h.state = 'exiting'; this.aim(h); } });
   }
 
   // Punto al que sale el rehén: junto a la moto (uno) o a la acera donde para el auto (varios).
@@ -333,6 +353,23 @@ export class Hostages {
       px(-8, -2, 2, 4, L.skin); px(6, -2, 2, 4, L.skin);                    // brazos sueltos
     }
     ctx.restore();
+  }
+
+  // Pantalla: aviso informativo junto a la moto cuando quedan rehenes atados (el rescate es opcional): cuántos faltan y cómo irse igualmente.
+  drawLeaveAsk(ctx, w, h) {
+    const g = this.game, n = g.leaveAsk;
+    if (!n || g.state !== 'cleared') return;
+    const msg = n === 1 ? 'Falta 1 rehén por rescatar.' : `Faltan ${n} rehenes por rescatar.`;
+    const sub = g.hint(`${g.keys.label('kick')} · IRTE IGUALMENTE`, 'TOCA LA MOTO (BOTA) · IRTE IGUALMENTE');
+    const s = g.camera.worldToScreen(g.bike.x, g.bike.y - 34);
+    const tw = Math.max(measureText(msg), measureText(sub)), bw = tw + 12, bh = 27;
+    const p = g.keepOnScreen(s.x, s.y - bh, bw, bh, 6);
+    const bx = Math.round(p.x - bw / 2), by = Math.round(p.y);
+    ctx.fillStyle = 'rgba(13, 2, 33, 0.92)'; ctx.fillRect(bx, by, bw, bh);
+    ctx.fillStyle = '#ffbe0b';
+    ctx.fillRect(bx, by, bw, 1); ctx.fillRect(bx, by + bh - 1, bw, 1); ctx.fillRect(bx, by, 1, bh); ctx.fillRect(bx + bw - 1, by, 1, bh);
+    drawText(ctx, msg, bx + bw / 2, by + 4, { color: '#ffbe0b', align: 'center', shadow: null });
+    drawText(ctx, sub, bx + bw / 2, by + 15, { color: COLORS.text, align: 'center', shadow: null });
   }
 
   // Pantalla: aviso de liberar y burbujas (frases amordazadas / de dolor / de gratitud).

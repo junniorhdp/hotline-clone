@@ -57,6 +57,7 @@ export class ExtractionCar {
       this.idleT += dt;
       if (hostages.allReady() || this.idleT > IDLE_MAX) { this.phase = 'board'; this.t = 0; hostages.startBoarding(); }
     } else if (ph === 'board') {
+      hostages.startBoarding(); // los que llegan tarde (o se colocan solos) suben también
       if (hostages.allBoarded()) { this.phase = 'hold'; this.t = 0; }
     } else if (ph === 'hold') {
       if (this.t >= HOLD) { this.phase = 'depart'; this.t = 0; game.playAt('carAway', this.x, this.y, 1); }
