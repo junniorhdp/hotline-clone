@@ -355,6 +355,17 @@ const DECO_ART = {
     for (let i = x + 2; i < x + w - 2; i += 2) { rect(ctx, '#c9a07a', i, y, 1, 1); rect(ctx, '#c9a07a', i, y + h - 1, 1, 1); }
     dots(ctx, '#1a0a16', x + 3, y + 3, w - 6, h - 6, Math.floor((w * h) / 60), rnd); // agujeros
   },
+  // Trampilla de servicio (piso 10): placa de acero con remaches y un tirador. Parece decoración; ver Game.drawHatch para cuando se abre.
+  hatch(ctx, x, y, w, h) {
+    rect(ctx, '#15121f', x, y, w, h);
+    rect(ctx, '#34344a', x + 1, y + 1, w - 2, h - 2);
+    rect(ctx, '#46465f', x + 2, y + 2, w - 4, h - 4);
+    rect(ctx, '#3a3a52', x + 4, y + 4, w - 8, h - 8);
+    rect(ctx, '#2c2c42', x + 4, y + h - 5, w - 8, 1); rect(ctx, '#2c2c42', x + w - 5, y + 4, 1, h - 8);
+    for (const [rx, ry] of [[3, 3], [w - 4, 3], [3, h - 4], [w - 4, h - 4]]) rect(ctx, '#8a8aa8', x + rx, y + ry, 1, 1); // remaches
+    rect(ctx, '#15121f', x + w / 2 - 4, y + h / 2 - 2, 8, 4); rect(ctx, '#7a6a52', x + w / 2 - 3, y + h / 2 - 1, 6, 2); // tirador
+    rect(ctx, '#15121f', x + 1, y + 6, 2, 3); rect(ctx, '#15121f', x + 1, y + h - 9, 2, 3); // bisagras
+  },
   // Charco de luz de la farola sobre el suelo (translúcido, en escalones de píxeles).
   lamp(ctx, x, y, w, h) {
     const cx = x + w / 2, cy = y + h / 2;

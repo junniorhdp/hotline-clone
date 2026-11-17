@@ -736,6 +736,7 @@ export const LEVELS = [
     // exterior de su pared ESTE (dentro del ala este, con enemigos de por medio): el segundo agente debe llegar hasta ella y romperla antes de que se acabe el tiempo.
     trapRoom: [19, 1, 28, 8],
     trapDoors: [[23, 9], [18, 5]],
+    hatch: [25, 17],    // trampilla de 2×2 casillas en la sala central: parece decoración hasta que se abre (emboscada de la fase final, ver Game.startAmbush)
     vent: [29, 4],
     ventSide: 'e',      // cara exterior de la pared: 's' (sur) o 'e' (este)
     zones: [
@@ -756,7 +757,7 @@ export const LEVELS = [
       ['desk', 41, 2, 3, 1], ['crates', 46, 8, 1, 1], ['barrel', 1, 8, 1, 1],
       // Sala central: barricadas (rodeables)
       ['crates', 8, 12, 2, 2], ['crates', 16, 15, 2, 2], ['crates', 30, 12, 2, 2], ['crates', 38, 15, 2, 2], ['shelf', 22, 14, 1, 3], ['barrel', 12, 18, 1, 1], ['barrel', 44, 11, 1, 1],
-      ['debris', 20, 11, 1, 1], ['stain', 33, 17, 1, 1], ['trash', 6, 18, 1, 1],
+      ['hatch', 25, 17, 2, 2], ['debris', 20, 11, 1, 1], ['stain', 33, 17, 1, 1], ['trash', 6, 18, 1, 1],
       // Exterior: vestíbulo, calle y la moto (aparcada en la plaza, 2×1 casillas).
       ['counter', 12, 21, 4, 1], ['sofa', 27, 22, 3, 1], ['cabinet', 32, 21, 1, 1],
       ['cabinet', 33, 21, 1, 1], ['barrel', 1, 21, 1, 1], ['crates', 1, 22, 1, 1],
@@ -778,7 +779,7 @@ export const LEVELS = [
 // El arte de cada tipo está en decor.js.
 export const SOLID_PROPS = new Set(['desk', 'deskFlipped', 'counter', 'sofa', 'cashTable', 'shelf', 'tv',
   'cabinet', 'crates', 'barrel', 'toilet', 'sink', 'cardTable', 'bed', 'bike', 'lamp', 'dumpster', 'vending', 'phone', 'firebarrel']);
-export const DECOR_PROPS = new Set(['rug', 'debris', 'trash', 'stain', 'papers', 'sewer']);
+export const DECOR_PROPS = new Set(['rug', 'debris', 'trash', 'stain', 'papers', 'sewer', 'hatch']);
 // Celdas de la cuadrícula: 0 suelo · 1 pared estructural · 2 mueble sólido.
 const CELL_WALL = 1;
 const CELL_PROP = 2;
@@ -1047,6 +1048,7 @@ export function loadLevel(index = 0, rng = Math.random) {
         ? { tx: vx + O, ty: vy + O, x: c(vx + O), y: c(vy + O), sx: c(vx + O + 1), sy: c(vy + O), face: 'e' }
         : { tx: vx + O, ty: vy + O, x: c(vx + O), y: c(vy + O), sx: c(vx + O), sy: c(vy + O + 1), face: 's' },
       center: { x: c(Math.floor((x0 + x1) / 2) + O), y: c(Math.floor((y0 + y1) / 2) + O) },
+      hatch: def.hatch ? { tx: def.hatch[0] + O, ty: def.hatch[1] + O, x: (def.hatch[0] + O + 1) * TILE, y: (def.hatch[1] + O + 1) * TILE } : null, // 2×2 casillas; x, y = su centro
     };
   }
   // Cámaras de seguridad (`def.cameras`: casilla de PARED, rumbo, barrido, velocidad): origen del cono = junto a la pared, ya en el suelo.

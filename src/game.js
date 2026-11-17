@@ -23,6 +23,9 @@ import { SecurityCams } from './cameras.js';
 import { ShieldGuard } from './shield.js';
 const GAS_TIME = 60;        // s hasta que el gas mata al agente atrapado en el despacho (piso 10)
 const VENT_TIME = 1.5;       // s que hay que mantener PATEAR/INTERACTUAR junto a la ventilación para romperla
+// Emboscada de la trampilla (fase final, LIMPIEZA): si al elegir el rol quedan menos de AMBUSH_MIN enemigos vivos, la trampilla se abre y salen estos refuerzos (siempre ≥ 3).
+const AMBUSH_MIN = 3;
+const AMBUSH = [{ kind: 'grunt', weapon: 'smg' }, { kind: 'grunt', weapon: 'gun' }, { kind: 'runner' }, { kind: 'heavy', weapon: 'shotgun' }];
 const FINAL_KEEP = 6;        // enemigos que quedan al reintentar la fase final con R (los 6 más lejos del despacho)
 // Oleadas del perímetro (piso 10): cada enemigo aparece por un extremo de la calle ('w' oeste, 'e' este) y va a por el jugador.
 const WAVES = [
@@ -1051,6 +1054,8 @@ export class Game {
     this.trap = level.trap ? { ...level.trap, state: 'idle', t: GAS_TIME, hold: 0, cough: 1.2, victim: null, fade: 0 } : null;
     this.asphyx = null;
     this.endAskAt = 0;
+    this.hatch = level.trap && level.trap.hatch ? { ...level.trap.hatch, state: 'closed', open: 0, used: false } : null; // trampilla de la emboscada
+    this.ambush = null;
     this.final = null; this.reunion = null; // fase final (reencuentro y rol): ver beginFinal
     this.civilianRecord = { ...(this.civilianBase || { hurt: 0, killed: 0, gifts: 0 }) }; // los civiles vuelven a empezar con R: el registro, al de la entrada al piso
     if (this.trap) {
@@ -1121,6 +1126,7 @@ export class Game {
       return;
     }
 
+    if (this.state === 'ambush') { this.updateAmbush(dt); return; }
     if (this.state === 'radio') { this.updateRadio(dt, confirm || input.mousePressed.left); return; }
     if (this.state === 'reunion') { this.updateReunion(dt); return; }
     if (this.state === 'role') { this.updateRoleSelect(); return; }
@@ -2202,6 +2208,9 @@ export class Game {
     if (!force && ((this.state !== 'playing' && this.state !== 'cleared') || a.exec || a.vomit || this.panel)) return false;
     a.cancelExecution();
     this.player = b; this.partner = a;
+    // Quien vuelve a ser jugador deja de ser el aliado de IA: pierde la inmortalidad y la munición infinita (queda con un cargador normal).
+    b.immortal = false;
+    if (b.weapon && b.weapon.ammo >= 9999) b.weapon = { type: b.weapon.type, ammo: WEAPON_DEFS[b.weapon.type].maxAmmo };
     this.swapBundles();
     this.swapped = !this.swapped;
     b.cooldown = Math.max(b.cooldown, 0.25);
@@ -2294,7 +2303,9 @@ export class Game {
     out.x = ext.x; out.y = ext.y; out.angle = -Math.PI / 2;
     const ally = this.partner;
     ally.immortal = true; ally.weapon = { type: 'smg', ammo: 9999 }; ally.fireCd = 0; ally.path = null; ally.pathT = 0;
-    this.final = { role, wave: 0, stage: 'wait', timer: 3.5, done: false, montage: null };
+    this.final = { role, wave: 0, stage: 'wait', timer: 3.5, done: false, montage: null, ambushPending: false };
+    // Emboscada: solo si juegas LIMPIEZA (dentro) y al elegirlo quedan menos de AMBUSH_MIN enemigos vivos; con 3 o más no ocurre nunca (y con R, que deja 6, tampoco).
+    if (role === 'limpieza' && this.hatch && !this.hatch.used && this.enemies.filter((e) => e.alive).length < AMBUSH_MIN) this.final.ambushPending = true;
     if (role === 'perimetro') this.supplyDrop(true); // quien defiende la calle empieza armado y con armas a mano
     this.camera.snap(this.player.x, this.player.y);
     this.showCallout(role === 'limpieza' ? 'LIMPIEZA' : 'PERÍMETRO', COLORS.player, 2.4, role === 'limpieza' ? 'DESPEJA EL EDIFICIO' : 'DEFIENDE LA CALLE: 2 OLEADAS');
@@ -2303,6 +2314,7 @@ export class Game {
   updateFinal(dt) {
     const F = this.final;
     this.updateAlly(dt);
+    if (F.ambushPending) { F.ambushPending = false; this.startAmbush(); return; } // antes de comprobar si el piso está despejado
     if (F.done) return;
     if (F.role === 'limpieza') { if (this.enemies.every((e) => !e.alive)) F.done = true; return; }
     // PERÍMETRO: oleadas por la calle; al caer la segunda, el compañero termina la limpieza interior
@@ -2337,6 +2349,78 @@ export class Game {
     });
     this.sfx.play('pickup');
     this.addFloat(pl.x, pl.y - 26, '¡SUMINISTROS!', COLORS.enemy, 1, 1.6);
+  }
+
+  // Cinemática de la emboscada (no se puede saltar; dura ~3,7 s y no usa destellos): la cámara va a la trampilla, que tiembla y suelta polvo; se abre de golpe y salen los refuerzos de uno en uno.
+  startAmbush() {
+    this.hatch.used = true;
+    this.callout = null; // el cartel del rol no tapa la trampilla
+    this.hatch.state = 'rumble';
+    this.state = 'ambush';
+    this.ambush = { t: 0, spawned: 0, rumbleAt: 0 };
+    this.sfx.play('lockdown');
+  }
+
+  updateAmbush(dt) {
+    const A = this.ambush, H = this.hatch;
+    A.t += dt;
+    if (this.callout && (this.callout.t -= dt) <= 0) this.callout = null;
+    for (const f of this.floatingTexts) f.t -= dt;
+    this.floatingTexts = this.floatingTexts.filter((f) => f.t > 0);
+    this.particles.update(dt, this.map, (kind, p) => this.bake(kind, p)); // el polvo y las chispas siguen moviéndose
+    this.camera.update(dt, H.x, H.y);
+    if (H.state === 'rumble') {
+      if (A.t - A.rumbleAt > 0.18) { A.rumbleAt = A.t; this.camera.addShake(1.5); this.particles.dust(H.x + (Math.random() - 0.5) * 56, H.y + (Math.random() - 0.5) * 56, 1); }
+      if (A.t >= 1.4) { // la tapa sale despedida
+        H.state = 'open'; H.open = 0;
+        this.sfx.play('unlock'); this.sfx.play('crunch');
+        this.camera.addShake(11);
+        this.particles.dust(H.x, H.y, 16);
+        this.particles.sparks(H.x, H.y, -Math.PI / 2, 14, 1.2);
+        this.showCallout('¡EMBOSCADA!', COLORS.blood, 2.4, 'REFUERZOS POR LA TRAMPILLA');
+      }
+    } else H.open = Math.min(1, H.open + dt * 4);
+    const next = 1.7 + A.spawned * 0.3;
+    if (H.state === 'open' && A.spawned < AMBUSH.length && A.t >= next) this.spawnAmbushEnemy(A.spawned++);
+    if (A.spawned >= AMBUSH.length && A.t >= 1.7 + AMBUSH.length * 0.3 + 0.9) { this.ambush = null; this.state = 'playing'; }
+  }
+
+  spawnAmbushEnemy(i) {
+    const H = this.hatch, d = AMBUSH[i], p = this.player;
+    const a = (i / AMBUSH.length) * TAU + 0.6, x = H.x + Math.cos(a) * 14, y = H.y + Math.sin(a) * 14;
+    const en = this.makeEnemy({ x, y, patrol: [{ x, y }], weapon: d.weapon || null, kind: d.kind, melee: null });
+    en.found = true; en.alarmed = true; en.state = 'chase'; en.target = { x: p.x, y: p.y }; en.attackCd = 0.8; en.ambush = true;
+    this.enemies.push(en);
+    this.particles.dust(x, y, 6);
+    this.playAt('alert', x, y, 1);
+  }
+
+  // La trampilla abierta (sobre el suelo, bajo los personajes): el hueco con una escalera, un resplandor y la tapa levantada de canto.
+  drawHatch(ctx) {
+    const H = this.hatch;
+    if (!H || H.state === 'closed') return;
+    const x0 = H.tx * TILE, y0 = H.ty * TILE;
+    ctx.save();
+    const jit = H.state === 'rumble' ? (Math.floor(performance.now() / 45) % 2 ? 1 : -1) : 0; // temblor antes de abrirse
+    if (H.state === 'open') {
+      ctx.fillStyle = '#15121f'; pixelRect(ctx, x0 + 2, y0 + 2, 30, 30);
+      ctx.fillStyle = '#02020a'; pixelRect(ctx, x0 + 4, y0 + 4, 26, 26);
+      ctx.fillStyle = '#0e0e1c'; pixelRect(ctx, x0 + 4, y0 + 4, 26, 3); pixelRect(ctx, x0 + 4, y0 + 4, 3, 26);
+      ctx.fillStyle = '#4a4a62'; for (let k = 0; k < 4; k++) pixelRect(ctx, x0 + 12, y0 + 9 + k * 5, 10, 1); // peldaños
+      ctx.fillStyle = '#3a3a52'; pixelRect(ctx, x0 + 11, y0 + 8, 1, 17); pixelRect(ctx, x0 + 22, y0 + 8, 1, 17);
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.globalAlpha = 0.16; ctx.fillStyle = '#ff7a1a'; pixelRect(ctx, x0 + 4, y0 + 4, 26, 26); // luz de abajo
+      ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1;
+      const lid = Math.max(2, Math.round(28 * (1 - H.open))); // la tapa gira sobre su bisagra (arriba): se ve cada vez más de canto
+      ctx.fillStyle = '#15121f'; pixelRect(ctx, x0 + 2, y0 - lid / 1, 30, lid + 1);
+      ctx.fillStyle = '#4e4e68'; pixelRect(ctx, x0 + 3, y0 - lid + 1, 28, lid - 1);
+      ctx.fillStyle = '#3a3a52'; pixelRect(ctx, x0 + 5, y0 - lid + 3, 24, Math.max(1, lid - 5));
+    } else { // temblor: la placa vibra y se levanta un poco por los bordes
+      ctx.fillStyle = '#15121f'; pixelRect(ctx, x0 + jit, y0, 32, 32);
+      ctx.fillStyle = '#4e4e68'; pixelRect(ctx, x0 + 1 + jit, y0 + 1, 30, 30);
+      ctx.fillStyle = '#02020a'; pixelRect(ctx, x0 + 30, y0 + 4, 2, 26); pixelRect(ctx, x0 + 4, y0 + 30, 26, 2); // rendija oscura
+    }
+    ctx.restore();
   }
 
   spawnWave(n) {
@@ -3126,6 +3210,7 @@ export class Game {
     this.drawObjectiveMarker(ctx);
     this.particles.drawGround(ctx);
     this.cams.drawCones(ctx); // conos de las cámaras de seguridad, sobre el suelo
+    this.drawHatch(ctx); // trampilla abierta (piso 10)
     // Muebles sobre la sangre (lo que cae debajo queda oculto) y bajo los personajes.
     ctx.drawImage(this.propsLayer, 0, 0, pixelW, pixelH);
     this.sewer.draw(ctx); // sobre los muebles de la calle: la cabeza nunca queda tapada ni cortada
@@ -3183,7 +3268,7 @@ export class Game {
   // El compañero inactivo: se dibuja con su máscara y su ropa, con una marca sobre la cabeza (nombre de su máscara) para distinguirlo.
   drawPartner(ctx) {
     const t = this.partner;
-    if (!t || !t.alive || t.away || !['playing', 'cleared', 'scuffle', 'dead', 'reunion', 'radio'].includes(this.state)) return;
+    if (!t || !t.alive || t.away || !['playing', 'cleared', 'scuffle', 'dead', 'reunion', 'radio', 'ambush'].includes(this.state)) return;
     const T = this.trap, gassed = T && T.state === 'gas' && T.victim === t, k = gassed ? 1 - T.t / GAS_TIME : 0;
     const ox = t.x;
     if (gassed) t.x += Math.sin(performance.now() / 70) * (0.5 + k * 2.5); // tambaleo del agente atrapado en el gas
@@ -3850,7 +3935,7 @@ export class Game {
     this.hostages.drawLeaveAsk(ctx, w, h);
     this.drawTrapHud(ctx, w, h);
     this.drawFinalHud(ctx, w, h);
-    if (this.state === 'reunion' || this.state === 'radio') { ctx.fillStyle = '#05000f'; ctx.fillRect(0, 0, w, CINE_BAR); ctx.fillRect(0, h - CINE_BAR, w, CINE_BAR); } // barras de cine durante el reencuentro y la radio
+    if (this.state === 'reunion' || this.state === 'radio' || this.state === 'ambush') { ctx.fillStyle = '#05000f'; ctx.fillRect(0, 0, w, CINE_BAR); ctx.fillRect(0, h - CINE_BAR, w, CINE_BAR); } // barras de cine durante el reencuentro y la radio
     this.drawRadioBox(ctx, w, h);
     this.drawExecutePrompt(ctx);
     const boss = this.enemies.find((e) => e.kind === 'boss' && e.alive && e.awake);

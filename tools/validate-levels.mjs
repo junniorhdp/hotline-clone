@@ -143,6 +143,23 @@ for (let i = 0; i < LEVELS.length; i++) {
     if (unreachable) fail(`${unreachable} enemigos no pueden llegar al despacho (final LIMPIEZA)`);
     console.log('  fase final: perímetro y limpieza alcanzables (12 puntos de aparición de oleadas)');
   }
+  // 5h) trampilla de la emboscada (piso 10): existe, sus 2×2 casillas son suelo libre y alcanzable fuera del despacho, sin enemigos ni puertas encima (a ≥ 2 casillas de cualquier puerta)
+  if (L.trap) {
+    const h = L.trap.hatch;
+    if (!h) fail('el piso con trampa no tiene trampilla');
+    else {
+      const tiles = [[0, 0], [1, 0], [0, 1], [1, 1]].map(([dx, dy]) => [h.tx + dx, h.ty + dy]);
+      const R = L.trap.room;
+      for (const [tx, ty] of tiles) {
+        if (isWallTile(map, tx, ty)) fail(`la trampilla toca una pared o un mueble en (${tx},${ty})`);
+        if (tx >= R.x0 && tx <= R.x1 && ty >= R.y0 && ty <= R.y1) fail('la trampilla está dentro del despacho');
+        if (L.doors.some((d) => Math.abs(d.tx - tx) < 2 && Math.abs(d.ty - ty) < 2)) fail(`la trampilla está a menos de 2 casillas de una puerta ((${tx},${ty}))`);
+        if (L.enemies.some((e) => e.tx === tx && e.ty === ty)) fail(`hay un enemigo sobre la trampilla (${tx},${ty})`);
+      }
+      if (!findPath(map, L.entry.x, L.entry.y, h.x, h.y)) fail('la trampilla es inalcanzable desde la entrada');
+      else console.log('  trampilla: suelo libre, alcanzable y lejos de puertas');
+    }
+  }
   // 6) cada enemigo puede llegar al jugador y a la salida (pathfinding)
   const pEntry = L.entry;
   const noPath = L.enemies.filter((e) => !findPath(map, e.x, e.y, pEntry.x, pEntry.y));
