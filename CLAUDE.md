@@ -61,6 +61,7 @@ HTML5 Canvas, JavaScript Vanilla (ES Modules) y Vite. Sin frameworks ni librerí
   - `pixelfont.js` — fuente bitmap 5×7 propia (con tildes y Ñ) y `drawText`; cachea cada texto renderizado.
   - `input.js` — teclado, ratón y dedos (Pointer Events); distingue "mantenido" de "pulsado este paso".
   - `keybinds.js` — controles de PC reasignables (`KEY_CONFIG`, `KeyBinds`, `keyLabel`). Ver "Controles de PC reasignables".
+  - `shield.js` — `ShieldGuard`: el blindado del piso 9 (escudo frontal que se rompe).
   - `cameras.js` — cámaras de seguridad del piso 8 y alerta general del operador (`SecurityCams`).
   - `hostages.js` — rehenes atados a sillas dentro del edificio, golpe de advertencia y extracción (`Hostages`). Ver "Actividades de los enemigos y rehenes".
   - `extraction.js` — `ExtractionCar`: el auto que recoge a 2 o más rehenes.
@@ -89,7 +90,7 @@ HTML5 Canvas, JavaScript Vanilla (ES Modules) y Vite. Sin frameworks ni librerí
   sangre, sin recargar la página. Audio, efectos y `Score` persisten entre reinicios.
 
 ## Niveles y flujo
-- **Campaña de 8 pisos** (`LEVELS`; el 9 previsto, ver `docs/`): 1 Recepción · 2 Oficinas · 3 Ático · **4 El Club** · **5 Almacén** · **6 Penthouse (jefe)** · **7 Apagón (penumbra)** · **8 Seguridad (cámaras)**. Los
+- **Campaña de 9 pisos** (`LEVELS`; los pisos 7 a 9 tienen su prompt en `docs/`; el jefe sigue en el piso 6): 1 Recepción · 2 Oficinas · 3 Ático · **4 El Club** · **5 Almacén** · **6 Penthouse (jefe)** · **7 Apagón (penumbra)** · **8 Seguridad (cámaras)** · **9 El Búnker (blindados)**. Los
   tres últimos se generaron con una herramienta que compone salas y puertas, comparten el exterior del piso 3 (vestíbulo, puerta
   principal, calle y moto) y pasan `npm run check:levels`:
   - **Piso 4 · EL CLUB** (`strobe: true`): salas VIP estrechas (7×6) a los lados, pasillos de 2 casillas y una pista de baile de 24×19 con
@@ -111,6 +112,11 @@ HTML5 Canvas, JavaScript Vanilla (ES Modules) y Vite. Sin frameworks ni librerí
     - **Operador y alerta general**: al llenarse un indicador, si el operador está vivo y no tumbado, saca el **walkie-talkie** (1,3 s, `¡INTRUSO EN LA CÁMARA!`, dibujo del walkie con antena parpadeante) y entonces `Game.generalAlarm` pone a **todos los enemigos vivos** (no el jefe) en `answerAlarm` hacia donde te vio la cámara, desfasados hasta 0,8 s (el presupuesto de BFS por fotograma reparte las rutas); cartel `¡ALERTA GENERAL!`. Mientras una cámara te vea repite la posición cada 6 s. El operador que te ve él mismo también da la alerta general (`raiseAlarm`).
     - **Contraataque**: **matar al operador** (cualquier causa) deja las cámaras **ciegas para siempre** (`CÁMARAS CIEGAS`, **+500** si la alarma aún no había saltado; chispas en las cámaras). Matarlo o tumbarlo **durante** el aviso lo corta (`¡AVISO CORTADO!`). Con el operador tumbado no hay aviso. Las cámaras solo detectan con el jugador dentro del edificio y en `playing`.
     - `check:levels` (5d): cámaras en casilla de pared con el origen del cono libre, exactamente 1 operador sentado, alcanzable y a ≥ 20 casillas de la entrada, y a partir del piso 7 no menos enemigos que en el anterior (7: 12, 8: 13).
+  - **Piso 9 · EL BÚNKER** (letra `Z`; prompt en `docs/prompt-nivel-9-bunker.md`; `shield.js`, `ShieldGuard extends Enemy`): sala central de 30×19 con barricadas (cajas y estantería, rodeables) y seis salas laterales de metal; 13 enemigos con **3 BLINDADOS**, 1 pesado, 2 corredores y armados; escopetas garantizadas (2).
+    - **Blindado** (`kind 'shield'`, hitbox 11, ×0,82 de velocidad, **subfusil**, sin cobertura; sprite `enemyShield` de acero azulado y `shieldCorpse`): lleva siempre un **escudo hacia el jugador** y, si ve al jugador a tiro (`pressure`), **avanza despacio (×0,5) mientras no apunta** hasta unas 110 u (medido: apunta 0,45 s, ráfaga de 4, avanza, repite). Mismo contrato que la coraza del jefe (`guardKill`/`guardKnock`), pero **el escudo se puede romper** (`SHIELD_HP` 4).
+    - **De frente** (golpe que viaja contra hacia donde mira, ±63°; `FRONT_ARC`): **pistola y cuerpo a cuerpo rebotan** (chispas, `ricochet`, el jugador se resiente 0,3 s con melé); **subfusil −0,25** por bala (16 balas) y **escopeta −0,6** por perdigón (≈ 7 perdigones = una descarga a quemarropa más uno); los **puños** de frente no lo derriban. Al romperse: `¡ESCUDO ROTO!`, sacudida y chispas; el siguiente golpe ya lo mata. **Por la espalda o los costados**, o con el escudo roto o derribado, **cae de un golpe**. **Arma lanzada, portazo y puños por detrás lo derriban** aunque venga de frente; derribado se remata (la ejecución no la frena).
+    - **Dibujo** (`drawGear`, llamado desde `Enemy.draw` ya girado): placa de acero con franjas amarillas, que se agrieta al desgastarse (<75 %, <50 %, <25 %) y destella en blanco al absorber un golpe; aviso flotante `¡BLINDADO! ¡FLANQUÉALO!` la primera vez que algo rebota (una vez por enemigo). `Boss` y `ShieldGuard` son las únicas clases con `guardKill`, así que las armas oxidadas no envenenan a un blindado (golpean como un tubo normal).
+    - `check:levels` (5e): ≥ 2 blindados, cada uno con ≥ 18/25 casillas libres alrededor (espacio para flanquear), una escopeta en el suelo y no menos enemigos que el piso anterior (8: 13, 9: 13).
 - Los pisos nuevos usan `loadLevel` normal; `loadLevel` devuelve además `strobe` y `boss`. El selector de pisos muestra una **ventana
   deslizante** de tarjetas cuando no caben todas (`floorsLayout`: `first`/`perPage`, flechas `<` `>` y toque en los bordes).
 - Los pisos están en `LEVELS` (`src/map.js`): `{ name, floor, par, rows, zones, props, loot, … }`.

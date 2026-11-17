@@ -51,7 +51,7 @@ export class Enemy {
   constructor(x, y, patrol, weapon = null, kind = 'grunt', meleeWeapon = null) {
     this.x = x;
     this.y = y;
-    this.r = kind === 'heavy' ? 11 : 10;
+    this.r = kind === 'heavy' || kind === 'shield' ? 11 : 10;
     this.patrol = patrol;
     this.weapon = weapon;
     this.armed = !!weapon;  // el sprite con chaleco se mantiene aunque suelte el arma
@@ -61,7 +61,7 @@ export class Enemy {
     this.scuffleBonus = 1;  // multiplica su resistencia en los forcejeos (BLADE)
     // Corredor: patrulla y persigue más rápido (aún un poco por debajo del jugador) y golpea antes.
     // Pesado: más lento y robusto (hitbox mayor), dispara una escopeta con mucho aviso.
-    this.speedMul = kind === 'runner' ? 1.16 : kind === 'heavy' ? 0.88 : 1;
+    this.speedMul = kind === 'runner' ? 1.16 : kind === 'heavy' ? 0.88 : kind === 'shield' ? 0.82 : 1;
     this.patrolMul = kind === 'runner' ? 1.5 : 1;
     this.meleeWeapon = meleeWeapon; // 'bat' | 'pipe' | 'knife' | null (ver ENEMY_MELEE)
     this.swingT = 0;        // s restantes del gesto del golpe (para dibujarlo)
@@ -71,9 +71,10 @@ export class Enemy {
     this.fleeTarget = null;
     this.fleeRepath = 0;
     this.refreshMelee();
+    this.pressure = false;  // (blindado) avanza despacio mientras apunta
     this.radioT = 0;        // (operador) s que le quedan de aviso por el walkie-talkie
-    this.sprite = kind === 'operator' ? 'enemyOperator' : kind === 'runner' ? 'enemyRunner' : kind === 'heavy' ? 'enemyHeavy' : (weapon ? 'enemyArmed' : 'enemy');
-    this.corpseSprite = kind === 'runner' ? 'runnerCorpse' : kind === 'heavy' ? 'heavyCorpse' : (weapon ? 'armedCorpse' : 'enemyCorpse');
+    this.sprite = kind === 'shield' ? 'enemyShield' : kind === 'operator' ? 'enemyOperator' : kind === 'runner' ? 'enemyRunner' : kind === 'heavy' ? 'enemyHeavy' : (weapon ? 'enemyArmed' : 'enemy');
+    this.corpseSprite = kind === 'shield' ? 'shieldCorpse' : kind === 'runner' ? 'runnerCorpse' : kind === 'heavy' ? 'heavyCorpse' : (weapon ? 'armedCorpse' : 'enemyCorpse');
     this.gunDef = weapon ? ENEMY_WEAPONS[weapon.type] : null;
     this.burstLeft = 0;     // balas que quedan de la ráfaga en curso
     this.burstTimer = 0;
@@ -101,7 +102,7 @@ export class Enemy {
     this.found = false;     // (cadáver) otro enemigo ya lo ha descubierto: ¡CADÁVER! solo lo grita el primero
     this.seenCorpses = new Set(); // cadáveres ya vistos por este enemigo (no vuelve a reaccionar a ellos)
     this.spotted = false;   // ya ha gritado al avistar al jugador
-    this.coverOk = kind !== 'boss' && !!weapon && Math.random() < 0.8; // los armados se cubren (el 80 %)
+    this.coverOk = kind !== 'boss' && kind !== 'shield' && !!weapon && Math.random() < 0.8; // los armados se cubren (el 80 %)
     this.cover = null; this.cmode = null; this.cT = 0; this.hideFor = 0; this.cycles = 0; this.fired = false; this.coverCool = 0; this.coverSearchCd = 0;
     const first = patrol[0];
     this.angle = Math.atan2(first.y - y, first.x - x) || 0;
@@ -395,6 +396,7 @@ export class Enemy {
       }
       if (d < def.range) {
         this.turnTowards(angleToPlayer, 9, dt);
+        if (this.pressure && d > 110 && this.aim === 0) this.goTo(p.x, p.y, CHASE_SPEED * this.speedMul * 0.5, dt, game.map); // el blindado avanza tras su escudo
         if (this.attackCd <= 0) {
           if (this.aim === 0) game.playAt('aim', this.x, this.y);
           this.aim += dt;
@@ -707,6 +709,7 @@ export class Enemy {
     drawSprite(ctx, this.sprite, 0, 0);
     // Portador: lleva puesta la máscara bloqueada sobre la cabeza.
     if (this.carrier) drawSprite(ctx, maskHead(this.carrier), 2, 0, 0, { ox: 3, oy: 3 });
+    if (this.drawGear) this.drawGear(ctx, time); // (blindado) el escudo
     ctx.restore();
 
     if (this.state === 'panic') {

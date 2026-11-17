@@ -93,6 +93,18 @@ for (let i = 0; i < LEVELS.length; i++) {
   }
   if (i >= 7 && prevEnemies > L.enemies.length) fail(`menos enemigos (${L.enemies.length}) que el piso anterior (${prevEnemies})`);
   if (i >= 6) prevEnemies = L.enemies.length;
+  // 5e) blindados (piso 9): al menos 2, con espacio para flanquearlos (casillas libres alrededor), una escopeta garantizada y barricadas en la sala
+  const shields = L.enemies.filter((e) => e.kind === 'shield');
+  if (shields.length) {
+    if (shields.length < 2) fail(`pocos blindados (${shields.length}); se esperaban al menos 2`);
+    for (const z of shields) {
+      let free = 0;
+      for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) if (!isWallTile(map, z.tx + dx, z.ty + dy)) free++;
+      if (free < 18) fail(`blindado en (${z.tx},${z.ty}) sin espacio para flanquearlo (${free}/25 libres)`);
+    }
+    if (!L.weapons.some((w) => w.type === 'shotgun')) fail('piso con blindados sin escopeta en el suelo');
+    console.log(`  blindados: ${shields.length} · escopetas en el suelo ${L.weapons.filter((w) => w.type === 'shotgun').length}`);
+  }
   // 6) cada enemigo puede llegar al jugador y a la salida (pathfinding)
   const pEntry = L.entry;
   const noPath = L.enemies.filter((e) => !findPath(map, e.x, e.y, pEntry.x, pEntry.y));

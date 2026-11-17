@@ -620,6 +620,76 @@ export const LEVELS = [
       ['bike', 7, 25, 2, 1],
     ],
   },
+  {
+    name: 'PISO 9 · EL BÚNKER',
+    floor: 'concrete',
+    loot: ['pipe', 'bat', 'knife', 'gun', 'smg', 'shotgun'],
+    guaranteed: ['shotgun', 'shotgun', 'smg', 'bat'],
+    smgChance: 0.5,
+    par: 230,
+    rows: [
+      '################################################',
+      '#.......#..............................#.......#',
+      '#.......#.?..........................?.#.......#',
+      '#.......D..............................D.......#',
+      '#.......#.............Z................#.......#',
+      '#...A...#..............................#...R...#',
+      '#.......#...E.....................A....#.......#',
+      '#########..............................#########',
+      '#.......#..............................#.......#',
+      '#.......#..............................#.......#',
+      '#.......D........Z.....................D.......#',
+      '#...R...#..............................#...A...#',
+      '#.......#..............................#.......#',
+      '#.......#.....................Z........#.......#',
+      '#########..............................#########',
+      '#.......#..............................#.......#',
+      '#.......#..............................#.......#',
+      '#.......D...............H..............D.......#',
+      '#...E...#.?.........E................?.#...E...#',
+      '#.......#..............................#.......#',
+      '##########D#############D#############D#########',
+      '#..............................................#',
+      '#..................B...........................#',
+      '########################N#######################',
+      '.......P........................................',
+      '................................................',
+      '................................................',
+      '................................................',
+      '................................................',
+      '################################################',
+    ],
+    // Búnker: gran sala central con barricadas (rodearlas permite flanquear) y seis salas laterales. Los 3 BLINDADOS ('Z') llevan un escudo frontal: hay que flanquearlos o usar la escopeta.
+    zones: [
+      ['metal', 1, 1, 7, 6], ['metal', 1, 8, 7, 13], ['metal', 1, 15, 7, 19], ['metal', 40, 1, 46, 6], ['metal', 40, 8, 46, 13], ['metal', 40, 15, 46, 19],
+      ['brokenTiles', 9, 1, 38, 19],
+      // Exterior: vestíbulo, calle (asfalto, rayas del carril) y plaza de la moto.
+      ['wood', 1, 21, 46, 22], ['asphalt', 0, 25, 47, 28], ['asphaltLine', 0, 27, 1, 27],
+      ['asphaltLine', 4, 27, 5, 27], ['asphaltLine', 8, 27, 9, 27], ['asphaltLine', 12, 27, 13, 27],
+      ['asphaltLine', 16, 27, 17, 27], ['asphaltLine', 20, 27, 21, 27],
+      ['asphaltLine', 24, 27, 25, 27], ['asphaltLine', 28, 27, 29, 27],
+      ['asphaltLine', 32, 27, 33, 27], ['asphaltLine', 36, 27, 37, 27],
+      ['asphaltLine', 40, 27, 41, 27], ['asphaltLine', 44, 27, 45, 27], ['asphaltBay', 6, 25, 9, 25],
+    ],
+    props: [
+      // Barricadas de la sala central (lados abiertos para rodearlas).
+      ['crates', 14, 4, 2, 2], ['crates', 14, 14, 2, 2], ['crates', 32, 4, 2, 2], ['crates', 32, 14, 2, 2], ['shelf', 23, 8, 1, 3], ['crates', 19, 12, 2, 1], ['crates', 27, 7, 2, 1],
+      ['barrel', 10, 9, 1, 1], ['barrel', 37, 10, 1, 1], ['debris', 24, 3, 1, 1], ['stain', 18, 16, 1, 1], ['trash', 30, 18, 1, 1],
+      // Salas laterales
+      ['cabinet', 1, 1, 1, 1], ['desk', 2, 9, 3, 1], ['crates', 1, 15, 1, 1], ['barrel', 7, 6, 1, 1], ['cabinet', 7, 13, 1, 1],
+      ['cabinet', 46, 1, 1, 1], ['cardTable', 41, 9, 2, 2], ['crates', 46, 15, 1, 1], ['barrel', 40, 6, 1, 1], ['cabinet', 40, 13, 1, 1], ['sofa', 43, 15, 3, 1],
+      // Exterior: vestíbulo, calle y la moto (aparcada en la plaza, 2×1 casillas).
+      ['counter', 12, 21, 4, 1], ['sofa', 27, 22, 3, 1], ['cabinet', 32, 21, 1, 1],
+      ['cabinet', 33, 21, 1, 1], ['barrel', 1, 21, 1, 1], ['crates', 1, 22, 1, 1],
+      ['shelf', 46, 21, 1, 2], ['rug', 16, 21, 4, 2], ['papers', 14, 22, 1, 1],
+      ['trash', 41, 22, 1, 1], ['tv', 44, 21, 1, 1], ['stain', 40, 22, 1, 1],
+      ['crates', 4, 28, 1, 1], ['crates', 5, 28, 1, 1], ['barrel', 13, 28, 1, 1],
+      ['trash', 18, 27, 1, 1], ['stain', 24, 26, 1, 1], ['debris', 30, 27, 1, 1],
+      ['barrel', 36, 28, 1, 1], ['crates', 40, 28, 1, 1], ['crates', 41, 28, 1, 1],
+      ['crates', 41, 27, 1, 1], ['trash', 44, 25, 1, 1], ['papers', 28, 28, 1, 1],
+      ['bike', 7, 25, 2, 1],
+    ],
+  },
 ];
 
 // Muebles sólidos: bloquean movimiento, balas y visión como una pared (sirven de cobertura) y la
@@ -641,6 +711,7 @@ const ENEMY_CHARS = {
   R: { armed: false, axis: 'auto', kind: 'runner' },   // corredor ágil (cuerpo a cuerpo)
   H: { armed: true, axis: 'auto', kind: 'heavy' },     // guardia pesado con escopeta
   O: { armed: false, axis: 'none', kind: 'operator' }, // operador de cámaras: sentado frente a los monitores (piso 8; ver cameras.js)
+  Z: { armed: true, axis: 'auto', kind: 'shield' },    // blindado: escudo frontal, subfusil (piso 9; ver shield.js)
   X: { armed: false, axis: 'none', kind: 'boss' },     // jefe del piso (se queda en su sitio hasta verte)
 };
 
@@ -649,7 +720,7 @@ const ENEMY_CHARS = {
 // grunt lleve pistola. Sorteado con el `rng` del piso: R no lo cambia.
 const ENEMY_MIX = [
   { melee: 0.5, arm: 0.1 }, { melee: 0.6, arm: 0.15 }, { melee: 0.65, arm: 0.2 },
-  { melee: 0.8, arm: 0.1 }, { melee: 0.55, arm: 0.3 }, { melee: 0.6, arm: 0.15 }, { melee: 0.55, arm: 0.35 }, { melee: 0.5, arm: 0.4 },
+  { melee: 0.8, arm: 0.1 }, { melee: 0.55, arm: 0.3 }, { melee: 0.6, arm: 0.15 }, { melee: 0.55, arm: 0.35 }, { melee: 0.5, arm: 0.4 }, { melee: 0.5, arm: 0.4 },
 ];
 const MELEE_TYPES = ['bat', 'pipe', 'knife'];
 
@@ -965,7 +1036,7 @@ export function loadLevel(index = 0, rng = Math.random) {
     const mix = ENEMY_MIX[index] || ENEMY_MIX[0];
     if (!e.armed && e.kind === 'grunt' && e.kind !== 'boss' && rng() < mix.arm) e.armed = true; // más pistolas
     e.melee = !e.armed && (e.kind === 'grunt' || e.kind === 'runner') && rng() < mix.melee ? MELEE_TYPES[Math.floor(rng() * MELEE_TYPES.length)] : null;
-    e.weapon = e.kind === 'heavy' ? 'shotgun' : e.armed ? (rng() < def.smgChance ? 'smg' : 'gun') : null;
+    e.weapon = e.kind === 'heavy' ? 'shotgun' : e.kind === 'shield' ? 'smg' : e.armed ? (rng() < def.smgChance ? 'smg' : 'gun') : null;
   }
   const carrierMask = CARRIERS[index];
   if (carrierMask) {
