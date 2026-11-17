@@ -458,6 +458,7 @@ export class Game {
   }
 
   pickGender(id) {
+    if (this.maskPhase === 'support' && LEVELS[this.levelIndex].duo) { this.deniedMask(); return; } // el primer protagonista ya está elegido: el equipo es mixto, el compañero es el otro
     if (this.gender === id) return;
     this.settings.set('playerGender', id); // se guarda y llama a setGender
     this.sfx.play('pickup');
@@ -1109,6 +1110,7 @@ export class Game {
       return;
     }
 
+    if (this.state === 'radio') { this.updateRadio(dt, confirm || input.mousePressed.left); return; }
     if (this.state === 'reunion') { this.updateReunion(dt); return; }
     if (this.state === 'role') { this.updateRoleSelect(); return; }
     if (this.state === 'scuffle') { this.updateScuffle(dt); return; }
@@ -2420,24 +2422,111 @@ export class Game {
   beginTrap(retry = false) {
     const T = this.trap, a = this.player, b = this.partner;
     if (!T || T.state !== 'idle' || !b) return;
-    T.state = 'gas'; T.t = GAS_TIME; T.hold = 0; T.victim = a; T.cough = 1.2; T.fade = 1;
+    T.victim = a; T.hold = 0; T.cough = 1.2; T.fade = 1; T.t = GAS_TIME;
     this.trapRetry = true;
     for (const d of T.doors) {
       const door = this.doors.find((x) => x.tx === d.tx && x.ty === d.ty);
       if (!door) continue;
       if (retry) { door.locked = true; door.closing = false; door.offset = 0; door.angVel = 0; } else door.lock(); // reintento: ya selladas
     }
-    if (retry) { a.x = T.center.x; a.y = T.center.y; }
-    b.away = false;
     b.x = this.entry.x; b.y = this.entry.y; b.angle = -Math.PI / 2; // el compañero llega por la entrada del edificio
-    this.swapControl(true);
-    if (!retry) {
-      this.showCallout('¡TRAMPA!', COLORS.blood, 2.6, 'GAS TÓXICO · ROMPE LA VENTILACIÓN');
-      this.camera.addShake(10);
-      this.fx.kick(0.8);
+    if (retry) { // fase 2 directa (R): sin cinemática, el gas ya corre
+      a.x = T.center.x; a.y = T.center.y;
+      b.away = false;
+      T.state = 'gas';
+      this.swapControl(true);
+      this.sfx.play('lockdown');
+      this.showTrapInstruction();
+      return;
     }
+    // Primera vez: mini cinemática por WALKIE-TALKIE (el reloj aún no corre): el atrapado avisa a su compañero por su nombre y este responde; luego el control pasa a él.
+    T.state = 'radio';
+    b.away = false;
+    a.cancelExecution();
+    const nameA = (AGENTS[a.gender] || AGENTS.male).name, nameB = (AGENTS[b.gender] || AGENTS.male).name;
+    this.state = 'radio';
+    this.radioCine = {
+      t: 0, end: 5.0, split: 2.9, cut: false,
+      lines: [
+        { who: a, mask: this.mask, lines: [`¡${nameB}, ME HAN ENCERRADO,`, 'HAY GAS!'], from: 0.35 },
+        { who: b, mask: this.partnerMask, lines: [`¡AGUANTA, ${nameA}!`, '¡VOY PARA ALLÁ!'], from: 3.1 },
+      ],
+    };
+    this.showCallout('¡TRAMPA!', COLORS.blood, 2.2, 'GAS TÓXICO · SALA SELLADA');
+    this.camera.addShake(10);
+    this.fx.kick(0.8);
     this.sfx.play('lockdown');
     this.touch.haptic([60, 40, 60]);
+  }
+
+  // Cinemática de radio: el mundo congelado (salvo las puertas, que acaban de sellarse), cámara en el atrapado y luego en el compañero; Espacio/Enter/clic la salta.
+  updateRadio(dt, skip) {
+    const R = this.radioCine, a = this.trap.victim, b = this.partner;
+    const before = R.t;
+    R.t += dt;
+    this.updateDoors(dt); // los portazos terminan de cerrarse
+    if (this.callout && (this.callout.t -= dt) <= 0) this.callout = null;
+    for (const f of this.floatingTexts) f.t -= dt;
+    this.floatingTexts = this.floatingTexts.filter((f) => f.t > 0);
+    for (const L of R.lines) if (before < L.from && R.t >= L.from) { this.sfx.play('empty'); this.sfx.play('pickup', 0.6); } // chasquido de radio al empezar cada línea
+    if (!R.cut && R.t >= R.split) { R.cut = true; this.camera.snap(b.x, b.y); } // corte al compañero en la entrada
+    const f = R.cut ? b : a;
+    this.camera.update(dt, f.x, f.y);
+    if (skip && R.t > 0.8) R.t = R.end;
+    if (R.t >= R.end) this.endRadio();
+  }
+
+  endRadio() {
+    const T = this.trap;
+    this.radioCine = null;
+    T.state = 'gas'; T.t = GAS_TIME; T.hold = 0; T.cough = 1.2; T.fade = 1;
+    this.state = 'playing';
+    this.swapControl(true);
+    this.showTrapInstruction();
+  }
+
+  // Instrucción táctica para quien pasa a controlar al compañero: cartel destacado + marcador en el mapa (ver drawObjectiveMarker) + guía permanente bajo el temporizador.
+  showTrapInstruction() {
+    const T = this.trap, name = (AGENTS[(T.victim || this.partner).gender] || AGENTS.male).name;
+    this.showCallout(`¡SALVA A ${name}!`, COLORS.blood, 3.6, `ROMPE LA VENTILACIÓN · ${T.vent.face === 'e' ? 'PARED ESTE DEL DESPACHO' : 'PARED SUR DEL DESPACHO'}`);
+  }
+
+  // Rumbo y distancia hasta la ventilación desde el jugador (para la guía en pantalla).
+  ventGuide() {
+    const T = this.trap, p = this.player, dx = T.vent.sx - p.x, dy = T.vent.sy - p.y;
+    const dirs = ['ESTE', 'SURESTE', 'SUR', 'SUROESTE', 'OESTE', 'NOROESTE', 'NORTE', 'NORESTE'];
+    const dir = dirs[(Math.round(Math.atan2(dy, dx) / (Math.PI / 4)) + 8) % 8];
+    return `${dir} · ${Math.round(Math.hypot(dx, dy) / TILE)} CASILLAS`;
+  }
+
+  // Caja de diálogo del walkie-talkie (abajo, sobre las barras de cine): retrato y nombre del que habla, texto que se teclea y un walkie con la antena parpadeando.
+  drawRadioBox(ctx, w, h) {
+    const R = this.radioCine;
+    if (!R || this.state !== 'radio') return;
+    const cur = [...R.lines].reverse().find((L) => R.t >= L.from);
+    if (!cur) return;
+    const ag = AGENTS[cur.who.gender] || AGENTS.male;
+    const bh = 46, bw = Math.min(w - 20, 330), bx = Math.round((w - bw) / 2), by = h - CINE_BAR - bh - 6 - this.safe.b;
+    ctx.fillStyle = 'rgba(5, 0, 15, 0.92)'; ctx.fillRect(bx, by, bw, bh);
+    ctx.fillStyle = ag.color;
+    ctx.fillRect(bx, by, bw, 1); ctx.fillRect(bx, by + bh - 1, bw, 1); ctx.fillRect(bx, by, 1, bh); ctx.fillRect(bx + bw - 1, by, 1, bh);
+    ctx.drawImage(bloodyMaskPortrait(cur.mask, 0, cur.who.gender, []), bx + 5, by + 6, 32, 32);
+    ctx.fillStyle = ag.color; ctx.fillRect(bx + 4, by + 5, 34, 1); ctx.fillRect(bx + 4, by + 38, 34, 1); ctx.fillRect(bx + 4, by + 5, 1, 34); ctx.fillRect(bx + 37, by + 5, 1, 34);
+    drawText(ctx, `${ag.name} · RADIO`, bx + 44, by + 5, { color: ag.color });
+    // texto tecleado (30 caracteres por segundo)
+    let left = Math.floor((R.t - cur.from) * 30);
+    cur.lines.forEach((ln, i) => {
+      const part = ln.slice(0, Math.max(0, left));
+      left -= ln.length;
+      if (part) drawText(ctx, part, bx + 44, by + 17 + i * 10, { color: COLORS.text, shadow: null });
+    });
+    // walkie: cuerpo, antena y piloto que parpadea
+    const wx = bx + bw - 14, wy = by + 6;
+    ctx.fillStyle = '#14141e'; ctx.fillRect(wx, wy + 5, 8, 14);
+    ctx.fillStyle = '#6b6b85'; ctx.fillRect(wx + 1, wy + 6, 6, 12);
+    ctx.fillStyle = '#14141e'; ctx.fillRect(wx + 5, wy, 1, 6);
+    ctx.fillStyle = Math.floor(R.t * 6) % 2 ? '#ff2a4a' : '#7d3a4a'; ctx.fillRect(wx + 4, wy - 1, 3, 2);
+    if (R.t > 0.8) drawText(ctx, this.hint('ESPACIO: SALTAR', 'TOCA: SALTAR'), bx + bw - 6, by + bh - 20, { color: '#7d6f98', align: 'right' });
   }
 
   updateTrap(dt) {
@@ -2548,6 +2637,12 @@ export class Game {
     const bw = 90, bx = cx - bw / 2, by = y + 17;
     ctx.fillStyle = '#05000f'; ctx.fillRect(bx - 1, by - 1, bw + 2, 6);
     ctx.fillStyle = col; ctx.fillRect(bx, by, Math.round(bw * (t / GAS_TIME)), 4);
+    // Guía: qué hacer y hacia dónde (hasta que se llega a la ventilación)
+    if (!this.ventNear() && this.player.agentId === 'support') {
+      const nm = (AGENTS[(T.victim || this.partner).gender] || AGENTS.male).name;
+      drawText(ctx, `SALVA A ${nm}: ROMPE LA VENTILACIÓN`, cx, by + 8, { color: COLORS.enemy, align: 'center', shadow: COLORS.background });
+      drawText(ctx, `VENTILACIÓN: ${this.ventGuide()}`, cx, by + 18, { color: '#9be32a', align: 'center', shadow: COLORS.background });
+    }
     // Aviso junto a la ventilación
     if (this.ventNear()) {
       const s = this.camera.worldToScreen(T.vent.sx, T.vent.sy + 20), msg = this.hint(`MANTÉN ${this.keys.label('kick')} · ROMPER VENTILACIÓN`, 'BOTA (TOCA VARIAS VECES) · ROMPER');
@@ -3052,7 +3147,7 @@ export class Game {
   // El compañero inactivo: se dibuja con su máscara y su ropa, con una marca sobre la cabeza (nombre de su máscara) para distinguirlo.
   drawPartner(ctx) {
     const t = this.partner;
-    if (!t || !t.alive || t.away || !['playing', 'cleared', 'scuffle', 'dead'].includes(this.state)) return;
+    if (!t || !t.alive || t.away || !['playing', 'cleared', 'scuffle', 'dead', 'reunion', 'radio'].includes(this.state)) return;
     const T = this.trap, gassed = T && T.state === 'gas' && T.victim === t, k = gassed ? 1 - T.t / GAS_TIME : 0;
     const ox = t.x;
     if (gassed) t.x += Math.sin(performance.now() / 70) * (0.5 + k * 2.5); // tambaleo del agente atrapado en el gas
@@ -3110,6 +3205,9 @@ export class Game {
     } else if (this.state === 'cleared') {
       const b = this.bike;
       r = { x: b.park.x - b.w / 2, y: b.park.y - b.h / 2, w: b.w, h: b.h, label: 'MOTO', below: false };
+    } else if (this.state === 'playing' && this.trap && this.trap.state === 'gas' && !this.ventNear()) { // piso 10: marcador sobre el punto desde el que se rompe la ventilación
+      const v = this.trap.vent;
+      r = { x: v.sx - TILE / 2, y: v.sy - TILE / 2, w: TILE, h: TILE, label: 'VENTILACIÓN', below: true };
     }
     if (!r) return;
     const blink = Math.floor(performance.now() / 250) % 2 === 0;
@@ -3433,7 +3531,8 @@ export class Game {
     const cx = Math.round(w / 2);
     const title = this.maskPhase === 'support' ? 'MÁSCARA DE APOYO' : 'ELIGE TU MÁSCARA';
     drawText(ctx, title, cx, 6, { color: COLORS.wall, scale: this.fitScale(title, w - 12), align: 'center' });
-    drawText(ctx, `PRÓXIMO: ${this.levelName}`, cx, 25, { color: '#9d8fb8', align: 'center' });
+    const sup = this.maskPhase === 'support', shown = sup ? (this.gender === 'female' ? 'male' : 'female') : this.gender; // fase de apoyo: se elige para el OTRO agente
+    drawText(ctx, sup ? `${AGENTS[this.gender].name} YA ESTÁ ELEGIDO · ELIGE LA MÁSCARA DE ${AGENTS[shown].name}` : `PRÓXIMO: ${this.levelName}`, cx, 25, { color: sup ? AGENTS[shown].color : '#9d8fb8', align: 'center' });
     // Atajos de la esquina (en táctil son los botones VOLVER y RÉCORDS)
     if (!this.input.touchMode && w >= 340) {
       drawText(ctx, 'ESC: MENÚ', 6 + this.safe.l, 6 + this.safe.t, { color: '#7d6f98' });
@@ -3475,7 +3574,7 @@ export class Game {
 
     // Selector de agente: cada botón lleva su símbolo (♂ / ♀) y su neón (JACK cian, VEX magenta) cuando está activo.
     for (const b of genders) {
-      const ag = AGENTS[b.id], on = this.gender === b.id;
+      const ag = AGENTS[b.id], on = shown === b.id, locked = sup && b.id === this.gender; // bloqueado: el primer protagonista ya elegido
       ctx.save();
       if (on) { ctx.shadowColor = ag.color; ctx.shadowBlur = 9; }
       ctx.fillStyle = on ? ag.color : '#3a2a55';
@@ -3485,17 +3584,21 @@ export class Game {
       ctx.fillRect(b.x + 1, b.y + 1, b.w - 2, b.h - 2);
       drawGenderIcon(ctx, b.x + 7, b.y + Math.round((b.h - 9) / 2), b.id, on ? ag.color : '#7d6f98');
       drawText(ctx, ag.name, b.x + 20 + Math.round((b.w - 22) / 2), b.y + Math.round((b.h - CELL_H) / 2), { color: on ? COLORS.text : '#7d6f98', align: 'center' });
+      if (locked) { // opción deshabilitada: oscurecida con candado
+        ctx.fillStyle = 'rgba(5, 0, 15, 0.62)'; ctx.fillRect(b.x, b.y, b.w, b.h);
+        drawPadlock(ctx, b.x + b.w - 14, b.y + Math.round((b.h - 16) / 2), '#7d6f98', 2);
+      }
     }
 
     // Vista previa en vivo (agente + máscara elegidos) y la ficha de la máscara a su derecha.
     const mask = MASKS[this.maskIndex], now = performance.now() / 1000;
-    drawAgentPreview(ctx, preview, mask.id, this.gender, now);
+    drawAgentPreview(ctx, preview, mask.id, shown, now);
     if (!this.isMaskUnlocked(mask)) {
       ctx.fillStyle = 'rgba(5, 0, 15, 0.7)';
       ctx.fillRect(preview.x + 1, preview.y + 1, preview.w - 2, preview.h - 2);
       drawPadlock(ctx, Math.round(preview.x + preview.w / 2 - 10), Math.round(preview.y + preview.h / 2 - 12), COLORS.player, 3);
     }
-    drawText(ctx, AGENTS[this.gender].name, preview.x + 5, preview.y + preview.h - 11, { color: AGENTS[this.gender].color }); // rótulo dentro del visor
+    drawText(ctx, AGENTS[shown].name, preview.x + 5, preview.y + preview.h - 11, { color: AGENTS[shown].color }); // rótulo dentro del visor
     let y = preview.y + 2;
     const maskLocked = !this.isMaskUnlocked(mask);
     drawText(ctx, mask.name, descCx, y, { color: maskLocked ? '#7d6f98' : COLORS.player, scale: 2, align: 'center' });
@@ -3711,7 +3814,8 @@ export class Game {
     this.hostages.drawLeaveAsk(ctx, w, h);
     this.drawTrapHud(ctx, w, h);
     this.drawFinalHud(ctx, w, h);
-    if (this.state === 'reunion') { ctx.fillStyle = '#05000f'; ctx.fillRect(0, 0, w, CINE_BAR); ctx.fillRect(0, h - CINE_BAR, w, CINE_BAR); } // barras de cine durante el reencuentro
+    if (this.state === 'reunion' || this.state === 'radio') { ctx.fillStyle = '#05000f'; ctx.fillRect(0, 0, w, CINE_BAR); ctx.fillRect(0, h - CINE_BAR, w, CINE_BAR); } // barras de cine durante el reencuentro y la radio
+    this.drawRadioBox(ctx, w, h);
     this.drawExecutePrompt(ctx);
     const boss = this.enemies.find((e) => e.kind === 'boss' && e.alive && e.awake);
     if (boss && this.state !== 'cleared') drawBossBar(ctx, boss, w, 32 + this.safe.t);
