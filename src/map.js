@@ -1161,6 +1161,13 @@ export function loadLevel(index = 0, rng = Math.random) {
   // Actividades iniciales de los enemigos y rehenes (al azar por partida y piso: R repite lo mismo; otra partida, otro reparto).
   const actRnd = seededRandom(((Math.floor(rng() * 4294967296) ^ 0x51ed1234) >>> 0) || 1);
   placeActivities(map, enemies, actRnd, occupied, doors);
+  if (map.trap) {
+    // Fase final (tanda C): `ext` = el punto de la calle justo al sur de la puerta principal (quien se queda fuera); `spawns` = 6 puntos de aparición de oleadas por cada
+    // extremo de la calle (el asfalto llega hasta la valla por ambos lados).
+    const mk = (side, i) => ({ x: side === 'w' ? (2 + (i >> 1) * 1.2) * TILE + TILE / 2 : map.pixelW - (2 + (i >> 1) * 1.2) * TILE - TILE / 2, y: mainDoor.y + (2.5 + (i % 3) * 0.9) * TILE });
+    map.trap.ext = { x: mainDoor.x, y: mainDoor.y + 2 * TILE };
+    map.trap.spawns = { w: [0, 1, 2, 3, 4, 5].map((i) => mk('w', i)), e: [0, 1, 2, 3, 4, 5].map((i) => mk('e', i)) };
+  }
   const hostages = def.noHostages ? [] : placeHostages(map, enemies, actRnd, doors, mainDoor.ty, entry, occupied, index);
   return { name: def.name, par: def.par, trap: map.trap, noHostages: !!def.noHostages, duo: !!def.duo, cameras: map.cameras, dark: !!def.dark, strobe: !!def.strobe, boss: !!def.boss, map, player, bike, mainDoor, entry, enemies, weapons, doors, hostages };
 }

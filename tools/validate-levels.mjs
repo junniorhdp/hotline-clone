@@ -128,6 +128,21 @@ for (let i = 0; i < LEVELS.length; i++) {
       else console.log(`  trampa: entrada → despacho ${toRoom.length} casillas · entrada → ventilación ${toVent.length} casillas (${need.toFixed(1)} s de ${GAS_TIME})`);
     }
   }
+  // 5g) fase final del piso 10: ambos finales alcanzables. LIMPIEZA: todos los enemigos llegan al despacho; PERÍMETRO: el punto exterior (calle, al sur de la puerta principal) y los 12
+  //     puntos de aparición de oleadas (6 por extremo de la calle) son suelo libre y conectados entre sí por la calle
+  if (L.trap && L.trap.ext) {
+    const T = L.trap, free = (p) => !isWallTile(map, Math.floor(p.x / TILE), Math.floor(p.y / TILE));
+    if (!free(T.ext)) fail('el punto exterior del perímetro está ocupado');
+    for (const [side, list] of Object.entries(T.spawns)) {
+      for (const sp of list) {
+        if (!free(sp)) fail(`punto de aparición de oleada (${side}) ocupado en (${Math.floor(sp.x / TILE)},${Math.floor(sp.y / TILE)})`);
+        else if (!findPath(map, sp.x, sp.y, T.ext.x, T.ext.y)) fail(`punto de aparición (${side}) sin camino hasta el perímetro`);
+      }
+    }
+    const unreachable = L.enemies.filter((e) => !findPath(map, e.x, e.y, T.center.x, T.center.y)).length;
+    if (unreachable) fail(`${unreachable} enemigos no pueden llegar al despacho (final LIMPIEZA)`);
+    console.log('  fase final: perímetro y limpieza alcanzables (12 puntos de aparición de oleadas)');
+  }
   // 6) cada enemigo puede llegar al jugador y a la salida (pathfinding)
   const pEntry = L.entry;
   const noPath = L.enemies.filter((e) => !findPath(map, e.x, e.y, pEntry.x, pEntry.y));
