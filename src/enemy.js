@@ -1,4 +1,4 @@
-import { moveAndSlide, lineOfSight, thickLineClear, castRay, findPath, tileKey, isSolidAt } from './map.js';
+import { moveAndSlide, lineOfSight, thickLineClear, castRay, findPath, tileKey, isSolidAt, isWallTile, TILE } from './map.js';
 import { ENEMY_WEAPONS, ENEMY_MELEE, WEAPON_DEFS, drawWeaponShape, weaponCategory } from './weapons.js';
 import { COLORS, TAU, angleDiff, clamp } from './utils.js';
 import { drawSprite, pixelRect, pixelDisc, maskHead, WORLD_PX } from './sprites.js';
@@ -27,6 +27,18 @@ const REPATH_TIME = 0.4;
 const DOOR_PAUSE = 0.45;        // patrullando / investigando
 const DOOR_PAUSE_CHASE = 0.25;  // persiguiendo
 const DOOR_PUSH_WINDOW = 1.2;   // s durante los que puede empujar tras la pausa
+
+// Presupuesto de IA por fotograma (lo repone Game.update): como mucho N búsquedas de ruta (BFS) y 1 búsqueda de cobertura entre TODOS los enemigos, así
+// una alarma que despierta a varios a la vez reparte el coste en varios fotogramas en vez de gastarlo de golpe (importante en móvil). Lo que se queda sin
+// presupuesto sigue por línea recta o con su ruta anterior y reintenta en el fotograma siguiente.
+let pathBudget = 99, coverBudget = 99;
+export function resetAiBudget(touch) { pathBudget = touch ? 2 : 4; coverBudget = 1; }
+const takeCoverBudget = () => (coverBudget > 0 ? (coverBudget--, true) : false);
+const COVER_RADIUS = 6;        // casillas a la redonda en las que busca cobertura
+const COVER_MIN_PLAYER = 110;  // no se cubre pegado al jugador
+const COVER_CYCLES = 3;        // veces que se oculta y asoma antes de lanzarse al ataque
+const ALARM_REACH = 18;        // casillas de recorrido (a través de puertas) a las que llega un grito de alerta
+const HEARD_MUFFLE = 0.6;      // un ruido tras una pared o puerta cerrada se oye con este radio relativo
 
 // Portadores de máscara: color del aura neón de cada una.
 const CARRIER_AURA = { guepardo: '#ff9d2e', tiburon: '#9fb0d6', buho: '#b36bff' };
@@ -78,7 +90,15 @@ export class Enemy {
     this.attackCd = 0;
     this.path = null;
     this.pathKey = -1;
-    this.repath = 0;
+    this.repath = Math.random() * REPATH_TIME; // desfasados: no repiten ruta todos en el mismo fotograma
+    this.listenT = 0;       // pausa mirando hacia el ruido antes de ir a investigarlo
+    this.hurry = false;     // alarma: va a la carrera (velocidad de persecución)
+    this.alarmed = false;   // en estado de combate por un grito: reacciona antes si te ve
+    this.shoutCd = 0;       // no grita dos veces seguidas
+    this.corpseT = Math.random() * 0.4;
+    this.found = false;     // (cadáver) otro enemigo ya lo ha descubierto
+    this.coverOk = kind !== 'boss' && !!weapon && Math.random() < 0.8; // los armados se cubren (el 80 %)
+    this.cover = null; this.cmode = null; this.cT = 0; this.hideFor = 0; this.cycles = 0; this.fired = false; this.coverCool = 0; this.coverSearchCd = 0;
     const first = patrol[0];
     this.angle = Math.atan2(first.y - y, first.x - x) || 0;
     // Actividad mientras no sabe de ti (estado 'patrol'): patrullar la ruta, vigilar un punto girando la mirada, fumar o estar sentado a una mesa.
@@ -141,11 +161,42 @@ export class Enemy {
     return lineOfSight(map, this.x, this.y, p.x, p.y);
   }
 
+  // Un ruido (disparo, golpe, patada): se detiene, mira hacia allí (0,35 s) y va a investigarlo. Con un ruido nuevo durante la investigación se queda
+  // con el más cercano a él. Los que ya te persiguen o están derribados lo ignoran.
   hear(x, y) {
+    if (this.state === 'chase' || this.state === 'alert' || this.state === 'down' || this.state === 'panic') return;
+    if (this.state === 'investigate' && this.target && Math.hypot(this.target.x - this.x, this.target.y - this.y) < Math.hypot(x - this.x, y - this.y)) return;
+    this.target = { x, y };
+    this.state = 'investigate';
+    this.listenT = 0.35;
+    this.path = null;
+  }
+
+  // Grito de un compañero (te ha visto o ha encontrado un cadáver): se pone en estado de combate y corre hacia la zona.
+  answerAlarm(x, y, delay) {
     if (this.state === 'chase' || this.state === 'alert' || this.state === 'down' || this.state === 'panic') return;
     this.target = { x, y };
     this.state = 'investigate';
+    this.listenT = 0.25 + delay;
+    this.hurry = true;
+    this.alarmed = true;
     this.path = null;
+  }
+
+  // Busca cadáveres a la vista (cada ~0,35 s): descubrir uno da la alarma.
+  scanCorpses(game) {
+    for (const o of game.enemies) {
+      if (o === this || o.alive || o.found) continue;
+      const dx = o.x - this.x, dy = o.y - this.y, d = Math.hypot(dx, dy);
+      if (d > VIEW_DIST * 0.8) continue;
+      if (d > CLOSE_SENSE && Math.abs(angleDiff(Math.atan2(dy, dx), this.angle)) > FOV / 2) continue;
+      if (!lineOfSight(game.map, this.x, this.y, o.x, o.y)) continue;
+      o.found = true;
+      game.addFloat(this.x, this.y - 22, '¡CADÁVER!', COLORS.enemy, 1, 1.2);
+      this.answerAlarm(o.x, o.y, 0.3);
+      game.raiseAlarm(this, o.x, o.y);
+      return;
+    }
   }
 
   // Derribado: suelta el arma (lo gestiona Game) y queda en el suelo un rato.
@@ -187,12 +238,18 @@ export class Enemy {
       if (this.state !== 'alert' && this.state !== 'chase' && this.state !== 'panic') {
         const relaxed = this.state === 'patrol' ? this.relaxDelay : 0; // pillado fumando o sentado: tarda más en reaccionar
         this.state = 'alert';
-        this.timer = REACTION_TIME + relaxed;
+        this.timer = this.alarmed ? REACTION_TIME * 0.4 : REACTION_TIME + relaxed; // en estado de combate (alarma) reacciona al instante
         game.playAt('alert', this.x, this.y);
+        game.raiseAlarm(this, p.x, p.y); // da la voz a las salas contiguas
       }
     }
     this.attackCd = Math.max(0, this.attackCd - dt);
     this.swingT = Math.max(0, this.swingT - dt);
+    this.shoutCd = Math.max(0, this.shoutCd - dt);
+    if (this.state === 'patrol' || this.state === 'search' || this.state === 'investigate') {
+      this.corpseT -= dt;
+      if (this.corpseT <= 0) { this.corpseT = 0.3 + Math.random() * 0.2; this.scanCorpses(game); }
+    }
     if (this.carrier && Math.random() < 0.07) game.particles.neon(this.x, this.y, Math.random() * TAU, 1, 3.14);
     // PÁNICO: un enemigo desarmado (nunca tuvo arma o la perdió) que te ve con CUALQUIER arma en la mano no se lanza
     // a puñetazos: retrocede, busca un arma del suelo o se cubre. Vuelve a atacar al recoger una o si te quedas sin arma.
@@ -223,12 +280,17 @@ export class Enemy {
       case 'chase': this.updateChase(dt, game); break;
       case 'panic': this.updatePanic(dt, game); break;
       case 'investigate':
-        if (this.goTo(this.target.x, this.target.y, INVESTIGATE_SPEED * this.speedMul, dt, game.map)) this.startSearch();
+        if (this.listenT > 0) { // se para a escuchar y mira hacia el ruido
+          this.listenT -= dt;
+          this.turnTowards(Math.atan2(this.target.y - this.y, this.target.x - this.x), 9, dt);
+          break;
+        }
+        if (this.goTo(this.target.x, this.target.y, (this.hurry ? CHASE_SPEED * 0.92 : INVESTIGATE_SPEED) * this.speedMul, dt, game.map)) this.startSearch();
         break;
       case 'search':
         this.angle += 2.2 * dt;
         this.timer -= dt;
-        if (this.timer <= 0) { this.state = 'patrol'; this.path = null; }
+        if (this.timer <= 0) { this.state = 'patrol'; this.path = null; this.hurry = false; this.alarmed = false; }
         break;
     }
   }
@@ -287,6 +349,8 @@ export class Enemy {
     const p = game.player;
     // Sin jugador vivo o sin última posición conocida (no debería ocurrir): a buscar.
     if (!p.alive || !this.target) { this.startSearch(); return; }
+    this.hurry = false;
+    if (this.coverOk && this.updateCover(dt, game)) return; // táctica: cubrirse, asomar, disparar y volver a cubrirse
 
     // Si te pierde de vista, el wind-up se cancela: por eso cubrirse tras una esquina funciona.
     if (!this.sees) {
@@ -347,6 +411,88 @@ export class Enemy {
     }
     this.windup = 0;
     this.goTo(p.x, p.y, CHASE_SPEED * this.speedMul, dt, game.map);
+  }
+
+  // --- Cobertura ------------------------------------------------------------------------------------
+  // Un enemigo armado que te ve a distancia no corre en línea recta hacia ti: busca una casilla cercana pegada a un mueble o una esquina que lo oculte
+  // de ti (`findCover`, una vez por entrada en combate y con presupuesto) y juega al «asomar»: se oculta 0,5-1,4 s, sale a una casilla contigua con
+  // visión, dispara su arma y vuelve a cubrirse. Tras COVER_CYCLES ciclos, o si te pegas a él (< 80 u), deja la cobertura y se lanza al ataque.
+  // Devuelve true si ha gestionado el fotograma (y el resto de la persecución no debe correr).
+  updateCover(dt, game) {
+    const p = game.player, def = this.gunDef, map = game.map;
+    this.coverCool = Math.max(0, this.coverCool - dt);
+    if (this.cmode === 'peek' && this.burstLeft > 0) this.fired = true;
+    const d = Math.hypot(p.x - this.x, p.y - this.y);
+    if (this.coverCool > 0 || d < 80) { this.cover = null; return false; }
+    if (this.burstLeft > 0) return false; // una ráfaga en curso no se interrumpe
+    if (!this.cover) {
+      if (!this.sees || d > def.range * 1.4) return false;
+      this.coverSearchCd -= dt;
+      if (this.coverSearchCd > 0 || !takeCoverBudget()) return false;
+      this.coverSearchCd = 1;
+      const c = this.findCover(game);
+      if (!c) { this.coverCool = 3; return false; }
+      this.cover = c; this.cmode = 'seek'; this.cT = 0; this.cycles = 0;
+    }
+    const c = this.cover;
+    this.cT += dt;
+    if (this.cmode === 'seek') {
+      if (this.cT > 3.5) { this.cover = null; this.coverCool = 5; return false; }
+      if (this.goTo(c.sx, c.sy, CHASE_SPEED * this.speedMul, dt, map)) { this.cmode = 'hide'; this.cT = 0; this.hideFor = 0.5 + Math.random() * 0.9; this.aim = 0; }
+      return true;
+    }
+    if (this.cmode === 'hide') {
+      this.aim = 0; this.windup = 0;
+      this.turnTowards(Math.atan2(p.y - this.y, p.x - this.x), 6, dt);
+      if (this.cT >= this.hideFor) {
+        if (++this.cycles > COVER_CYCLES) { this.cover = null; this.coverCool = 6; return false; }
+        this.cmode = 'peek'; this.cT = 0; this.fired = false;
+      }
+      return true;
+    }
+    // peek: sale a la casilla contigua con visión y dispara; tras la ráfaga (o si tarda demasiado) vuelve a ocultarse
+    if ((this.fired && this.attackCd > 0) || this.cT > 2.4) {
+      this.cmode = 'hide'; this.cT = 0; this.hideFor = 0.7 + Math.random() * 0.9; this.fired = false; this.aim = 0;
+      if (lineOfSight(map, c.sx, c.sy, p.x, p.y)) this.cover = null; // el jugador ha rodeado la cobertura: elige otra
+      return true;
+    }
+    if (this.sees && d < def.range * 0.95) return false; // ve al jugador: dispara desde donde está
+    this.goTo(c.px, c.py, CHASE_SPEED * this.speedMul, dt, map);
+    return true;
+  }
+
+  // La mejor cobertura cercana: casilla libre pegada a una pared o mueble (≤ COVER_RADIUS casillas), oculta del jugador, con una casilla contigua desde la
+  // que se le ve a tiro, alcanzable en línea recta y no ocupada por otro enemigo. Gana la más cercana al enemigo.
+  findCover(game) {
+    const map = game.map, p = game.player, def = this.gunDef;
+    const ex = Math.floor(this.x / TILE), ey = Math.floor(this.y / TILE);
+    const N4 = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+    let best = null, bestD = Infinity;
+    for (let ty = ey - COVER_RADIUS; ty <= ey + COVER_RADIUS; ty++) {
+      for (let tx = ex - COVER_RADIUS; tx <= ex + COVER_RADIUS; tx++) {
+        if (isWallTile(map, tx, ty)) continue;
+        const sx = tx * TILE + TILE / 2, sy = ty * TILE + TILE / 2;
+        const de = Math.hypot(sx - this.x, sy - this.y);
+        if (de >= bestD || de > COVER_RADIUS * TILE) continue;
+        let walled = false;
+        for (const [dx, dy] of N4) if (isWallTile(map, tx + dx, ty + dy)) { walled = true; break; }
+        if (!walled) continue;
+        const dp = Math.hypot(sx - p.x, sy - p.y);
+        if (dp < COVER_MIN_PLAYER || dp > def.range * 1.1) continue;
+        if (lineOfSight(map, sx, sy, p.x, p.y)) continue; // debe quedar oculto
+        let peek = null;
+        for (const [dx, dy] of N4) {
+          if (isWallTile(map, tx + dx, ty + dy)) continue;
+          const qx = sx + dx * TILE, qy = sy + dy * TILE;
+          if (Math.hypot(qx - p.x, qy - p.y) < def.range * 0.95 && lineOfSight(map, qx, qy, p.x, p.y)) { peek = { px: qx, py: qy }; break; }
+        }
+        if (!peek) continue;
+        if (game.enemies.some((o) => o !== this && o.alive && o.cover && Math.hypot(o.cover.sx - sx, o.cover.sy - sy) < 40)) continue;
+        if (!thickLineClear(map, this.x, this.y, sx, sy, this.r)) continue;
+        best = { sx, sy, px: peek.px, py: peek.py }; bestD = de;
+      }
+    }
+    return best;
   }
 
   // --- Pánico ---------------------------------------------------------------------------------------
@@ -430,9 +576,12 @@ export class Enemy {
       const key = tileKey(map, tx, ty);
       this.repath -= dt;
       if (!this.path || key !== this.pathKey || this.repath <= 0) {
-        this.path = findPath(map, this.x, this.y, tx, ty);
-        this.pathKey = key;
-        this.repath = REPATH_TIME;
+        if (pathBudget > 0) { // sin presupuesto este fotograma: sigue con la ruta anterior (o recto) y reintenta en el siguiente
+          pathBudget--;
+          this.path = findPath(map, this.x, this.y, tx, ty);
+          this.pathKey = key;
+          this.repath = REPATH_TIME;
+        }
       }
       const path = this.path;
       if (path) {

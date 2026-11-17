@@ -1,5 +1,5 @@
 import { Input } from './input.js';
-import { LEVELS, TILE, loadLevel, isSolidAt, isStructuralWall, castRay, doorHitT } from './map.js';
+import { LEVELS, TILE, loadLevel, isSolidAt, isStructuralWall, isWallTile, lineOfSight, castRay, doorHitT } from './map.js';
 import { renderFloor, renderWalls, renderProps } from './decor.js';
 import { Score, COMBO_WINDOW } from './score.js';
 import { MASKS, maskEffects, maskIcon } from './masks.js';
@@ -18,7 +18,8 @@ import { Hostages } from './hostages.js';
 import { weaponCategory } from './weapons.js';
 import { buildOptionsMenu, buildPauseMenu } from './options-menu.js';
 import { Player, bloodLevelFor, FINISH_RANGE } from './player.js';
-import { Enemy } from './enemy.js';
+import { Enemy, resetAiBudget } from './enemy.js';
+const ALARM_REACH = 18; // casillas de recorrido (a través de puertas) a las que llega un grito de alerta
 import { Door, ENEMY_PUSH_SPEED } from './doors.js';
 import { Pickup, Bullet, ENEMY_WEAPONS, WEAPON_DEFS, segmentPointDistance } from './weapons.js';
 import { Particles, Footprints, GIB_COLORS, TOXIC, RED, TOXIC_GIBS, VOMIT, palOf } from './particles.js';
@@ -1070,6 +1071,7 @@ export class Game {
     for (const f of this.floatingTexts) f.t -= dt;
     this.floatingTexts = this.floatingTexts.filter((f) => f.t > 0);
     if (this.player.alive) this.player.update(dt, this);
+    resetAiBudget(this.input.touchMode); // tope de rutas y búsquedas de cobertura por fotograma (reparte el coste de las alarmas)
     for (const e of this.enemies) if (e.alive) e.update(dt, this);
 
     this.updateDoors(dt);
@@ -2098,8 +2100,46 @@ export class Game {
   makeNoise(x, y, radius) {
     if (this.sewer) this.sewer.heard(x, y, radius);
     if (this.street) this.street.noise(x, y, radius); // los civiles de la calle oyen lo que pasa dentro (alerta indirecta)
+    // Los enemigos investigan el origen del ruido; tras una pared o una puerta cerrada se oye más apagado (radio ×0,6).
     for (const e of this.enemies) {
-      if (e.alive && Math.hypot(e.x - x, e.y - y) < radius) e.hear(x, y);
+      if (!e.alive) continue;
+      const d = Math.hypot(e.x - x, e.y - y);
+      if (d >= radius) continue;
+      if (d > radius * 0.6 && !lineOfSight(this.map, x, y, e.x, e.y)) continue;
+      e.hear(x, y);
+    }
+  }
+
+  // Un enemigo da la voz (te ha visto o ha encontrado un cadáver): los de las salas contiguas (hasta ALARM_REACH casillas de recorrido, atravesando
+  // puertas) se ponen en estado de combate y corren a la zona, los más lejanos un poco después. Una pasada de BFS por alarma (con enfriamiento de 5 s
+  // por enemigo), nada por fotograma.
+  raiseAlarm(src, x, y) {
+    if (src.shoutCd > 0) return;
+    src.shoutCd = 5;
+    const m = this.map, W = m.w;
+    if (!this._alarmDist || this._alarmDist.length !== W * m.h) this._alarmDist = new Int16Array(W * m.h);
+    const dist = this._alarmDist;
+    dist.fill(-1);
+    const s = Math.floor(src.y / TILE) * W + Math.floor(src.x / TILE);
+    const q = [s];
+    dist[s] = 0;
+    for (let i = 0; i < q.length; i++) {
+      const c = q[i], dc = dist[c];
+      if (dc >= ALARM_REACH) continue;
+      const cx = c % W, cy = (c / W) | 0;
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const nx = cx + dx, ny = cy + dy;
+        if (isWallTile(m, nx, ny)) continue;
+        const ni = ny * W + nx;
+        if (dist[ni] !== -1) continue;
+        dist[ni] = dc + 1;
+        q.push(ni);
+      }
+    }
+    for (const e of this.enemies) {
+      if (!e.alive || e === src || e.kind === 'boss') continue;
+      const d = dist[Math.floor(e.y / TILE) * W + Math.floor(e.x / TILE)];
+      if (d >= 0) e.answerAlarm(x, y, d * 0.03);
     }
   }
 
