@@ -3,6 +3,7 @@ import { ENEMY_WEAPONS, ENEMY_MELEE, WEAPON_DEFS, drawWeaponShape, weaponCategor
 import { COLORS, TAU, angleDiff, clamp } from './utils.js';
 import { drawSprite, pixelRect, pixelDisc, maskHead, WORLD_PX } from './sprites.js';
 import { drawText } from './pixelfont.js';
+import { spotLine, corpseLine } from './barks.js';
 
 export const VIEW_DIST = 340;
 export const FOV = Math.PI * 0.6;
@@ -96,7 +97,9 @@ export class Enemy {
     this.alarmed = false;   // en estado de combate por un grito: reacciona antes si te ve
     this.shoutCd = 0;       // no grita dos veces seguidas
     this.corpseT = Math.random() * 0.4;
-    this.found = false;     // (cadáver) otro enemigo ya lo ha descubierto
+    this.found = false;     // (cadáver) otro enemigo ya lo ha descubierto: ¡CADÁVER! solo lo grita el primero
+    this.seenCorpses = new Set(); // cadáveres ya vistos por este enemigo (no vuelve a reaccionar a ellos)
+    this.spotted = false;   // ya ha gritado al avistar al jugador
     this.coverOk = kind !== 'boss' && !!weapon && Math.random() < 0.8; // los armados se cubren (el 80 %)
     this.cover = null; this.cmode = null; this.cT = 0; this.hideFor = 0; this.cycles = 0; this.fired = false; this.coverCool = 0; this.coverSearchCd = 0;
     const first = patrol[0];
@@ -186,16 +189,23 @@ export class Enemy {
   // Busca cadáveres a la vista (cada ~0,35 s): descubrir uno da la alarma.
   scanCorpses(game) {
     for (const o of game.enemies) {
-      if (o === this || o.alive || o.found) continue;
+      if (o === this || o.alive || this.seenCorpses.has(o)) continue;
       const dx = o.x - this.x, dy = o.y - this.y, d = Math.hypot(dx, dy);
       if (d > VIEW_DIST * 0.8) continue;
       if (d > CLOSE_SENSE && Math.abs(angleDiff(Math.atan2(dy, dx), this.angle)) > FOV / 2) continue;
       if (!lineOfSight(game.map, this.x, this.y, o.x, o.y)) continue;
-      o.found = true;
-      game.addFloat(this.x, this.y - 22, '¡CADÁVER!', COLORS.enemy, 1, 1.2);
-      this.answerAlarm(o.x, o.y, 0.3);
-      game.raiseAlarm(this, o.x, o.y);
-      return;
+      this.seenCorpses.add(o); // cada enemigo reacciona a cada cadáver una sola vez
+      if (!o.found) {
+        // El primero que lo encuentra: ¡CADÁVER! (una sola vez por cadáver) y da la alarma.
+        o.found = true;
+        game.bark(this, '¡CADÁVER!', true);
+        this.answerAlarm(o.x, o.y, 0.3);
+        game.raiseAlarm(this, o.x, o.y);
+        return;
+      }
+      // Los siguientes: frases de tensión (a veces) o silencio en guardia; nunca repiten el grito ni la alarma.
+      const line = corpseLine(game.lastBark);
+      if (line) game.bark(this, line);
     }
   }
 
@@ -241,6 +251,7 @@ export class Enemy {
         this.timer = this.alarmed ? REACTION_TIME * 0.4 : REACTION_TIME + relaxed; // en estado de combate (alarma) reacciona al instante
         game.playAt('alert', this.x, this.y);
         game.raiseAlarm(this, p.x, p.y); // da la voz a las salas contiguas
+        if (!this.spotted) { this.spotted = true; game.bark(this, spotLine(game.gender, game.mask && game.mask.id, game.lastBark)); }
       }
     }
     this.attackCd = Math.max(0, this.attackCd - dt);

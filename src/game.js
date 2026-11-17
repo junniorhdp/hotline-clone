@@ -1071,6 +1071,7 @@ export class Game {
     for (const f of this.floatingTexts) f.t -= dt;
     this.floatingTexts = this.floatingTexts.filter((f) => f.t > 0);
     if (this.player.alive) this.player.update(dt, this);
+    this.barkCd = Math.max(0, (this.barkCd || 0) - dt);
     resetAiBudget(this.input.touchMode); // tope de rutas y búsquedas de cobertura por fotograma (reparte el coste de las alarmas)
     for (const e of this.enemies) if (e.alive) e.update(dt, this);
 
@@ -1970,6 +1971,16 @@ export class Game {
 
   // Texto táctico flotante en el mundo (¡QUEMARROPA!, ¡DESARME!, x3…): sube unos 24 u, entra con un "pop" a doble tamaño y se
   // desvanece al final. Solo dibujo (drawFloatingTexts); no afecta a la jugabilidad.
+  // Frase de un enemigo sobre su cabeza (texto flotante). Como mucho una cada 0,9 s en toda la partida (así varios enemigos no se pisan ni hacen spam) y
+  // nunca la misma dos veces seguidas; `force` (¡CADÁVER!) se salta el límite. Solo en pantalla y con jugador vivo.
+  bark(e, text, force = false) {
+    if (!text || !this.player.alive) return;
+    if (!force && (this.barkCd > 0 || text === this.lastBark)) return;
+    this.barkCd = 0.9;
+    this.lastBark = text;
+    this.addFloat(e.x, e.y - 24, text, COLORS.enemy, 1, 1.5);
+  }
+
   addFloat(x, y, text, color = COLORS.text, scale = 1, life = 0.9) {
     if (this.floatingTexts.length > 14) this.floatingTexts.shift();
     this.floatingTexts.push({ x, y, text, color, scale, t: life, max: life });
