@@ -795,8 +795,13 @@ export class Game {
   finishFloor() {
     this.state = 'results';
     const challenge = this.street.settle(); // reto de la cabina telefónica (suma su bonus antes del rango)
+    // Penalización por civiles dañados o muertos en la calle (nunca más de los puntos del piso): también cuenta para el rango.
+    const civ = this.street.civilianPenalty();
+    civ.penalty = Math.min(civ.penalty, Math.max(0, this.score.levelScore));
+    if (civ.penalty > 0) this.score.addBonus(-civ.penalty);
     this.results = this.score.finishLevel(this.time, this.par, this.enemies.length);
     this.results.challenge = challenge;
+    this.results.civilians = civ.penalty > 0 ? civ : null;
     this.results.last = this.levelIndex === LEVELS.length - 1;
     this.results.stats = this.statsSummary(); // el panel se queda fijo aunque luego se reinicie el estado
     // Se guarda al completar cada piso: si se cierra la pestaña, el progreso ya cuenta.
@@ -1555,6 +1560,7 @@ export class Game {
       }
 
       if (b.owner === 'player') {
+        if (this.street.bulletHit(b)) { b.alive = false; b.hitWall = false; continue; } // civil de la calle: la bala se detiene en él
         for (const e of this.enemies) {
           if (!e.alive) continue;
           if (segmentPointDistance(b.px, b.py, b.x, b.y, e.x, e.y) < e.r + b.r) {
@@ -1636,11 +1642,11 @@ export class Game {
   // Tubo oxidado (y demás armas con `poison`): no mata, NOQUEA e INTOXICA. El enemigo cae al suelo y no se levanta;
   // agoniza POISON_TIME (3,6 s) y muere solo (causa 'poison', sangre verde) salvo que lo remates antes (ejecución, sangre verde también).
   // Contra el jefe no se usa (ver Player.attack): pega como un arma normal.
-  poisonEnemy(e, angle) {
+  poisonEnemy(e, angle, time = POISON_TIME) {
     if (!e.alive) return;
     e.toxic = true; // toda su sangre será verde
-    if (e.poison > 0) { e.poison = Math.max(e.poison, POISON_TIME * 0.7); return; }
-    e.poison = POISON_TIME;
+    if (e.poison > 0) { e.poison = Math.max(e.poison, time * 0.7); return; }
+    e.poison = time;
     e.poisonAngle = angle;
     e.poisonTick = 0;
     const armed = !!(e.weapon || e.meleeWeapon);
@@ -2393,6 +2399,7 @@ export class Game {
       ['COMBO MÁXIMO', `X${r.maxCombo}`],
       ['BONUS DE TIEMPO', `+${r.timeBonus.toLocaleString('es')}`],
       ...(r.challenge ? [['RETO', r.challenge.ok ? `CUMPLIDO +${r.challenge.bonus}` : 'FALLIDO']] : []),
+      ...(r.civilians ? [['CIVILES', `-${r.civilians.penalty.toLocaleString('es')} (${[r.civilians.hurt && `${r.civilians.hurt} HERIDO${r.civilians.hurt > 1 ? 'S' : ''}`, r.civilians.killed && `${r.civilians.killed} MUERTO${r.civilians.killed > 1 ? 'S' : ''}`].filter(Boolean).join(' · ')})`]] : []),
       ['PUNTOS DEL PISO', r.levelScore.toLocaleString('es')],
       ['PUNTUACIÓN TOTAL', r.total.toLocaleString('es')],
       ['RÉCORD', this.bestScore.toLocaleString('es')],

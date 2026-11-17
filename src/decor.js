@@ -285,6 +285,16 @@ const PROP_ART = {
     dots(ctx, '#0e1f3d', x + 3, y + 4, w - 6, 5, 3, rnd);
     rect(ctx, '#ffbe0b', x + 6, y + h - 5, 4, 1);           // rótulo
   },
+  // Tambor metálico de la fogata (visto desde arriba): aro oxidado, interior ennegrecido y brasas. Las llamas y el resplandor los pinta street.js.
+  firebarrel(ctx, x, y, w, h, rnd) {
+    const cx = x + w / 2, cy = y + h / 2;
+    ctx.fillStyle = K; pixelDisc(ctx, cx, cy, 7);
+    ctx.fillStyle = '#3a4a58'; pixelDisc(ctx, cx, cy, 6);
+    ctx.fillStyle = '#6a7a88'; pixelDisc(ctx, cx - 1, cy - 1, 5);
+    ctx.fillStyle = '#1a0c06'; pixelDisc(ctx, cx, cy, 4);
+    ctx.fillStyle = '#c2461a'; pixelDisc(ctx, cx, cy, 2);
+    dots(ctx, '#8a4a2a', cx - 6, cy - 6, 12, 12, 6, rnd);
+  },
   // Contenedor de basura (2×1 o 1×2): tapa verde oscuro con asas y óxido.
   dumpster(ctx, x, y, w, h, rnd) {
     box(ctx, '#2a5a3a', x + 1, y + 1, w - 2, h - 2);

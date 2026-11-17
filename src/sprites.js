@@ -168,6 +168,8 @@ const DEFS = {
   knife: ['PPPpqqqqq', 'PPPpqqqq.'],
   pipe: ['kzzzzzzzzzzzzk', 'kZZZZZZZZZZZZk'],
   rustpipe: ['kEeEeeZeEeeEnk', 'kEEeEEeEEZEEnk'],
+  rustknife: ['EEEeZZZZZ', 'EEEEeeeeZ'],
+  crowbar: ['kZZZZZZZZZZZZkk', 'kzzzzzzzzzzZZEk', '...........EEk.'],
   smg: ['PPPPPPPPPP', 'PqqqqqqqPP', 'PpPPpP....', 'PP..PP....', '....PP....'],
   door: ['dddddddddddddddd', 'dDDDDDDDDDDDDDDd', 'kkkkkkkkkkkkkkkk'],
   muzzle: ['..w..', '.wow.', 'wooow', '.wow.', '..w..'],

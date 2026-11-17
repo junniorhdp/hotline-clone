@@ -116,6 +116,12 @@ const SOUNDS = {
     s.noise({ dur: 0.5, gain: 0.25 * v, filter: 'bandpass', freq: 5000, freqTo: 3500, q: 1.5, delay: 0.12 });
     s.tone({ type: 'sine', from: 520, to: 780, dur: 0.18, gain: 0.14 * v, delay: 0.3 });
   },
+  // ¡CLAC! del cocodrilo: mandíbulas que se cierran de golpe.
+  crocSnap(s, v) {
+    s.noise({ dur: 0.09, gain: 0.5 * v, filter: 'highpass', freq: 2200 });
+    s.tone({ type: 'square', from: 260, to: 90, dur: 0.12, gain: 0.25 * v });
+    s.tone({ type: 'triangle', from: 90, to: 50, dur: 0.18, gain: 0.3 * v, delay: 0.04 });
+  },
   ricochet(s, v) {
     s.tone({ type: 'triangle', from: 2600, to: 1200, dur: 0.06, gain: 0.06 * v });
     s.noise({ dur: 0.03, gain: 0.08 * v, filter: 'highpass', freq: 3000 });

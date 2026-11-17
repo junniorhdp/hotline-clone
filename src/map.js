@@ -480,7 +480,7 @@ export const LEVELS = [
 // IA los rodea con el pathfinding. El resto de tipos de `props` son decoración de suelo.
 // El arte de cada tipo está en decor.js.
 export const SOLID_PROPS = new Set(['desk', 'deskFlipped', 'counter', 'sofa', 'cashTable', 'shelf', 'tv',
-  'cabinet', 'crates', 'barrel', 'toilet', 'sink', 'cardTable', 'bed', 'bike', 'lamp', 'dumpster', 'vending', 'phone']);
+  'cabinet', 'crates', 'barrel', 'toilet', 'sink', 'cardTable', 'bed', 'bike', 'lamp', 'dumpster', 'vending', 'phone', 'firebarrel']);
 export const DECOR_PROPS = new Set(['rug', 'debris', 'trash', 'stain', 'papers', 'sewer']);
 // Celdas de la cuadrícula: 0 suelo · 1 pared estructural · 2 mueble sólido.
 const CELL_WALL = 1;
@@ -515,7 +515,7 @@ const CARRIERS = { 1: 'guepardo', 2: 'tiburon', 3: 'buho' };
 // casilla más externa es una VALLA (pared: límite duro del mapa). Todo lo escrito en LEVELS conserva sus coordenadas
 // relativas: aquí se desplaza (OUTSKIRT, OUTSKIRT). La cámara usa el tamaño del mapa ya ampliado, así que puede subir a la calle.
 export const OUTSKIRT = 6;
-function withOutskirts(def, index) {
+function withOutskirts(def, index, rng) {
   const M = OUTSKIRT, w = def.rows[0].length, h = def.rows.length, W = w + 2 * M, H = h + M;
   const rows = [];
   rows.push('#'.repeat(W));
@@ -529,47 +529,74 @@ function withOutskirts(def, index) {
   for (const i of sideRows) if (!street(i)) zones.push(['sidewalk', M - 1, M + i, M - 1, M + i], ['sidewalk', M + w, M + i, M + w, M + i]);
   for (const [t, x0, y0, x1, y1] of def.zones || []) zones.push([t, x0 + M, y0 + M, x1 + M, y1 + M]);
   const props = (def.props || []).map(([t, x, y, pw = 1, ph = 1]) => [t, x + M, y + M, pw, ph]);
-  const rnd = seededRandom(index * 977 + 41);
-  const lampX = [], lampY = [];
-  for (let x = M + 3; x < M + w - 2; x += 9) lampX.push(x + Math.floor(rnd() * 3));
-  for (let y = M + 3; y < M + h - 8; y += 8) lampY.push(y + Math.floor(rnd() * 3));
-  for (const x of lampX) props.push(['lamp', x, M - 1]);
-  for (const y of lampY) props.push(['lamp', M - 1, y], ['lamp', M + w, y]);
-  // Contenedores contra la valla, basura y manchas esparcidas por la calle.
-  const free = new Set();
+  // Semilla: la del juego (por partida y piso: al reintentar con R la calle es la misma; en una partida nueva, otra) mezclada con el piso.
+  const rnd = seededRandom(((Math.floor(rng() * 4294967296) ^ Math.imul(index + 1, 2654435761)) >>> 0) || 1);
+  const pick = (a) => a[Math.floor(rnd() * a.length)];
+  const shuffle = (a) => { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
+  const free = new Set();        // casillas ya ocupadas del anillo de calle
   const take = (x, y, pw = 1, ph = 1) => {
     for (let j = y; j < y + ph; j++) for (let i = x; i < x + pw; i++) { if (free.has(i + ',' + j)) return false; }
     for (let j = y; j < y + ph; j++) for (let i = x; i < x + pw; i++) free.add(i + ',' + j);
     return true;
   };
-  for (const p of props) if (p[1] < M || p[1] >= M + w || p[2] < M) take(p[1], p[2], p[3], p[4]);
-  const sewers = [];
-  const add = (t, x, y, pw = 1, ph = 1) => { if (take(x, y, pw, ph)) props.push([t, x, y, pw, ph]); };
-  add('dumpster', M + 6 + Math.floor(rnd() * 6), 1, 2, 1);
-  add('dumpster', M + w - 14 + Math.floor(rnd() * 6), 1, 2, 1);
-  add('dumpster', 1, M + 6 + Math.floor(rnd() * 5), 1, 2);
-  const alleyY = M + 12 + Math.floor(rnd() * 5);
-  add('dumpster', W - 2, alleyY, 1, 2);
-  // Callejón: el vagabundo (NPC) pegado al contenedor del borde, con un barril al lado.
-  const npcTile = take(W - 3, alleyY) ? { tx: W - 3, ty: alleyY } : null;
-  add('barrel', W - 3, alleyY + 1);
-  // Máquina expendedora y cabina telefónica en la acera de arriba (las farolas ya ocupan algunas casillas).
-  const onSidewalk = (type, from, step) => {
-    for (let k = 0; k < 24; k++) {
-      const x = from + k * step;
-      if (x < M || x >= M + w) continue;
-      if (take(x, M - 1)) { props.push([type, x, M - 1, 1, 1]); return { tx: x, ty: M - 1 }; }
-    }
-    return null;
-  };
-  const vending = onSidewalk('vending', M + 6 + Math.floor(rnd() * 4), 1);
-  const phone = onSidewalk('phone', M + w - 7 - Math.floor(rnd() * 4), -1);
-  // Moneda escondida en un rincón de la calle (esquinas del perímetro).
-  const corners = [[1, 1], [W - 2, 1], [1, H - 2], [W - 2, H - 2]];
-  for (let i = corners.length - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); [corners[i], corners[j]] = [corners[j], corners[i]]; }
-  const cc = corners.find(([x, y]) => !free.has(x + ',' + y)) || corners[0];
-  const cell = (c) => (c ? { tx: c.tx, ty: c.ty, x: c.tx * TILE + TILE / 2, y: c.ty * TILE + TILE / 2 } : null);
-  const streetInfo = { vending: cell(vending), phone: cell(phone), npc: cell(npcTile), coin: cell({ tx: cc[0], ty: cc[1] }) };
+  const add = (t, x, y, pw = 1, ph = 1) => { if (!take(x, y, pw, ph)) return false; props.push([t, x, y, pw, ph]); return true; };
+  const cell = (tx, ty) => ({ tx, ty, x: tx * TILE + TILE / 2, y: ty * TILE + TILE / 2 });
+  // Farolas en las aceras (separación y desfase al azar).
+  const lampX = [], lampY = [];
+  for (let x = M + 2 + Math.floor(rnd() * 3); x < M + w - 2; x += 8 + Math.floor(rnd() * 3)) lampX.push(x);
+  for (let y = M + 2 + Math.floor(rnd() * 3); y < M + h - 8; y += 7 + Math.floor(rnd() * 3)) lampY.push(y);
+  for (const x of lampX) add('lamp', x, M - 1);
+  for (const y of lampY) { add('lamp', M - 1, y); add('lamp', M + w, y); }
+  // Casillas de acera (pegadas al edificio) y del anillo de asfalto, para colocar cosas al azar.
+  const sidewalk = [];
+  for (let x = M; x < M + w; x++) sidewalk.push([x, M - 1]);
+  for (const i of sideRows) if (!street(i)) sidewalk.push([M - 1, M + i], [M + w, M + i]);
+  const yMax = H - 7; // las filas del sur son la calle del propio piso: ahí no se coloca nada
+  // Contenedores contra la valla (3 a 5), en horizontal arriba y en vertical a los lados.
+  const dSlots = [];
+  for (let x = 2; x < W - 4; x++) dSlots.push(['top', x, 1, 2, 1]);
+  for (let y = M; y < yMax; y++) { dSlots.push(['left', 1, y, 1, 2]); dSlots.push(['right', W - 2, y, 1, 2]); }
+  const dumpsters = [];
+  const dWant = 3 + Math.floor(rnd() * 3);
+  for (const [, x, y, pw, ph] of shuffle(dSlots)) {
+    if (dumpsters.length >= dWant) break;
+    if (dumpsters.some((d) => Math.abs(d[0] - x) + Math.abs(d[1] - y) < 7)) continue; // repartidos, no apelotonados
+    if (add('dumpster', x, y, pw, ph)) dumpsters.push([x, y, pw, ph]);
+  }
+  // Vagabundos (NPC): un grupo de 2-3 alrededor de una fogata en un tambor metálico y 1-2 sentados solos junto a un contenedor.
+  const looks = () => ({ gender: pick(['m', 'f']), coat: pick(['#5a4a38', '#3a4a5a', '#5a3a4a', '#4a5a3a', '#6a5a2a', '#3a3a4a']), hair: pick(['#140a08', '#4a2a14', '#8a6a3a', '#b8b0a0', '#7a2a1a', '#2a2a3a']),
+    skin: pick(['#d9a67a', '#b9825a', '#8a5a3a', '#f0c8a0']), hat: pick(['none', 'beanie', 'cap', 'hood']), item: pick(['none', 'bottle', 'blanket', 'none']) });
+  const npcs = [], ringTop = (x, y) => y >= 2 && y <= M - 2 && x >= 3 && x <= W - 4, ringSide = (x, y) => y >= M + 2 && y <= yMax - 2 && ((x >= 2 && x <= M - 2) || (x >= W - M + 1 && x <= W - 3));
+  const fireSpots = [];
+  for (let y = 2; y <= yMax; y++) for (let x = 2; x <= W - 3; x++) if (ringTop(x, y) || ringSide(x, y)) fireSpots.push([x, y]);
+  let fire = null;
+  for (const [fx, fy] of shuffle(fireSpots).slice(0, 40)) {
+    const around = shuffle([[-1, 0], [1, 0], [0, -1], [0, 1], [-1, -1], [1, 1], [-1, 1], [1, -1]]).map(([dx, dy]) => [fx + dx, fy + dy]);
+    const seats = around.filter(([x, y]) => (ringTop(x, y) || ringSide(x, y)) && !free.has(x + ',' + y));
+    if (seats.length < 3 || free.has(fx + ',' + fy)) continue;
+    if (!add('firebarrel', fx, fy)) continue;
+    fire = cell(fx, fy);
+    const n = 2 + Math.floor(rnd() * 2);
+    for (const [x, y] of seats.slice(0, n)) if (take(x, y)) npcs.push({ ...cell(x, y), look: looks(), mode: 'fire', fire: { x: fire.x, y: fire.y } });
+    break;
+  }
+  for (const d of shuffle(dumpsters.slice()).slice(0, 1 + Math.floor(rnd() * 2))) {
+    const [dx, dy, dw, dh] = d;
+    const nb = [];
+    for (let i = -1; i <= dw; i++) for (let j = -1; j <= dh; j++) if ((i < 0 || i >= dw) !== (j < 0 || j >= dh)) nb.push([dx + i, dy + j]);
+    const seat = shuffle(nb).find(([x, y]) => (ringTop(x, y) || ringSide(x, y) || (x >= 1 && x <= W - 2 && y >= 1 && y <= M - 1)) && !free.has(x + ',' + y));
+    if (seat && take(seat[0], seat[1])) npcs.push({ ...cell(seat[0], seat[1]), look: looks(), mode: 'sit', fire: null });
+  }
+  // Máquina expendedora y cabina: casillas de acera al azar (separadas entre sí).
+  const slots = shuffle(sidewalk.slice()).filter(([x, y]) => !free.has(x + ',' + y));
+  const vs = slots[0] || null;
+  const ps = slots.find(([x, y]) => vs && Math.abs(x - vs[0]) + Math.abs(y - vs[1]) >= 8) || slots[1] || null;
+  if (vs) add('vending', vs[0], vs[1]);
+  if (ps) add('phone', ps[0], ps[1]);
+  // Monedas escondidas en los rincones del perímetro (2).
+  const corners = shuffle([[1, 1], [W - 2, 1], [1, yMax + 1], [W - 2, yMax + 1], [2, 1], [W - 3, 1], [1, 2], [W - 2, 2]]).filter(([x, y]) => !free.has(x + ',' + y));
+  const coins = corners.slice(0, 2).map(([x, y]) => cell(x, y));
+  // Basura y manchas esparcidas por la calle.
   for (let i = 0; i < 26; i++) {
     const side = Math.floor(rnd() * 3);
     const x = side === 0 ? 1 + Math.floor(rnd() * (W - 2)) : side === 1 ? 1 + Math.floor(rnd() * (M - 2)) : W - M + 1 + Math.floor(rnd() * (M - 2));
@@ -577,17 +604,21 @@ function withOutskirts(def, index) {
     if (x === M - 1 || x === M + w || y === M - 1) continue; // la acera la dejamos limpia
     add(['trash', 'debris', 'stain', 'papers', 'barrel'][Math.floor(rnd() * 5)], x, y);
   }
-  // Tapas de alcantarilla: una arriba y una en cada lado, en el asfalto (casillas libres, lejos de las farolas).
-  for (const [x, y] of [[M + Math.floor(w * 0.3) + Math.floor(rnd() * 4), 3], [3, M + 9 + Math.floor(rnd() * 4)], [W - 4, M + 7 + Math.floor(rnd() * 4)], [M + Math.floor(w * 0.72), 3]]) {
+  // Tapas de alcantarilla (3): en el asfalto, lejos de las demás cosas y entre sí.
+  const sewers = [], sSpots = shuffle(fireSpots.slice());
+  for (const [x, y] of sSpots) {
+    if (sewers.length >= 3) break;
+    if (free.has(x + ',' + y) || sewers.some((q) => Math.abs(q.tx - x) + Math.abs(q.ty - y) < 12)) continue;
     if (take(x, y)) { props.push(['sewer', x, y]); sewers.push({ tx: x, ty: y }); }
   }
+  const streetInfo = { vending: vs ? cell(vs[0], vs[1]) : null, phone: ps ? cell(ps[0], ps[1]) : null, npcs, fire, coins };
   return { rows, zones, props, sewers, street: streetInfo };
 }
 
 // `rng` (0..1) decide las armas aleatorias; el juego pasa uno con semilla por partida y piso.
 export function loadLevel(index = 0, rng = Math.random) {
   const def = LEVELS[index];
-  const { rows, zones: defZones, props: defProps, sewers, street } = withOutskirts(def, index);
+  const { rows, zones: defZones, props: defProps, sewers, street } = withOutskirts(def, index, rng);
   const h = rows.length;
   const w = rows[0].length;
   const grid = new Uint8Array(w * h);

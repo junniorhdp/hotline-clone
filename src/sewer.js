@@ -9,6 +9,7 @@ const FIRST_DELAY = [14, 28];       // s hasta la primera aparición
 const NEXT_DELAY = [25, 60];        // s entre apariciones (aleatorio)
 const SEE_MIN = 190, SEE_MAX = 480; // se elige una tapa que el jugador pueda ver, pero no pegada a él
 const SCARE_DIST = 150;             // si el jugador se acerca a menos de esto, se esconde de inmediato
+const SNAP = 0.32;                  // s que dura el chasquido de dientes al acercarte demasiado
 const SLIDE = 0.7, RISE = 0.6, GRIN = 3.6, SINK = 0.5, CLOSE = 0.7, PANIC_SINK = 0.18, PANIC_CLOSE = 0.3;
 const COVER_SHIFT = 16;             // px internos que se desliza la tapa
 const FACES = [[1, 0], [0, 1], [-1, 0], [0, -1]]; // derecha, abajo, izquierda, arriba (índice = c.face)
@@ -40,13 +41,13 @@ export class Sewer {
       return;
     }
     cur.t += dt;
-    if (!cur.panic && cur.phase !== 'close' && cur.phase !== 'sink' && Math.hypot(cur.x - p.x, cur.y - p.y) < SCARE_DIST) this.scare(cur, game);
+    if (!cur.panic && cur.phase !== 'close' && cur.phase !== 'sink' && Math.hypot(cur.x - p.x, cur.y - p.y) < SCARE_DIST) this.scare(cur, game, true);
     // Gira hacia el jugador (solo en los 4 ejes), pero solo hacia lados con sitio y sin chocar con la tapa.
     if (cur.phase === 'rise' || cur.phase === 'grin') {
       const f = this.pickFace(cur, game);
       if (f !== cur.face && !(FACES[f][0] === cur.dir)) cur.face = f;
     }
-    const dur = { slide: SLIDE, rise: RISE, grin: GRIN, sink: cur.panic ? PANIC_SINK : SINK, close: cur.panic ? PANIC_CLOSE : CLOSE }[cur.phase];
+    const dur = { slide: SLIDE, rise: RISE, grin: GRIN, snap: SNAP, sink: cur.panic ? PANIC_SINK : SINK, close: cur.panic ? PANIC_CLOSE : CLOSE }[cur.phase];
     const k = Math.min(1, cur.t / dur);
     if (cur.phase === 'slide') cur.slide = k;
     else if (cur.phase === 'rise') cur.rise = k;
@@ -89,18 +90,39 @@ export class Sewer {
     if (c.phase === 'slide') { c.phase = 'rise'; game.playAt('crocUp', c.x, c.y, 0.8); }
     else if (c.phase === 'rise') c.phase = 'grin';
     else if (c.phase === 'grin') { c.phase = 'sink'; c.rise0 = 1; game.playAt('crocDown', c.x, c.y, 0.7); }
+    else if (c.phase === 'snap') { c.phase = 'sink'; c.rise0 = c.rise; }
     else if (c.phase === 'sink') { c.phase = 'close'; c.slide0 = 1; c.rise = 0; game.playAt('manholeScrape', c.x, c.y, 0.7); }
     else { c.phase = 'idle'; c.slide = 0; }
     c.t = 0;
   }
 
   // Se esconde ya (aunque estuviera a medio salir): hunde la cabeza y cierra la tapa con tiempos recortados.
-  scare(c, game) {
-    if (c.phase === 'close' || c.phase === 'sink') return;
+  // `near` = el jugador se ha acercado demasiado: si tiene la cabeza fuera, CHASQUEA los dientes (ver snap) antes de esconderse.
+  scare(c, game, near = false) {
+    if (c.phase === 'close' || c.phase === 'sink' || c.phase === 'snap') return;
     c.panic = true;
     if (c.phase === 'slide') { c.phase = 'close'; c.slide0 = c.slide; c.t = 0; return; }
+    if (near && (c.phase === 'grin' || (c.phase === 'rise' && c.rise > 0.5))) { this.snap(c, game); return; }
     c.phase = 'sink'; c.rise0 = c.rise; c.t = 0;
     game.playAt('crocDown', c.x, c.y, 0.9);
+  }
+
+  // Chasquido: la cabeza se lanza hacia delante y cierra las mandíbulas de golpe (¡CLAC!); luego se esconde. De propina deja una moneda
+  // en el suelo (50 %) o +250 puntos (50 %).
+  snap(c, game) {
+    c.phase = 'snap'; c.t = 0; c.rise0 = c.rise;
+    game.playAt('crocSnap', c.x, c.y, 1);
+    game.addFloat(c.x, c.y - 26, '¡CLAC!', '#ffffff', 2, 0.9);
+    game.camera.addShake(5);
+    game.fx.kick(0.3);
+    if (Math.random() < 0.5) {
+      const [fx, fy] = FACES[c.face];
+      game.street.dropCoin(c.x + fx * 30, c.y + fy * 30);
+      game.addFloat(c.x, c.y - 14, '¡SUELTA UNA MONEDA!', '#ffbe0b', 1, 1.6);
+    } else {
+      game.score.addBonus(250);
+      game.addFloat(c.x, c.y - 14, '+250 PROPINA', '#ffbe0b', 1, 1.6);
+    }
   }
 
   // Un disparo o un golpe fuerte (Game.makeNoise) a menos de `radius`: se esconde.
@@ -137,7 +159,8 @@ export class Sewer {
     const S = SCALE;
     const cx = c.x / WORLD_PX, cy = c.y / WORLD_PX; // en píxeles internos
     const fx = [1, 0, -1, 0][c.face], fy = [0, 1, 0, -1][c.face];
-    const base = -20 + c.rise * 16; // origen local de la cabeza respecto al centro del agujero (diseño base)
+    const snapK = c.phase === 'snap' ? Math.min(1, c.t / SNAP) : 0; // 0..1 durante el chasquido
+    const base = -20 + c.rise * 16 + 4 * Math.sin(snapK * Math.PI); // origen local de la cabeza (diseño base); se lanza hacia delante al chasquear
     // Recorte: solo se ve lo que está sobre el agujero o delante de él (la cabeza sale de dentro).
     ctx.save();
     ctx.beginPath();
@@ -154,7 +177,7 @@ export class Sewer {
       pixelRect(ctx, Math.min(ax, bx) * WORLD_PX, Math.min(ay, by) * WORLD_PX, Math.max(1, Math.abs(bx - ax)), Math.max(1, Math.abs(by - ay)));
     };
     const u0 = base;
-    const grin = c.phase === 'grin' ? Math.min(1, c.t / 0.25) : (c.phase === 'sink' ? 1 : 0);
+    const grin = c.phase === 'grin' ? Math.min(1, c.t / 0.25) : (c.phase === 'sink' || c.phase === 'snap' ? 1 : 0);
     // sombra bajo la cabeza, contorno, cráneo y hocico
     R(u0 - 3, -6, 19, 12, '#07120a');
     R(u0 - 4, -6, 9, 12, '#14310f'); R(u0 - 3, -5, 7, 10, '#3f9a3a'); R(u0 - 2, -4, 4, 8, '#56b84a');
@@ -171,9 +194,15 @@ export class Sewer {
     // sonrisa: línea clara a cada lado del hocico con las comisuras hacia arriba, y dientes que brillan
     if (grin > 0) {
       const jaw = '#e8f4d0';
-      R(u0 + 6, -4, 7, 1, jaw); R(u0 + 6, 3, 7, 1, jaw);
-      R(u0 + 5, -5, 1, 1, jaw); R(u0 + 5, 4, 1, 1, jaw); // comisuras en alto: sonríe
-      for (let k = 0; k < 4; k++) { R(u0 + 7 + k * 2, -3, 1, 1, '#ffffff'); R(u0 + 7 + k * 2, 2, 1, 1, '#ffffff'); }
+      const jv = Math.round(4 - 2.5 * snapK); // semiapertura de la boca: al chasquear se cierra de golpe
+      R(u0 + 6, -jv, 7, 1, jaw); R(u0 + 6, jv - 1, 7, 1, jaw);
+      R(u0 + 5, -jv - 1, 1, 1, jaw); R(u0 + 5, jv, 1, 1, jaw); // comisuras en alto: sonríe
+      for (let k = 0; k < 4; k++) { R(u0 + 7 + k * 2, -(jv - 1), 1, 1, '#ffffff'); R(u0 + 7 + k * 2, jv - 2, 1, 1, '#ffffff'); }
+      if (snapK > 0.55) { // fogonazo blanco de los dientes al cerrarse
+        ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.globalAlpha = 0.9;
+        R(u0 + 5, -jv - 1, 9, 2 * jv + 1, '#ffffff');
+        ctx.restore();
+      }
       // Destello: halo aditivo que late sobre toda la dentadura y una chispa en cruz que salta de diente en diente.
       const pulse = 0.5 + 0.5 * Math.sin(this.clock * 9);
       ctx.save();
@@ -181,7 +210,7 @@ export class Sewer {
       ctx.globalAlpha = (0.25 + 0.35 * pulse) * grin;
       R(u0 + 6, -4, 7, 2, '#fff6c8'); R(u0 + 6, 2, 7, 2, '#fff6c8');
       ctx.restore();
-      const step = Math.floor(this.clock * 5) % 4, side = Math.floor(this.clock * 2.5) % 2 ? -3 : 2;
+      const step = Math.floor(this.clock * 5) % 4, side = Math.floor(this.clock * 2.5) % 2 ? -(jv - 1) : jv - 2;
       const sx = u0 + 7 + step * 2;
       R(sx, side, 1, 1, '#ffffff');
       R(sx - 1, side, 1, 1, '#fffbd0'); R(sx + 1, side, 1, 1, '#fffbd0'); // brazos de la cruz (en el eje del hocico)

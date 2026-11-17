@@ -33,6 +33,8 @@ export const EXEC_STYLES = {
   blast: { time: 0.52, hits: [0.32] },              // escopeta: descarga con gran retroceso
   burst: { time: 0.52, hits: [0.24, 0.31, 0.38] },  // subfusil: ráfaga de tres
 };
+// Armas con la misma ejecución y gesto de ataque que una base (las improvisadas de la calle).
+const STYLE_ALIAS = { rustpipe: 'pipe', crowbar: 'pipe', rustknife: 'knife' };
 // Retroceso al disparar (segundos que dura, empuje del arma hacia atrás y del cuerpo, y si bombea).
 const RECOIL = {
   gun: { time: 0.14, kick: 3, lean: 1 },
@@ -284,7 +286,7 @@ export class Player {
     const w = this.weapon, def = this.def;
     let style = 'stomp';
     if (w) {
-      if (def.melee) style = w.type; // bat | pipe | knife
+      if (def.melee) style = STYLE_ALIAS[w.type] || w.type; // bat | pipe | knife
       else if (w.ammo > 0) style = { gun: 'shoot', shotgun: 'blast', smg: 'burst' }[w.type] || 'shoot';
       else style = 'smash';
     }
@@ -390,12 +392,16 @@ export class Player {
         const reachDef = e.windup > 0 || e.aim > 0 ? { ...def, range: def.range + 6, arc: Math.min(Math.PI * 1.2, def.arc * 1.3) } : def;
         if (inMeleeArc(this.x, this.y, this.angle, reachDef, e) && lineOfSight(game.map, this.x, this.y, e.x, e.y)) {
           // Con la máscara OSO los puños también matan al instante.
-          if (def.knockdown && !this.perks.meleeLethal) game.knockDown(e, this.angle, 'fists');
-          else if (def.poison && !e.guardKill) game.poisonEnemy(e, this.angle); // tubo oxidado: envenena
+          if (def.knockdown && !(this.perks.meleeLethal && !this.weapon)) { // (la pasiva de BRUTE solo mata con los puños, no con la palanca)
+            game.knockDown(e, this.angle, 'fists');
+            if (def.downMul && e.state === 'down') e.timer *= def.downMul;
+          } else if (def.poison && !e.guardKill) game.poisonEnemy(e, this.angle, def.poisonTime); // armas oxidadas: noquean e intoxican
           else game.killEnemy(e, this.angle, 'melee');
           hit = true;
         }
       }
+      // Los civiles de la calle también reciben el golpe (huyen y penalizan al final del piso: ver StreetLife.meleeHit).
+      if (game.street.meleeHit(this, def)) hit = true;
       // Si no hay a quién pegar pero hay una puerta delante, el golpe es una patada.
       const kicked = !hit && game.kickDoor(this);
       if (!kicked) game.recordAttack(this.weapon ? this.weapon.type : 'fists', hit); // estadísticas: golpe y si conectó
@@ -488,7 +494,7 @@ export class Player {
       let swingOffset = 0, wx = 10, wy = 6;
       if (def.melee && this.swing > 0) {
         const t = 1 - this.swing / this.swingDur;
-        if (type === 'knife') {
+        if ((STYLE_ALIAS[type] || type) === 'knife') {
           const p = Math.sin(t * Math.PI);
           wx += 11 * p; wy -= 2 * p;
           swingOffset = 0.12 * this.punchSide * p;

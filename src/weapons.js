@@ -16,6 +16,11 @@ export const WEAPON_DEFS = {
   // Tubo oxidado (solo se encuentra en los contenedores de la calle): no mata de golpe, NOQUEA e INTOXICA (`poison`): el enemigo
   // cae, no se levanta y muere solo a los ~3,6 s (o lo rematas antes), con sangre verde tóxica (ver Game.poisonEnemy). Contra el jefe pega como un tubo.
   rustpipe: { name: 'TUBO OXIDADO', melee: true, knockdown: false, poison: true, range: 36, arc: Math.PI * 0.75, cooldown: 0.34, swingTime: 0.13, shake: 2.5 },
+  // Cuchillo oxidado (contenedores): corto y MUY rápido; igual que el tubo oxidado noquea e intoxica, pero el veneno es más corto (2,2 s).
+  rustknife: { name: 'CUCHILLO OXIDADO', melee: true, knockdown: false, poison: true, poisonTime: 2.2, range: 28, arc: Math.PI * 0.6, cooldown: 0.22, swingTime: 0.1, shake: 2 },
+  // Palanca (contenedores): pesada y sin veneno; derriba siempre (no mata) con un arco amplio y deja al enemigo aturdido un 60 % más de tiempo
+  // (más ventana para rematar o huir). Lenta de recuperar.
+  crowbar: { name: 'PALANCA', melee: true, knockdown: true, downMul: 1.6, range: 38, arc: Math.PI * 0.9, cooldown: 0.46, swingTime: 0.17, shake: 4 },
   // Subfusil: automático (`auto`: dispara mientras se mantiene el clic), poco preciso.
   smg: { name: 'SUBFUSIL', melee: false, auto: true, cooldown: 0.075, maxAmmo: 30, bulletSpeed: 950, pellets: 1, spread: 0.12, range: Infinity, shake: 1.6, sound: 'smg', noise: 560 },
 };
@@ -31,7 +36,7 @@ export const ENEMY_WEAPONS = {
 
 // Categorías de armamento (matriz de combate, ver Game.enemyStrike): `unarmed` (puños), `blunt` (bate, tubo),
 // `blade` (cuchillo) y `gun` (pistola, escopeta, subfusil). `null`/undefined = puños.
-const CATEGORY = { bat: 'blunt', pipe: 'blunt', rustpipe: 'blunt', knife: 'blade', gun: 'gun', shotgun: 'gun', smg: 'gun' };
+const CATEGORY = { bat: 'blunt', pipe: 'blunt', rustpipe: 'blunt', crowbar: 'blunt', rustknife: 'blade', knife: 'blade', gun: 'gun', shotgun: 'gun', smg: 'gun' };
 export function weaponCategory(type) {
   return CATEGORY[type] || 'unarmed';
 }
@@ -66,7 +71,7 @@ export function segmentPointDistance(x0, y0, x1, y1, px, py) {
 
 // Dibuja un arma en coordenadas locales; (x, y) es la empuñadura y apunta hacia +X.
 // Píxel del sprite que hace de empuñadura (el resto del arma se extiende hacia +X).
-const GRIP = { bat: [1, 1], gun: [1, 2], shotgun: [3, 1], knife: [1, 1], pipe: [1, 1], rustpipe: [1, 1], smg: [1, 1] };
+const GRIP = { bat: [1, 1], gun: [1, 2], shotgun: [3, 1], knife: [1, 1], pipe: [1, 1], rustpipe: [1, 1], rustknife: [1, 1], crowbar: [1, 1], smg: [1, 1] };
 
 export function drawWeaponShape(ctx, type, x, y, angle, dim = false, scale = WORLD_PX) {
   const [ox, oy] = GRIP[type];
@@ -199,3 +204,6 @@ export class Bullet {
     ctx.restore();
   }
 }
+
+// Armas improvisadas que se encuentran en los contenedores de la calle (reparto con pesos). Todas son cuerpo a cuerpo y exclusivas del exterior.
+export const STREET_LOOT = [['rustpipe', 4], ['rustknife', 3], ['crowbar', 3]];

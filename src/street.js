@@ -1,43 +1,42 @@
-import { TILE, isSolidAt } from './map.js';
-import { Pickup } from './weapons.js';
-import { pixelRect, WORLD_PX } from './sprites.js';
+import { TILE } from './map.js';
+import { Pickup, WEAPON_DEFS, STREET_LOOT, inMeleeArc, segmentPointDistance } from './weapons.js';
+import { Vagrant } from './npcs.js';
+import { pixelRect, pixelDisc, WORLD_PX } from './sprites.js';
 import { drawText, measureText } from './pixelfont.js';
 import { COLORS, clamp, seededRandom, hashString } from './utils.js';
 
 // Vida de la calle (zona exterior de cada piso). Todo es opcional y no toca el combate:
-//   · CONTENEDORES: se registran con PATEAR/INTERACTUAR; pueden esconder un TUBO OXIDADO (arma exclusiva de la calle, envenena).
-//   · MONEDA: oculta en un rincón de la calle. MÁQUINA EXPENDEDORA: moneda → lata que da un buff temporal (`game.buff`).
+//   · CONTENEDORES: se registran con PATEAR/INTERACTUAR; pueden esconder un arma improvisada oxidada (STREET_LOOT: tubo, cuchillo, palanca).
+//   · MONEDAS: 2 escondidas en rincones de la calle. MÁQUINA EXPENDEDORA: moneda → lata que da un buff temporal (`game.buff`).
 //   · CABINA TELEFÓNICA: suena al llegar; al contestar da una pista o un reto opcional con bonus de puntos al acabar el piso.
-//   · VAGABUNDO (NPC del callejón): no se le puede atacar; se asusta si te acercas armado o manchado de sangre.
-// Las posiciones salen de map.street (generadas por withOutskirts); el estado que sobrevive a R vive en game.streetRun.
+//   · VAGABUNDOS (npcs.js): varios, sentados o junto a una fogata; se asustan si te acercas armado o con sangre; se les puede dañar
+//     (huyen) pero cada civil dañado o muerto resta puntos al final del piso.
+// Las posiciones salen de map.street (generadas al azar por partida y piso en map.js, ver withOutskirts); el estado que sobrevive a R vive en game.streetRun.
 
 const INTERACT_GAP = 28;      // distancia (al borde del objeto) para poder interactuar
 const COIN_RADIUS = 18;
 const BUFF_TIME = 45;         // segundos de lata, contados solo dentro del edificio
-const NPC_SCARE_DIST = 150, NPC_TALK_DIST = 90, NPC_ROAM = 36;
+const PENALTY_HURT = 400, PENALTY_KILL = 1500; // puntos que resta cada civil herido / muerto al final del piso
 
 export function newStreetRun() {
-  return { coinTaken: false, coins: 0, phoneDone: false, phoneLines: null, challenge: null };
+  return { taken: [], coins: 0, phoneDone: false, phoneLines: null, challenge: null };
 }
 
 const LORE = [
   'HAN CERRADO EL EDIFICIO CON TODOS DENTRO. LA ÚNICA SALIDA ES LA MOTO.',
   'EL EJECUTOR EMBISTE SIN PARAR... HASTA QUE SE ESTRELLA CONTRA UNA PARED.',
   'LOS CONTENEDORES GUARDAN MÁS QUE BASURA. REVISA LOS DE LA CALLE.',
-  'ALGUIEN PERDIÓ UNA MONEDA POR LOS RINCONES. LA MÁQUINA SABE PARA QUÉ.',
-  'ESE COCODRILO DE LA ALCANTARILLA... NO LO MOLESTES.',
+  'ALGUIEN PERDIÓ UNAS MONEDAS POR LOS RINCONES. LA MÁQUINA SABE PARA QUÉ.',
+  'ESE COCODRILO DE LA ALCANTARILLA... SI TE ACERCAS, MUERDE. A VECES SUELTA ALGO.',
   'ESA LATA DE LA MÁQUINA TE DA VELOCIDAD, PERO SOLO DENTRO DEL EDIFICIO.',
+  'LOS VAGABUNDOS NO TIENEN LA CULPA DE NADA. NO LOS TOQUES.',
 ];
 const CHALLENGES = [
   { id: 'nogun', bonus: 2000, text: () => 'TERMINA EL PISO SIN DISPARAR NI UNA VEZ.', check: (g) => !['gun', 'shotgun', 'smg'].some((t) => g.stats.uses[t]) },
   { id: 'fast', bonus: 1500, text: (g) => `DESPEJA EL EDIFICIO EN MENOS DE ${Math.round(g.par * 0.8)} S.`, check: (g) => g.time <= g.par * 0.8 },
   { id: 'combo', bonus: 1800, text: () => 'ENCADENA UN COMBO DE X4 O MÁS.', check: (g) => g.score.maxCombo >= 4 },
 ];
-const NPC_CALM = ['NOCHE TRANQUILA...', '¿TIENES UNA MONEDA?', 'CUIDADO CON LA ALCANTARILLA...', 'LA MÁQUINA DE LA ACERA FUNCIONA.'];
-const NPC_ARMED = ['¡NO QUIERO PROBLEMAS!', '¡GUARDA ESO, POR FAVOR!', '¡YO NO HE VISTO NADA!'];
-const NPC_BLOOD = ['¡ESO ES SANGRE!', '¡ESTÁS CUBIERTO DE SANGRE!', '¡NO ME HAGAS DAÑO!'];
 
-const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 // Distancia de un punto al borde de un rectángulo centrado (0 si está dentro).
 function gap(px, py, r) {
   const dx = Math.max(Math.abs(px - r.x) - r.w / 2, 0), dy = Math.max(Math.abs(py - r.y) - r.h / 2, 0);
@@ -51,6 +50,12 @@ function wrap(text, max) {
   if (line) out.push(line);
   return out;
 }
+// Elige un tipo del catálogo con pesos.
+function weighted(list, r) {
+  let t = r * list.reduce((a, [, w]) => a + w, 0);
+  for (const [type, w] of list) { if ((t -= w) < 0) return type; }
+  return list[0][0];
+}
 
 export class StreetLife {
   constructor(game) {
@@ -60,15 +65,22 @@ export class StreetLife {
     const m = game.map, st = m.street || {}, run = game.streetRun;
     const rnd = seededRandom(hashString(`${game.runId || 'x'}|${game.levelIndex}|street`));
     this.rnd = rnd;
-    // Contenedores de la calle: el primero siempre guarda el tubo oxidado; los demás, a veces.
+    // Contenedores: el primero siempre guarda un arma improvisada (tipo al azar con pesos); los demás, a veces.
     this.dumpsters = m.props.filter((p) => p.type === 'dumpster').map((p, i) => ({
-      kind: 'dumpster', x: (p.x + p.w / 2) * TILE, y: (p.y + p.h / 2) * TILE, w: p.w * TILE, h: p.h * TILE, open: false, loot: i === 0 || rnd() < 0.4,
+      kind: 'dumpster', x: (p.x + p.w / 2) * TILE, y: (p.y + p.h / 2) * TILE, w: p.w * TILE, h: p.h * TILE, open: false,
+      loot: i === 0 || rnd() < 0.45 ? weighted(STREET_LOOT, rnd()) : null,
     }));
     const box = (c) => (c ? { x: c.x, y: c.y, w: TILE, h: TILE } : null);
     this.vending = st.vending ? { kind: 'vending', ...box(st.vending) } : null;
     this.phone = st.phone ? { kind: 'phone', ...box(st.phone) } : null;
-    this.npc = st.npc ? { home: { x: st.npc.x, y: st.npc.y }, x: st.npc.x, y: st.npc.y, scared: false, say: null, sayT: 0, sayCd: 1.5, face: -1, shiver: 0 } : null;
-    this.coin = st.coin && !run.coinTaken ? { x: st.coin.x, y: st.coin.y } : null;
+    // Los vagabundos no pueden entrar al edificio (zona vetada: su huella hasta la puerta principal).
+    const z = game.entry.zone;
+    const ban = { x0: z.x0, x1: z.x1, y0: z.y0, y1: game.entry.y + 2 * TILE };
+    this.npcs = (st.npcs || []).map((d) => new Vagrant(d, ban));
+    this.fires = st.fire ? [{ x: st.fire.x, y: st.fire.y }] : [];
+    this.coins = (st.coins || []).map((c, i) => ({ id: i, x: c.x, y: c.y })).filter((c) => !run.taken.includes(c.id));
+    this.extraCoins = 0;
+    this.hurtSet = new Set(); this.killedSet = new Set();
     this.ringT = 0.5;
   }
 
@@ -100,19 +112,27 @@ export class StreetLife {
       this.ringT -= dt;
       if (this.ringT <= 0) { this.ringT = 1.8; g.playAt('phoneRing', this.phone.x, this.phone.y, 1); }
     }
-    // Moneda escondida.
-    if (this.coin && Math.hypot(p.x - this.coin.x, p.y - this.coin.y) < COIN_RADIUS) {
-      this.run.coinTaken = true; this.run.coins++;
-      g.addFloat(this.coin.x, this.coin.y - 8, '¡MONEDA!', COLORS.enemy, 1, 1.2);
-      g.playAt('coin', this.coin.x, this.coin.y, 1);
-      this.coin = null;
+    // Monedas (escondidas o soltadas por el cocodrilo).
+    for (const c of this.coins) {
+      if (Math.hypot(p.x - c.x, p.y - c.y) >= COIN_RADIUS) continue;
+      if (!c.temp) this.run.taken.push(c.id);
+      this.run.coins++;
+      g.addFloat(c.x, c.y - 8, '¡MONEDA!', COLORS.enemy, 1, 1.2);
+      g.playAt('coin', c.x, c.y, 1);
+      c.gone = true;
     }
-    this.updateNpc(dt);
+    if (this.coins.some((c) => c.gone)) this.coins = this.coins.filter((c) => !c.gone);
+    for (const n of this.npcs) n.update(dt, g);
     // Interacción: PATEAR/INTERACTUAR (Espacio / F; en táctil el botón de patada).
     if (g.keys.pressed('kick') || g.keys.pressed('execute')) {
       const t = this.nearTarget();
       if (t) this.interact(t);
     }
+  }
+
+  // Una moneda suelta cerca de (x, y) (la deja el cocodrilo al morder).
+  dropCoin(x, y) {
+    this.coins.push({ id: 'x' + (this.extraCoins++), x, y, temp: true });
   }
 
   interact(t) {
@@ -126,10 +146,10 @@ export class StreetLife {
       if (t.loot) {
         const ang = Math.atan2(p.y - t.y, p.x - t.x);
         const reach = (t.w > t.h ? t.h : t.w) / 2 + 10;
-        const pk = new Pickup('rustpipe', t.x + Math.cos(ang) * reach, t.y + Math.sin(ang) * reach, 0);
+        const pk = new Pickup(t.loot, t.x + Math.cos(ang) * reach, t.y + Math.sin(ang) * reach, 0);
         pk.throwAt(ang, 150);
         g.pickups.push(pk);
-        g.addFloat(t.x, t.y - 14, '¡TUBO OXIDADO!', '#c2682a', 1, 1.4);
+        g.addFloat(t.x, t.y - 14, `¡${WEAPON_DEFS[t.loot].name}!`, '#c2682a', 1, 1.4);
       } else g.addFloat(t.x, t.y - 14, 'SOLO BASURA', '#9d8fb8', 1, 1.1);
     } else if (t.kind === 'vending') {
       if (this.run.coins <= 0) { g.addFloat(t.x, t.y - 20, 'NECESITAS UNA MONEDA', COLORS.blood, 1, 1.3); g.sfx.play('empty'); return; }
@@ -147,10 +167,9 @@ export class StreetLife {
   answer() {
     const g = this.game, run = this.run;
     if (!run.phoneLines) {
-      let ch = null;
       if (this.rnd() < 0.6) {
         const def = CHALLENGES[Math.floor(this.rnd() * CHALLENGES.length)];
-        ch = { id: def.id, text: def.text(g), bonus: def.bonus };
+        const ch = { id: def.id, text: def.text(g), bonus: def.bonus };
         run.challenge = ch;
         run.phoneLines = ['RETO OPCIONAL:', ch.text, `RECOMPENSA: +${ch.bonus} PTS`];
       } else {
@@ -173,42 +192,40 @@ export class StreetLife {
     return { text: ch.text, ok, bonus: ch.bonus };
   }
 
-  // --- Vagabundo --------------------------------------------------------------------------------
-  updateNpc(dt) {
-    const n = this.npc;
-    if (!n) return;
-    const g = this.game, p = g.player, d = dist(p, n);
-    n.sayT = Math.max(0, n.sayT - dt);
-    n.sayCd = Math.max(0, n.sayCd - dt);
-    const armed = !!p.weapon, bloody = p.bloodLevel >= 2;
-    const scared = d < NPC_SCARE_DIST && (armed || bloody);
-    if (scared && !n.scared) this.npcSay(bloody ? NPC_BLOOD : NPC_ARMED, 2.4);
-    n.scared = scared;
-    n.face = p.x >= n.x ? 1 : -1;
-    let tx = n.home.x, ty = n.home.y, speed = 30;
-    if (scared) {
-      // Se aparta de ti sin salirse de su rincón (ni meterse en un mueble).
-      const a = Math.atan2(n.y - p.y, n.x - p.x);
-      tx = clamp(n.x + Math.cos(a) * 40, n.home.x - NPC_ROAM, n.home.x + NPC_ROAM);
-      ty = clamp(n.y + Math.sin(a) * 40, n.home.y - NPC_ROAM, n.home.y + NPC_ROAM);
-      speed = 70;
-      n.shiver += dt * 40;
-      if (n.sayCd <= 0 && n.sayT <= 0) this.npcSay(bloody ? NPC_BLOOD : NPC_ARMED, 2.2);
-    } else if (d < NPC_TALK_DIST && n.sayCd <= 0 && n.sayT <= 0) this.npcSay(NPC_CALM, 2.6);
-    const dx = tx - n.x, dy = ty - n.y, len = Math.hypot(dx, dy);
-    if (len > 2) {
-      const step = Math.min(len, speed * dt);
-      const nx = n.x + (dx / len) * step, ny = n.y + (dy / len) * step;
-      if (!isSolidAt(g.map, nx, n.y)) n.x = nx;
-      if (!isSolidAt(g.map, n.x, ny)) n.y = ny;
-    }
+  // --- Civiles: daño y penalización -----------------------------------------------------------------
+  damage(n, dmg, angle) {
+    const g = this.game, res = n.hurt(g, dmg, angle);
+    if (!res) return;
+    if (res.first) { this.hurtSet.add(n); g.addFloat(n.x, n.y - 22, `¡CIVIL! -${PENALTY_HURT} AL FINAL`, COLORS.blood, 1, 1.6); }
+    if (res.killed) { this.killedSet.add(n); g.addFloat(n.x, n.y - 30, `¡CIVIL ABATIDO! -${PENALTY_KILL} AL FINAL`, COLORS.blood, 1, 2); }
   }
 
-  npcSay(list, secs) {
-    const n = this.npc;
-    n.say = list[Math.floor(Math.random() * list.length)];
-    n.sayT = secs;
-    n.sayCd = secs + 3;
+  // Golpe cuerpo a cuerpo del jugador contra los civiles: puños 1 de daño, cualquier arma 2 (tienen 3 de vida). Devuelve true si golpeó a alguien.
+  meleeHit(p, def) {
+    let hit = false;
+    const dmg = p.weapon ? 2 : 1;
+    for (const n of this.npcs) {
+      if (!n.alive || !inMeleeArc(p.x, p.y, p.angle, def, n)) continue;
+      this.damage(n, dmg, p.angle);
+      hit = true;
+    }
+    return hit;
+  }
+
+  // Una bala del jugador (la bala se detiene en el civil). Devuelve true si le dio a alguien.
+  bulletHit(b) {
+    for (const n of this.npcs) {
+      if (!n.alive || segmentPointDistance(b.px, b.py, b.x, b.y, n.x, n.y) >= n.r + b.r) continue;
+      this.damage(n, 3, Math.atan2(b.vy, b.vx));
+      return true;
+    }
+    return false;
+  }
+
+  // Resumen para el final del piso: civiles heridos (no muertos), muertos y puntos que restan.
+  civilianPenalty() {
+    const killed = this.killedSet.size, hurt = this.hurtSet.size - killed;
+    return { hurt, killed, penalty: hurt * PENALTY_HURT + killed * PENALTY_KILL };
   }
 
   // --- Dibujo ------------------------------------------------------------------------------------
@@ -227,6 +244,8 @@ export class StreetLife {
       if (t.w >= t.h) pixelRect(ctx, t.x - hw, t.y - hh - 6, t.w / WORLD_PX, 3);
       else pixelRect(ctx, t.x - hw - 6, t.y - hh, 3, t.h / WORLD_PX);
     }
+    // Fogatas en tambores: llamas que bailan y un resplandor naranja que ilumina el suelo.
+    for (const f of this.fires) this.drawFire(ctx, f, px);
     // Teléfono sonando: ondas parpadeantes a los lados de la cabina.
     if (this.ringing && Math.floor(this.clock * 3) % 2 === 0) {
       const ph = this.phone;
@@ -234,39 +253,43 @@ export class StreetLife {
         for (let k = 0; k < 3; k++) px(ph.x, ph.y, side * (11 + k * 3) - 1, -2 - k, 1, 2 + k * 2, k === 2 ? '#05d9e8' : '#ffffff');
       }
     }
-    // Moneda: un destello fino que se ve mejor de cerca (está "escondida").
-    if (this.coin) {
-      const p = this.game.player, near = Math.hypot(p.x - this.coin.x, p.y - this.coin.y) < 150;
-      const tw = Math.floor(this.clock * 2.2) % 4;
-      if (near || tw === 0) {
-        const c = this.coin;
-        px(c.x, c.y, -2, -2, 4, 4, '#b38600'); px(c.x, c.y, -1, -3, 2, 1, '#ffbe0b'); px(c.x, c.y, -1, 2, 2, 1, '#ffbe0b');
-        px(c.x, c.y, -2, -2, 1, 1, '#fff6c8');
-        if (tw === 0) { px(c.x, c.y, -1, -6, 1, 2, '#ffffff'); px(c.x, c.y, -1, 5, 1, 2, '#ffffff'); px(c.x, c.y, -6, -1, 2, 1, '#ffffff'); px(c.x, c.y, 4, -1, 2, 1, '#ffffff'); }
-      }
+    // Monedas: un destello fino que se ve mejor de cerca (están "escondidas"); las que suelta el cocodrilo brillan siempre.
+    const p = this.game.player;
+    for (const c of this.coins) {
+      const near = c.temp || Math.hypot(p.x - c.x, p.y - c.y) < 150;
+      const tw = Math.floor(this.clock * 2.2 + c.x * 0.01) % 4;
+      if (!near && tw !== 0) continue;
+      px(c.x, c.y, -2, -2, 4, 4, '#b38600'); px(c.x, c.y, -1, -3, 2, 1, '#ffbe0b'); px(c.x, c.y, -1, 2, 2, 1, '#ffbe0b');
+      px(c.x, c.y, -2, -2, 1, 1, '#fff6c8');
+      if (tw === 0) { px(c.x, c.y, -1, -6, 1, 2, '#ffffff'); px(c.x, c.y, -1, 5, 1, 2, '#ffffff'); px(c.x, c.y, -6, -1, 2, 1, '#ffffff'); px(c.x, c.y, 4, -1, 2, 1, '#ffffff'); }
     }
-    if (this.npc) this.drawNpc(ctx);
+    for (const n of this.npcs) n.draw(ctx, this.clock);
   }
 
-  // Vagabundo visto desde arriba: capucha, hombros con abrigo y una manta; tiembla y abre los ojos si está asustado.
-  drawNpc(ctx) {
-    const n = this.npc;
-    const sh = n.scared ? Math.round(Math.sin(n.shiver) * 1) : 0;
-    const x = Math.round(n.x) + sh * WORLD_PX, y = Math.round(n.y);
-    const px = (ox, oy, w, h, col) => { ctx.fillStyle = col; pixelRect(ctx, x + ox * WORLD_PX, y + oy * WORLD_PX, w, h); };
-    px(-6, 3, 13, 4, 'rgba(5,0,15,0.5)');            // sombra
-    px(-6, -5, 13, 9, '#14100a');                     // contorno del abrigo
-    px(-5, -4, 11, 7, '#5a4a38'); px(-5, -4, 11, 2, '#6e5c46');
-    px(-3, 1, 7, 2, '#3a5a6a');                       // manta
-    px(-3, -8, 7, 6, '#14100a');                      // capucha
-    px(-2, -7, 5, 4, '#2a2018'); px(-2, -7, 5, 1, '#3a2c1c');
-    const fx = n.face > 0 ? 1 : -2;
-    px(fx, -6, 2, 2, '#d9a67a');                      // cara (mira hacia ti)
-    px(fx, -6, 1, 1, n.scared ? '#ffffff' : '#140a24'); // ojo
-    px(n.face > 0 ? 6 : -8, -1, 2, 3, '#d9a67a');    // mano
+  drawFire(ctx, f, px) {
+    const t = this.clock;
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.globalAlpha = 0.07 + 0.03 * Math.sin(t * 11);
+    ctx.fillStyle = '#ff7a1a'; pixelDisc(ctx, f.x / WORLD_PX, f.y / WORLD_PX, 24, WORLD_PX);
+    ctx.globalAlpha = 0.1 + 0.04 * Math.sin(t * 9 + 1);
+    ctx.fillStyle = '#ffb21a'; pixelDisc(ctx, f.x / WORLD_PX, f.y / WORLD_PX, 14, WORLD_PX);
+    ctx.restore();
+    // llamas: columnas de píxeles de altura cambiante en tres capas
+    for (let i = -3; i <= 3; i += 2) {
+      const h = 3 + Math.floor(2.5 + 2.5 * Math.sin(t * 10 + i * 1.9)) + (i === 0 ? 2 : 0);
+      px(f.x, f.y, i - 1, -3 - h, 2, h, '#ff5a1a');
+      px(f.x, f.y, i - 1, -3 - Math.max(1, h - 2), 2, Math.max(1, h - 2), '#ffb21a');
+      if (h > 4) px(f.x, f.y, i - 1, -3 - Math.floor(h / 2), 2, Math.floor(h / 2), '#fff1a0');
+    }
+    // chispas que suben
+    for (let k = 0; k < 3; k++) {
+      const ph = (t * 0.9 + k * 0.37) % 1;
+      px(f.x, f.y, Math.round(Math.sin(t * 3 + k * 2) * 4), -10 - Math.round(ph * 12), 1, 1, ph < 0.6 ? '#ffd166' : '#ff7a1a');
+    }
   }
 
-  // Pantalla: avisos de interacción, burbuja del NPC, lata activa y cuadro del teléfono.
+  // Pantalla: avisos de interacción, burbujas de los vagabundos, lata activa y cuadro del teléfono.
   drawHud(ctx, w, h) {
     const g = this.game;
     if (g.state !== 'playing' && g.state !== 'cleared') return;
@@ -285,10 +308,10 @@ export class StreetLife {
       else txt = this.ringing ? `${key} · CONTESTAR` : `${key} · TELÉFONO`;
       if (txt) label(txt, t.x, t.y - t.h / 2 - 12, t.kind === 'phone' && this.ringing ? COLORS.player : COLORS.text);
     }
-    const n = this.npc;
-    if (n && n.sayT > 0 && n.say) {
+    // Burbujas de los vagabundos (cajas enteras con margen de seguridad en los cuatro bordes).
+    for (const n of this.npcs) {
+      if (!n.alive || n.sayT <= 0 || !n.say) continue;
       const s = cam.worldToScreen(n.x, n.y - 24);
-      // La caja entera (texto + 4 px de relleno por lado) con margen de seguridad en los cuatro bordes.
       const tw = measureText(n.say), bp = g.keepOnScreen(s.x, s.y - 3, tw + 8, 13, 6);
       const bx = Math.round(bp.x - (tw + 8) / 2), by = Math.round(bp.y);
       ctx.fillStyle = 'rgba(13, 2, 33, 0.92)'; ctx.fillRect(bx, by, tw + 8, 13);
@@ -296,7 +319,7 @@ export class StreetLife {
       ctx.fillRect(bx, by, tw + 8, 1); ctx.fillRect(bx, by + 12, tw + 8, 1); ctx.fillRect(bx, by, 1, 13); ctx.fillRect(bx + tw + 7, by, 1, 13);
       drawText(ctx, n.say, bx + 4, by + 3, { color: COLORS.text, shadow: null });
     }
-    // Lata activa (arriba, al centro) o moneda guardada.
+    // Lata activa (arriba, al centro) o monedas guardadas.
     const top = 5 + g.safe.t;
     if (g.buff) {
       const k = clamp(g.buff.t / g.buff.max, 0, 1), bw = 78, bx = Math.round(w / 2 - bw / 2);

@@ -29,9 +29,9 @@ const APPROACH = [78, 100, 124];     // velocidad al acercarse por fase
 const WIND_CHARGE = [0.78, 0.62, 0.5];
 const COOL = [1.0, 0.7, 0.45];
 const BULLET_DMG = { gun: 1.5, smg: 0.6, shotgun: 0.9 };
-const MELEE_DMG = { bat: 3, pipe: 2.5, rustpipe: 2.5, knife: 2 };
+const MELEE_DMG = { bat: 3, pipe: 2.5, rustpipe: 2.5, crowbar: 3, rustknife: 2, knife: 2 };
 // Daño de la ejecución según cómo se remate (el último golpe; los previos hieren por `onWound`).
-const EXEC_DMG = { stomp: 3, smash: 3, bat: 4.5, pipe: 3.5, rustpipe: 3.5, knife: 3.5, shoot: 3.5, blast: 4.5, burst: 3 };
+const EXEC_DMG = { stomp: 3, smash: 3, bat: 4.5, pipe: 3.5, rustpipe: 3.5, crowbar: 4, rustknife: 3.5, knife: 3.5, shoot: 3.5, blast: 4.5, burst: 3 };
 const WOUND_DMG = 0.8;
 
 export class Boss extends Enemy {
