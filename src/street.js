@@ -189,6 +189,7 @@ export class StreetLife {
     } else if (t.kind === 'npc') {
       // Darle una moneda a un vagabundo: se pone feliz y agradecido y da puntos extra (una vez por persona).
       if (!t.n.gift()) return;
+      if (g.civilianRecord) g.civilianRecord.gifts++;
       this.run.coins--;
       g.score.addBonus(GIFT_POINTS);
       g.sfx.play('coin');
@@ -232,16 +233,18 @@ export class StreetLife {
   // --- Civiles: daño y penalización -----------------------------------------------------------------
   // `def` = arma con la que se golpea (las oxidadas, con `poison`, envenenan: el civil cae, agoniza y muere con sangre verde).
   damage(n, dmg, angle, def = null) {
+    const rec = this.game.civilianRecord;
     const g = this.game, poison = !!(def && def.poison);
     const res = poison ? n.poisonHit(g, angle, def.poisonTime) : n.hurt(g, dmg, angle);
     if (!res) return;
-    if (res.first) { this.hurtSet.add(n); g.addFloat(n.x, n.y - 22, `¡CIVIL${poison ? ' ENVENENADO' : ''}! -${PENALTY_HURT} AL FINAL`, COLORS.blood, 1, 1.6); }
+    if (res.first) { if (rec) rec.hurt++; this.hurtSet.add(n); g.addFloat(n.x, n.y - 22, `¡CIVIL${poison ? ' ENVENENADO' : ''}! -${PENALTY_HURT} AL FINAL`, COLORS.blood, 1, 1.6); }
     if (res.poisoned) this.startGuilt(); // herida mortal: la culpa empieza ya
   }
 
   // Un civil ha muerto (golpe, bala o veneno): penalización, culpa del jugador y pánico profundo en los demás.
   civilianDied(n) {
     const g = this.game;
+    if (g.civilianRecord) g.civilianRecord.killed++;
     this.hurtSet.add(n); this.killedSet.add(n);
     g.addFloat(n.x, n.y - 30, `¡CIVIL ABATIDO! -${PENALTY_KILL} AL FINAL`, COLORS.blood, 1, 2);
     this.startGuilt();
@@ -421,4 +424,13 @@ export class StreetLife {
       lines.forEach((l, i) => drawText(ctx, l.ln, Math.round(bx + bw / 2), by + 6 + i * 10, { color: l.head ? COLORS.player : COLORS.text, align: 'center' }));
     }
   }
+}
+
+// Base para el futuro (piso 10): ¿ayudarían, serían neutrales o estorbarían los civiles de la calle en los flancos exteriores según cómo se ha tratado a los vagabundos durante la
+// partida? `rec` = { hurt, killed, gifts } (heridos, muertos y monedas dadas). TODAS las reglas viven aquí: de momento no las usa nadie más que el debug (F1).
+export function civiliansHelp(rec) {
+  if (!rec) return 'neutral';
+  if (rec.killed >= 1 || rec.hurt >= 2) return 'hinder';
+  if (rec.gifts >= 2 && rec.hurt === 0) return 'help';
+  return 'neutral';
 }

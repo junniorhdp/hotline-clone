@@ -52,6 +52,24 @@ export class Particles {
     }
   }
 
+  // Humo suave que sube despacio (cigarrillos): gotas de polvo gris de vida larga que casi no se desplazan por los lados.
+  smoke(x, y) {
+    const life = rand(0.9, 1.5);
+    this.add({ type: 'dust', x, y, vx: rand(-8, 8), vy: -rand(10, 24), life, max: life, size: rand(2, 3) });
+  }
+
+  // Llamarada de una explosión (final del piso 10): bocanada naranja que sube y se apaga rápido.
+  fire(x, y) {
+    const life = rand(0.5, 1.2), cols = ['#ffd166', '#ff9a1a', '#ff5a1a', '#c1272d'];
+    this.add({ type: 'dust', color: cols[Math.floor(Math.random() * cols.length)], x, y, vx: rand(-46, 46), vy: -rand(14, 60), life, max: life, size: rand(2.8, 4.2) });
+  }
+
+  // Gas tóxico (piso 10): nube verde que sube y se expande despacio.
+  gas(x, y) {
+    const life = rand(1.4, 2.4);
+    this.add({ type: 'dust', color: '#7ddc3a', x, y, vx: rand(-10, 10), vy: rand(-10, 10), life, max: life, size: rand(2.5, 3.6) });
+  }
+
   // Astillas de la puerta al estamparla contra alguien (salen hacia donde gira la hoja).
   splinters(x, y, angle, count = 10) {
     for (let i = 0; i < count; i++) {
@@ -195,7 +213,7 @@ export class Particles {
         pixelRect(ctx, p.x, p.y, size, size);
         continue;
       }
-      ctx.fillStyle = p.type === 'dust' ? COLORS.dust : p.type === 'chip' ? COLORS.door : p.tox ? palOf(p.tox).blood : COLORS.blood;
+      ctx.fillStyle = p.type === 'dust' ? (p.color || COLORS.dust) : p.type === 'chip' ? COLORS.door : p.tox ? palOf(p.tox).blood : COLORS.blood;
       const size = p.size > 3 ? 2 : 1;
       pixelRect(ctx, p.x, p.y, size, size);
     }

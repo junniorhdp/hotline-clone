@@ -1,6 +1,6 @@
 import { Input } from './input.js';
-import { LEVELS, TILE, loadLevel, isSolidAt, isStructuralWall, castRay, doorHitT } from './map.js';
-import { renderFloor, renderWalls, renderProps } from './decor.js';
+import { LEVELS, TILE, loadLevel, isSolidAt, isStructuralWall, isWallTile, lineOfSight, castRay, doorHitT, findPath, moveAndSlide } from './map.js';
+import { renderFloor, renderWalls, renderProps, renderDark } from './decor.js';
 import { Score, COMBO_WINDOW } from './score.js';
 import { MASKS, maskEffects, maskIcon } from './masks.js';
 import { ScoreHistory, FloorStats, MAX_ENTRIES, INITIALS_MAX, newRunId, formatDate } from './scores-history.js';
@@ -14,17 +14,36 @@ import { Ads } from './ads.js';
 import { Sewer } from './sewer.js';
 import { BikeExit, EXIT_EXTRA } from './exits.js';
 import { StreetLife, newStreetRun } from './street.js';
+import { Hostages } from './hostages.js';
 import { weaponCategory } from './weapons.js';
 import { buildOptionsMenu, buildPauseMenu } from './options-menu.js';
 import { Player, bloodLevelFor, FINISH_RANGE } from './player.js';
-import { Enemy } from './enemy.js';
+import { Enemy, resetAiBudget } from './enemy.js';
+import { SecurityCams } from './cameras.js';
+import { ShieldGuard } from './shield.js';
+const GAS_TIME = 60;        // s hasta que el gas mata al agente atrapado en el despacho (piso 10)
+const VENT_TIME = 1.5;       // s que hay que mantener PATEAR/INTERACTUAR junto a la ventilación para romperla
+// Emboscada de la trampilla (fase final, LIMPIEZA): si al elegir el rol quedan menos de AMBUSH_MIN enemigos vivos, la trampilla se abre y salen estos refuerzos (siempre ≥ 3).
+const AMBUSH_MIN = 3;
+const DETONATE_TIME = 1.5;   // s que hay que mantener PATEAR/INTERACTUAR junto al detonador (LIMPIEZA)
+const ENDING_BLASTS = 16;    // explosiones de la secuencia final
+const AMBUSH = [{ kind: 'grunt', weapon: 'smg' }, { kind: 'grunt', weapon: 'gun' }, { kind: 'runner' }, { kind: 'heavy', weapon: 'shotgun' }];
+const FINAL_KEEP = 6;        // enemigos que quedan al reintentar la fase final con R (los 6 más lejos del despacho)
+// Oleadas del perímetro (piso 10): cada enemigo aparece por un extremo de la calle ('w' oeste, 'e' este) y va a por el jugador.
+const WAVES = [
+  [{ side: 'w', kind: 'grunt', melee: 'bat' }, { side: 'e', kind: 'grunt', weapon: 'gun' }, { side: 'w', kind: 'grunt', melee: 'pipe' }, { side: 'e', kind: 'grunt', weapon: 'gun' }],
+  [{ side: 'w', kind: 'runner' }, { side: 'e', kind: 'runner' }, { side: 'w', kind: 'heavy', weapon: 'shotgun' }, { side: 'e', kind: 'grunt', weapon: 'smg' }, { side: 'w', kind: 'shield', weapon: 'smg' }, { side: 'e', kind: 'grunt', weapon: 'smg' }],
+];
+const RUNOVER_FLIGHT = 0.7; // s que tarda el jugador atropellado en estamparse contra la «pantalla»
+const ALARM_REACH = 18; // casillas de recorrido (a través de puertas) a las que llega un grito de alerta
 import { Door, ENEMY_PUSH_SPEED } from './doors.js';
 import { Pickup, Bullet, ENEMY_WEAPONS, WEAPON_DEFS, segmentPointDistance } from './weapons.js';
 import { Particles, Footprints, GIB_COLORS, TOXIC, RED, TOXIC_GIBS, VOMIT, palOf } from './particles.js';
 import { Sfx } from './audio.js';
 import { ScreenFx } from './effects.js';
-import { drawSprite, pixelDisc, pixelRect, BLOOD_LEVELS, WORLD_PX } from './sprites.js';
+import { drawSprite, pixelDisc, pixelRect, BLOOD_LEVELS, WORLD_PX, playerBody, drawMaskHead } from './sprites.js';
 import { drawText, measureText, CELL_H } from './pixelfont.js';
+import { civiliansHelp } from './street.js';
 import { COLORS, TAU, rand, clamp, angleDiff, closestOnSegment, seededRandom, hashString } from './utils.js';
 
 const STEP = 1 / 60;       // paso fijo de simulación (60 FPS)
@@ -353,6 +372,8 @@ export class Game {
   goToLevel(index) {
     this.levelIndex = index;
     this.streetRun = newStreetRun();
+    this.civilianBase = { ...this.civilianRecord }; // el registro al entrar al piso (R lo restaura)
+    this.trapRetry = false; this.finalRetry = false; this.finalRole = null;
     this.score.startLevel();
     this.scuffleCount = 0;
     this.resetStains(); // el siguiente piso se empieza limpio: ropa y máscara sin sangre
@@ -367,6 +388,7 @@ export class Game {
 
   openMaskSelect() {
     this.state = 'masks';
+    this.maskPhase = 'main'; // 'main' | 'support' (pisos con compañero: primero la tuya y luego la de apoyo)
     this.maskIndex = MASKS.indexOf(this.mask);
     // Posición inicial del ratón: solo un movimiento real cambia la selección.
     this.maskMouse = this.mouseInternal();
@@ -374,6 +396,22 @@ export class Game {
 
   confirmMask() {
     if (!this.isMaskUnlocked(MASKS[this.maskIndex])) this.maskIndex = MASKS.findIndex((m) => this.isMaskUnlocked(m));
+    // Piso con compañero (`duo`): tras elegir la tuya se elige la MÁSCARA DE APOYO (distinta, si hay más de una desbloqueada).
+    if (LEVELS[this.levelIndex].duo) {
+      const free = MASKS.filter((m) => this.isMaskUnlocked(m)).length;
+      if (this.maskPhase !== 'support') {
+        this.mainMaskIndex = this.maskIndex;
+        this.maskPhase = 'support';
+        this.maskIndex = MASKS.findIndex((m, i) => i !== this.mainMaskIndex && this.isMaskUnlocked(m));
+        if (this.maskIndex < 0) this.maskIndex = this.mainMaskIndex;
+        this.sfx.play('pickup');
+        return;
+      }
+      if (this.maskIndex === this.mainMaskIndex && free > 1) { this.deniedMask(); return; }
+      this.partnerMaskIndex = this.maskIndex;
+      this.maskIndex = this.mainMaskIndex;
+      this.maskPhase = 'main';
+    }
     this.mask = MASKS[this.maskIndex];
     this.reset({ arrival: true });
     this.beginArrival();
@@ -425,6 +463,7 @@ export class Game {
   }
 
   pickGender(id) {
+    if (this.maskPhase === 'support' && LEVELS[this.levelIndex].duo) { this.deniedMask(); return; } // el primer protagonista ya está elegido: el equipo es mixto, el compañero es el otro
     if (this.gender === id) return;
     this.settings.set('playerGender', id); // se guarda y llama a setGender
     this.sfx.play('pickup');
@@ -487,7 +526,7 @@ export class Game {
       return [back, { ...records, x: w - 6 - s.r - records.w, y: 6 + s.t }];
     }
     if (this.state === 'dead') {
-      return row([['retry', 'REINTENTAR', 'KeyR', COLORS.player], ['end', 'TERMINAR', 'Enter', COLORS.blood],
+      return row([['retry', 'REINTENTAR', 'KeyR', COLORS.player], ['end', this.endAskActive() ? '¿SEGURO?' : 'TERMINAR', 'Escape', COLORS.blood],
         ['records', 'RÉCORDS', 'KeyT']], Math.round(h / 2) + 8);
     }
     if (this.state === 'gameover') {
@@ -550,9 +589,10 @@ export class Game {
   makeEnemy(e) {
     if (e.kind === 'boss') return new Boss(e.x, e.y);
     const weapon = e.weapon ? { type: e.weapon, ammo: ENEMY_WEAPONS[e.weapon].dropAmmo } : null;
-    const en = new Enemy(e.x, e.y, e.patrol, weapon, e.kind, e.melee);
+    const en = e.kind === 'shield' ? new ShieldGuard(e.x, e.y, e.patrol, weapon, e.melee) : new Enemy(e.x, e.y, e.patrol, weapon, e.kind, e.melee);
     // Portador: solo si su máscara aún no está desbloqueada (si no, es un enemigo normal).
     if (e.carrier && !this.settings.isMaskUnlocked(e.carrier)) en.setCarrier(e.carrier);
+    if (e.activity && e.activity !== 'patrol') en.setActivity(e.activity, e.seatAngle ?? null); // fumando, sentado o vigilando (ver placeActivities en map.js)
     return en;
   }
 
@@ -563,8 +603,9 @@ export class Game {
   }
 
   setGender(v) {
-    this.sfx.voice = v === 'female' ? 1.22 : 1;
-    if (this.player) this.player.gender = v === 'female' ? 'female' : 'male';
+    const g = v === 'female' ? 'female' : 'male';
+    for (const pl of [this.player, this.partner]) if (pl) pl.gender = pl.agentId === 'main' ? g : (g === 'female' ? 'male' : 'female'); // el compañero es el otro agente
+    this.sfx.voice = this.player && this.player.gender === 'female' ? 1.22 : 1;
   }
 
   // --- Menús modales (options-menu.js): OPCIONES y PAUSA -------------------------------------
@@ -586,6 +627,8 @@ export class Game {
   }
 
   // Reintenta el piso actual (R): los puntos vuelven a los que había al entrar.
+  endAskActive() { return performance.now() - (this.endAskAt || 0) < 3000; }
+
   restartLevel() {
     const retry = () => { this.score.restartLevel(); this.reset(); };
     // PUNTO DE ANUNCIO: tras X muertes (ads.js). Sin SDK conectado es instantáneo; con SDK el anuncio sale antes del reintento.
@@ -819,14 +862,20 @@ export class Game {
   // Al pisar la salida (con la pantalla ya en negro): resultados, Top 5 y estadísticas del piso.
   finishFloor() {
     this.state = 'results';
+    this.resultsAge = 0;
     const challenge = this.street.settle(); // reto de la cabina telefónica (suma su bonus antes del rango)
     // Penalización por civiles dañados o muertos en la calle (nunca más de los puntos del piso): también cuenta para el rango.
     const civ = this.street.civilianPenalty();
     civ.penalty = Math.min(civ.penalty, Math.max(0, this.score.levelScore));
     if (civ.penalty > 0) this.score.addBonus(-civ.penalty);
+    // Rehenes abatidos por el jugador: −2000 cada uno (los liberados ya sumaron +1500 al soltarlos).
+    const hs = this.hostages.summary();
+    hs.penalty = Math.min(hs.penalty, Math.max(0, this.score.levelScore));
+    if (hs.penalty > 0) this.score.addBonus(-hs.penalty);
     this.results = this.score.finishLevel(this.time, this.par, this.enemies.length);
     this.results.challenge = challenge;
     this.results.civilians = civ.penalty > 0 ? civ : null;
+    this.results.hostages = hs.total > 0 ? hs : null;
     this.results.last = this.levelIndex === LEVELS.length - 1;
     this.results.stats = this.statsSummary(); // el panel se queda fijo aunque luego se reinicie el estado
     // Se guarda al completar cada piso: si se cierra la pestaña, el progreso ya cuenta.
@@ -839,6 +888,8 @@ export class Game {
     this.runId = newRunId();
     this.buff = null;
     this.streetRun = newStreetRun();
+    this.civilianBase = { hurt: 0, killed: 0, gifts: 0 }; // el comportamiento con los civiles se acumula durante toda la partida
+    this.trapRetry = false; this.finalRetry = false; this.finalRole = null;
     this.score.newRun(this.history.best());
     this.resetStains();
     this.scuffleCount = 0;
@@ -903,11 +954,13 @@ export class Game {
   //    la que cruzó el umbral y la puerta ya bloqueada. R no repite la llegada: tiene que ser instantáneo.
   //  - Reintento sin haber entrado todavía: otra vez en la acera, sin cinemática.
   reset({ arrival = false } = {}) {
+    if (this.swapped) { this.swapBundles(); this.swapped = false; } // R: vuelve a controlar al primer agente con su máscara y su sangre
     // Armas aleatorias con semilla por partida y piso: al reintentar (R) todo sigue en su sitio;
     // en una partida nueva cambian.
     this.sfx.stopMoto(0.05); // R, piso nuevo...: si la moto sonaba, se corta limpia
     const level = loadLevel(this.levelIndex, seededRandom(hashString(`${this.runId}:${this.levelIndex}`)));
     this.levelName = level.name;
+    this.dark = level.dark;       // piso en penumbra (ver map.dark y renderDark)
     this.strobe = level.strobe;   // el club: luces estroboscópicas (opción `strobeEnabled`)
     this.hasBoss = level.boss;
     this.par = level.par;
@@ -916,9 +969,15 @@ export class Game {
     const start = retryInside ? level.entry : level.player;
     this.player = new Player(start.x, start.y, maskEffects(this.mask), this.mask.id, retryInside);
     this.player.gender = this.gender;
+    this.player.agentId = 'main';
+    this.sfx.voice = this.gender === 'female' ? 1.22 : 1;
     this.player.angle = -Math.PI / 2; // mira al edificio
     if (retryInside) this.player.weapon = this.entryWeapon ? { ...this.entryWeapon } : null;
     this.player.bloodLevel = this.goreOn ? bloodLevelFor(this.gore) : 0;
+    // Compañero del relevo (pisos `duo`, o con la tecla de debug P): el otro agente, quieto y vulnerable hasta que se le pasa el control.
+    this.partner = null;
+    this.duoOn = !!level.duo || !!this.debugDuo;
+    if (this.duoOn) this.makePartner(retryInside ? level.entry : level.player);
     this.spawn = { x: level.player.x, y: level.player.y }; // la acera, junto a la moto
     this.entry = level.entry;
     this.bike = { park: { x: level.bike.x, y: level.bike.y }, w: level.bike.w, h: level.bike.h, x: level.bike.x, y: level.bike.y, riding: false };
@@ -946,6 +1005,11 @@ export class Game {
     this.sewer.bind(this);
     this.guilt = null;
     this.street = new StreetLife(this); // contenedores, moneda, máquina, cabina y vagabundo de la calle
+    this.runover = null; // atropello en curso (ver runOver)
+    this.deathMsg = null; // mensaje propio de la pantalla de muerte (compañero caído)
+    this.leaveAsk = 0;   // rehenes sin rescatar de los que se avisa junto a la moto (0 = nada que avisar)
+    this.cams = new SecurityCams(this, level.cameras || []); // cámaras de seguridad y operador (piso 8)
+    this.hostages = new Hostages(this, level.hostages || []); // rehenes atados a sillas dentro del edificio (ver hostages.js)
     this.pools = [];
     // masks (selección) | arriving (llega en moto) | playing (fuera o dentro: ver `inside`) | dead |
     // cleared (despejado: vuelve a la moto) | leaving (se sube y se va) | results
@@ -967,6 +1031,7 @@ export class Game {
       this.wallLayer = walls;
       this.glowLayer = glow;
       this.propsLayer = renderProps(this.map); // muebles sólidos
+      this.darkLayer = this.map.dark ? renderDark(this.map) : null; // penumbra y charcos de neón (piso 7)
       // Sangre a media resolución: 1 píxel de la capa = 1 píxel interno en pantalla.
       this.bloodLayer = document.createElement('canvas');
       this.bloodLayer.width = this.map.pixelW / WORLD_PX;
@@ -986,6 +1051,22 @@ export class Game {
     this.wallBloodDirty = false; // hasta la primera mancha en pared ni se dibuja la capa
     this.stains = 0;             // salpicaduras permanentes de este piso (se ve en F1)
     this.camera.setBounds(this.map.pixelW, this.map.pixelH);
+    // Trampa de gas (piso 10): hasta que el primer agente entre en el despacho el compañero aún no ha llegado (`away`). Reintentar con R tras empezar la trampa
+    // vuelve a la fase 2: primer agente atrapado y gas a 45 s, control en el compañero a la entrada.
+    this.trap = level.trap ? { ...level.trap, state: 'idle', t: GAS_TIME, hold: 0, cough: 1.2, victim: null, fade: 0 } : null;
+    this.asphyx = null;
+    this.endAskAt = 0;
+    this.ending = null; this.rider = null; this.endingRide = false; this.endingDone = false; // final: detonación, huida, beso y salida en moto
+    this.destroyed = 0; this.sunset = 0; this.blasts = []; this.hearts = []; this.flashT = 0; this.detHold = 0; this.detNear = false;
+    this.hatch = level.trap && level.trap.hatch ? { ...level.trap.hatch, state: 'closed', open: 0, used: false } : null; // trampilla de la emboscada
+    this.ambush = null;
+    this.final = null; this.reunion = null; // fase final (reencuentro y rol): ver beginFinal
+    this.civilianRecord = { ...(this.civilianBase || { hurt: 0, killed: 0, gifts: 0 }) }; // los civiles vuelven a empezar con R: el registro, al de la entrada al piso
+    if (this.trap) {
+      if (this.partner) this.partner.away = true;
+      if (this.finalRetry && this.finalRole && retryInside) this.beginFinal(this.finalRole, true); // el rol elegido se conserva con R
+      else if (this.trapRetry && retryInside) this.beginTrap(true);
+    }
     this.camera.snap(this.player.x, this.player.y);
   }
 
@@ -1000,6 +1081,9 @@ export class Game {
     if (this.needsRotate) return;
     // Estas teclas funcionan siempre, incluso durante el hit-stop o muerto.
     if (input.wasPressed('F1') && this.state !== 'initials') this.debug = !this.debug;
+    // Debug (con F1 activo): P = aparece / desaparece el compañero · L = relevo de control.
+    if (this.debug && input.wasPressed('KeyP')) this.toggleDebugPartner();
+    if (this.debug && input.wasPressed('KeyL')) this.swapControl();
     const typing = this.state === 'initials'; // escribiendo la firma: M, V y F1 son letras
     if (input.wasPressed('KeyM') && !typing) this.sfx.toggleMute();
     // V: completos ↔ desactivados (si estaban en modo ligero automático, vuelve a completos).
@@ -1023,7 +1107,8 @@ export class Game {
     if ((this.state === 'masks' || this.state === 'dead') && input.wasPressed('KeyT')) this.showRecords = !this.showRecords;
     if (this.showRecords && back) { this.showRecords = false; return; }
     if (this.state === 'masks') {
-      if (back) this.transition(() => this.openMenu());
+      if (back && this.maskPhase === 'support') { this.maskPhase = 'main'; this.maskIndex = this.mainMaskIndex; this.sfx.play('empty'); } // vuelve a elegir la tuya
+      else if (back) this.transition(() => this.openMenu());
       else if (!this.showRecords) this.updateMaskSelect();
       return;
     }
@@ -1031,17 +1116,29 @@ export class Game {
     if ((this.state === 'playing' || this.state === 'cleared') && back) { this.openPause(); return; }
     // R es instantáneo a propósito (sin fundido): reintentar debe ser inmediato.
     if (input.wasPressed('KeyR')) { this.restartLevel(); return; }
-    if (this.state === 'dead' && confirm) { this.transition(() => this.endRun(false)); return; }
-
-    if (this.state === 'results') {
-      if (confirm) this.transition(() => this.advance());
+    // Terminar la partida tras morir: ESC (lejos de Espacio y Enter, que se pulsan sin querer) y hay que pulsarlo DOS veces en 3 s: así no se pierde el progreso del piso por error. R reintenta.
+    if (this.state === 'dead' && back) {
+      if (this.endAskActive()) { this.endAskAt = 0; this.transition(() => this.endRun(false)); }
+      else { this.endAskAt = performance.now(); this.sfx.play('empty'); }
       return;
     }
 
+    if (this.state === 'results') {
+      this.resultsAge += dt;
+      // Solo ENTER continúa (no Espacio, que se aprieta sin querer) y no antes de 0,8 s; en táctil, tocar inyecta Enter.
+      if ((input.wasPressed('Enter') || input.wasPressed('NumpadEnter')) && this.resultsAge > 0.8) this.transition(() => this.advance());
+      return;
+    }
+
+    if (this.state === 'ambush') { this.updateAmbush(dt); return; }
+    if (this.state === 'ending') { this.updateEnding(dt, input.down('Enter')); return; }
+    if (this.state === 'radio') { this.updateRadio(dt, confirm || input.mousePressed.left); return; }
+    if (this.state === 'reunion') { this.updateReunion(dt); return; }
+    if (this.state === 'role') { this.updateRoleSelect(); return; }
     if (this.state === 'scuffle') { this.updateScuffle(dt); return; }
 
     if (this.state === 'arriving' || this.state === 'leaving') {
-      this.updateCine(dt, confirm || input.mousePressed.left);
+      this.updateCine(dt, (confirm || input.mousePressed.left) && !this.endingRide); // la salida del final no se salta con Espacio
       return;
     }
 
@@ -1061,8 +1158,15 @@ export class Game {
     this.updateMaskDrops(dt);
     for (const f of this.floatingTexts) f.t -= dt;
     this.floatingTexts = this.floatingTexts.filter((f) => f.t > 0);
-    if (this.player.alive) this.player.update(dt, this);
+    if (this.player.alive && !this.asphyx) this.player.update(dt, this);
+    if (this.final && this.state === 'playing') this.updateFinal(dt);
+    else if (this.state === 'playing' && this.trap && this.trap.state === 'done' && this.partner && this.partner.immortal) this.updateAlly(dt); // el liberado cubre la zona hasta el reencuentro
+    if (this.partner && this.partner.alive) { this.partner.idleUpdate(dt); (this.partnerPos ||= {}).x = this.partner.x; this.partnerPos.y = this.partner.y; } // el inactivo queda donde está (también al reintentar con R)
+    this.barkCd = Math.max(0, (this.barkCd || 0) - dt);
+    if (this.map.reveal > 0) this.map.reveal -= dt;
+    resetAiBudget(this.input.touchMode); // tope de rutas y búsquedas de cobertura por fotograma (reparte el coste de las alarmas)
     for (const e of this.enemies) if (e.alive) e.update(dt, this);
+    this.cams.update(dt);
 
     this.updateDoors(dt);
     this.updateBullets(dt);
@@ -1071,6 +1175,12 @@ export class Game {
     this.prints.update(dt);
     this.sewer.update(dt, this);
     this.street.update(dt);
+    this.hostages.update(dt);
+    // Atropello: el auto de extracción en marcha arrolla al jugador que se le cruza.
+    const car = this.hostages.car;
+    if (car && this.player.alive && (this.state === 'playing' || this.state === 'cleared') && car.hits(this.player.x, this.player.y, this.player.r)) this.runOver(car);
+    if (this.runover) this.stepRunover(dt);
+    if (this.asphyx) this.stepAsphyx(dt);
     // Culpa: 3 s después de matar (o herir de muerte) a un civil, el jugador se quita la máscara y vomita (vulnerable y quieto).
     if (this.guilt) {
       const gp = this.player;
@@ -1086,7 +1196,8 @@ export class Game {
     // El bloqueo solo salta al cruzar el umbral HACIA DENTRO: y por encima del umbral Y dentro de la huella del edificio
     // (la calle de arriba y de los lados también tiene y < lockY, y ahí no se bloquea nada).
     if (this.state === 'playing' && !this.inside && this.player.alive && this.inBuilding(this.player)) this.beginLockdown();
-    if (this.state === 'playing' && this.inside && this.enemies.every((e) => !e.alive)) {
+    if (this.trap) this.updateTrap(dt);
+    if (this.state === 'playing' && this.inside && this.enemies.every((e) => !e.alive) && (!this.trap || (this.trap.state === 'done' && this.final && this.final.done))) { // con trampa: resolverla, reencontrarse y ganar la fase final antes de dar el piso por despejado
       this.state = 'cleared';
       // Se acabó la adrenalina: `setMusic('empty')` corta la música con el frenazo de cinta y
       // abre el ambiente del edificio vacío, que acompaña hasta la moto. La puerta se desbloquea.
@@ -1095,7 +1206,18 @@ export class Game {
       this.sfx.play('unlock');
       this.showCallout('PISO COMPLETADO', COLORS.player, 2.8, '¡EDIFICIO LIMPIO!'); // el objetivo (REGRESA A LA MOTO) sale al apagarse
     }
-    if (this.state === 'cleared' && this.player.alive && this.touchingBike()) this.startLeaving();
+    // Junto a la moto con el piso despejado: si no quedan rehenes atados, la fuga arranca sola; si quedan, solo se AVISA (el rescate es opcional) y el jugador decide:
+    // ESPACIO / F (BOTA en táctil) para irse igualmente, o volver a por ellos.
+    this.leaveAsk = 0;
+    if (this.trap && this.state === 'cleared') this.updateEndingTrigger(dt); // piso 10: la salida es el FINAL (detonar y huir en pareja), no volver a la moto sin más
+    if (!this.trap && this.state === 'cleared' && this.player.alive && this.touchingBike()) {
+      const miss = this.hostages.pending();
+      if (miss === 0) this.startLeaving();
+      else {
+        this.leaveAsk = miss;
+        if (this.keys.pressed('kick') || this.keys.pressed('execute')) this.startLeaving();
+      }
+    }
 
     let tx = this.player.x, ty = this.player.y;
     if (this.player.alive) {
@@ -1116,6 +1238,7 @@ export class Game {
       tx += lx;
       ty += ly;
     }
+    if (this.asphyx && this.trap && this.trap.victim) { tx = this.trap.victim.x; ty = this.trap.victim.y; } // la cámara viaja al agente que se asfixia
     this.camera.update(dt, tx, ty);
   }
 
@@ -1143,6 +1266,7 @@ export class Game {
   updateCine(dt, skip) {
     const c = this.cine, b = this.bike, p = this.player;
     c.t += dt;
+    if (this.callout && (this.callout.t -= dt) <= 0) this.callout = null; // los carteles (p. ej. FIN) también caducan durante las cinemáticas
     if (c.kind === 'arrive') {
       const end = ARRIVE_RIDE + ARRIVE_DISMOUNT;
       if (skip && c.t < end) {
@@ -1178,15 +1302,20 @@ export class Game {
         this.finishLeaving();
         return;
       }
+      this.hostages.stepExtraction(dt); // el auto de extracción arranca mientras el jugador se va en su moto
       if (c.t < LEAVE_BOARD) {
         const k = c.t / LEAVE_BOARD, e = k * k * (3 - 2 * k);
         p.x = lerp(c.from.x, b.park.x - 4, e);
         p.y = lerp(c.from.y, b.park.y, e);
         p.angle = c.from.angle + angleDiff(0, c.from.angle) * e;
+        this.hostages.rideUpdate(e, b);
+        this.rideRider(e);
       } else {
         const t2 = c.t - LEAVE_BOARD, ex = this.exit;
         b.riding = true;
         ex.place(t2, b, this);                       // trayectoria, giro y salto de la salida elegida
+        this.hostages.rideUpdate(1, b);              // el rehén (si hay uno) va detrás del protagonista
+        this.rideRider(1);                           // y, en el final, el otro agente
         const ca = Math.cos(b.angle), sa = Math.sin(b.angle);
         p.x = b.x - 4 * ca;
         p.y = b.y - 4 * sa - b.z;
@@ -1440,7 +1569,7 @@ export class Game {
     const vdef = villainDef(sc.e.kind);
     frame(px, COLORS.player); frame(ex, vdef.frame);
     // Tú: el retrato de tu máscara con la sangre que llevas (nivel 0 si la sangre está desactivada).
-    ctx.drawImage(bloodyMaskPortrait(this.mask, this.goreOn ? this.player.bloodLevel : 0, this.gender, this.maskBits), px, topY, 56, 56);
+    ctx.drawImage(bloodyMaskPortrait(this.mask, this.goreOn ? this.player.bloodLevel : 0, this.player.gender, this.maskBits), px, topY, 56, 56);
     // Él: un rostro en penumbra por tipo de enemigo; los ojos parpadean de vez en cuando.
     ctx.drawImage(villainPortrait(sc.e.kind), ex + 4, topY + 4, 48, 48);
     ctx.fillStyle = 'rgba(5, 0, 15, 0.22)';
@@ -1495,23 +1624,34 @@ export class Game {
         return { id: 'mount', label: 'MOTO', ready: true };
       }
     }
+    if (this.ventNear()) return { id: 'interact', label: 'ROMPER', ready: true };
+    if (this.detNear && this.state === 'cleared') return { id: 'interact', label: 'DETONAR', ready: true }; // piso 10: activar el detonador // piso 10: romper la ventilación (toques repetidos)
     const door = this.doors.some((d) => d.inKickRange(p.x, p.y, p.angle));
     if (door) return { id: 'kick', label: 'PATEAR', ready: true };
     // Algo de la calle con lo que interactuar (contenedor, máquina, cabina, vagabundo con moneda): enciende el botón superior (ver StreetLife.nearTarget).
-    if (this.street && (this.state === 'playing' || this.state === 'cleared') && this.street.nearTarget()) return { id: 'interact', label: 'INTERACTUAR', ready: true };
+    if ((this.state === 'playing' || this.state === 'cleared') && ((this.street && this.street.nearTarget()) || (this.hostages && this.hostages.nearTarget()))) return { id: 'interact', label: 'INTERACTUAR', ready: true };
     return { id: 'attack', label: 'ATACAR', ready: false };
   }
 
   // Edificio despejado y de vuelta en la moto: se sube y se va; al salir de la pantalla, los resultados.
-  startLeaving() {
+  startLeaving(force = false) {
+    if (this.trap && !force) return; // en el piso 10 solo se sale por el final (ver startEnding)
     // Culpa pendiente (o vomitando): el piso no se cierra hasta que el jugador haya vomitado. Si se intenta subir a la moto con la culpa en cuenta
     // atrás, el vómito empieza ya y la fuga arranca cuando termina (el jugador sigue junto a la moto).
     if (this.guilt || this.player.vomit) { if (this.guilt) this.guilt.t = 0; return; }
+    this.hostages.refresh(true); // repartir con los rehenes rescatados AHORA: 1 → moto, 2 o más → auto (ninguno en la moto)
+    // Extracción de rehenes: la fuga espera a que el rehén esté junto a la moto o a que los rehenes estén en el auto (ver Hostages.extractionBusy).
+    if (this.hostages.extractionBusy()) {
+      if (performance.now() - (this.waitHintAt || 0) > 1500) { this.waitHintAt = performance.now(); this.addFloat(this.player.x, this.player.y - 22, '¡ESPERA A LOS REHENES!', '#9be32a', 1, 1.4); }
+      return;
+    }
+    this.hostages.boardBike(); // un solo rehén liberado: se sube a la moto detrás del protagonista
     const p = this.player;
     this.state = 'leaving';
     // Salida al azar (33 % cada una): portón en la valla sur, carril lateral o salto sobre una rampa (ver exits.js). La cámara amplía sus límites
     // en esa dirección para seguir a la moto fuera del mapa.
-    this.exit = BikeExit.random(this);
+    this.exit = force ? new BikeExit('gate', this) : BikeExit.random(this); // el final sale por el portón
+    if (!this.exit.ok) this.exit = new BikeExit('lane', this);
     const m = this.map;
     this.camera.setBounds(m.pixelW + (this.exit.kind === 'lane' ? EXIT_EXTRA : 0), m.pixelH + (this.exit.kind === 'lane' ? 0 : EXIT_EXTRA));
     this.cine = { kind: 'leave', t: 0, from: { x: p.x, y: p.y, angle: p.angle } };
@@ -1548,7 +1688,7 @@ export class Game {
     this.particles.sparks(door.cx, door.cy, -Math.PI / 2, 12, 1.2);
     this.camera.addShake(8);
     this.fx.kick(0.8);
-    this.showCallout('SALIDAS BLOQUEADAS', COLORS.blood);
+    if (door.main) this.showCallout('SALIDAS BLOQUEADAS', COLORS.blood); // las puertas del despacho sellado tienen su propio cartel (¡TRAMPA!)
   }
 
   showCallout(text, color, seconds = 2.4, sub = null) {
@@ -1607,6 +1747,7 @@ export class Game {
 
       if (b.owner === 'player') {
         if (this.street.bulletHit(b)) { b.alive = false; b.hitWall = false; continue; } // civil de la calle: la bala se detiene en él
+        if (this.hostages.bulletHit(b)) { b.alive = false; b.hitWall = false; continue; } // rehén: la bala lo mata (penalización y culpa)
         for (const e of this.enemies) {
           if (!e.alive) continue;
           if (segmentPointDistance(b.px, b.py, b.x, b.y, e.x, e.y) < e.r + b.r) {
@@ -1619,6 +1760,10 @@ export class Game {
         }
       } else if (p.alive && segmentPointDistance(b.px, b.py, b.x, b.y, p.x, p.y) < p.r + b.r) {
         this.killPlayer(Math.atan2(b.vy, b.vx));
+        b.alive = false;
+        b.hitWall = false;
+      } else if (this.partner && this.partner.alive && !this.partner.away && segmentPointDistance(b.px, b.py, b.x, b.y, this.partner.x, this.partner.y) < this.partner.r + b.r) {
+        this.killPartner(Math.atan2(b.vy, b.vx)); // las balas enemigas también alcanzan al compañero inactivo
         b.alive = false;
         b.hitWall = false;
       }
@@ -1770,6 +1915,7 @@ export class Game {
   refreshGore() {
     if (!this.player) return;
     this.player.bloodLevel = this.goreOn ? bloodLevelFor(this.gore) : 0;
+    if (this.partner) this.partner.bloodLevel = this.goreOn ? bloodLevelFor(this.partnerBlood.gore) : 0;
     if (!this.goreOn) { this.prints.clear(); this.player.soles = 0; }
   }
 
@@ -1780,6 +1926,8 @@ export class Game {
     this.maskBits = [];  // por cada gota de la máscara del HUD: 1 verde, 0 roja (ver bloodyMaskPortrait)
     this.accG = 0; this.accT = 0; // lo acumulado desde el último nivel (decide el color de las manchas nuevas)
     this.soakAt = 0;
+    this.partnerBlood = { gore: 0, goreGreen: 0, maskBits: [], accG: 0, accT: 0 }; // la sangre del agente que NO se controla (se intercambia con la anterior en el relevo)
+    this.partnerPos = null; this.partnerMaskIndex = this.partnerMaskIndex ?? null;
   }
 
   // `tox`: la sangre que te mancha es verde tóxica. Las manchas nuevas de la máscara toman el color de lo que las ha causado, así que
@@ -1949,6 +2097,16 @@ export class Game {
 
   // Texto táctico flotante en el mundo (¡QUEMARROPA!, ¡DESARME!, x3…): sube unos 24 u, entra con un "pop" a doble tamaño y se
   // desvanece al final. Solo dibujo (drawFloatingTexts); no afecta a la jugabilidad.
+  // Frase de un enemigo sobre su cabeza (texto flotante). Como mucho una cada 0,9 s en toda la partida (así varios enemigos no se pisan ni hacen spam) y
+  // nunca la misma dos veces seguidas; `force` (¡CADÁVER!) se salta el límite. Solo en pantalla y con jugador vivo.
+  bark(e, text, force = false) {
+    if (!text || !this.player.alive) return;
+    if (!force && (this.barkCd > 0 || text === this.lastBark)) return;
+    this.barkCd = 0.9;
+    this.lastBark = text;
+    this.addFloat(e.x, e.y - 24, text, COLORS.enemy, 1, 1.5);
+  }
+
   addFloat(x, y, text, color = COLORS.text, scale = 1, life = 0.9) {
     if (this.floatingTexts.length > 14) this.floatingTexts.shift();
     this.floatingTexts.push({ x, y, text, color, scale, t: life, max: life });
@@ -1965,7 +2123,7 @@ export class Game {
     const cx = clamp(x, sf.l + margin + tw / 2, Math.max(sf.l + margin + tw / 2, right - tw / 2));
     let cy = clamp(y, sf.t + margin, Math.max(sf.t + margin, h - sf.b - margin - th));
     // Y esquivan el HUD de las esquinas de arriba (izquierda: arma, máscara y, en táctil, REINICIAR/PAUSA; derecha: puntos y piso): se bajan por debajo.
-    const rz = { x: w - sf.r - 134, b: 66 + sf.t }, lz = { x: sf.l + (touch ? 78 : 118), b: (touch ? 114 : 52) + sf.t };
+    const rz = { x: w - sf.r - 134, b: 66 + sf.t }, lz = { x: sf.l + (touch ? 78 : 118), b: (touch ? 84 : 52) + sf.t };
     for (let k = 0; k < 2; k++) {
       if (cx + tw / 2 > rz.x && cy < rz.b) cy = rz.b;
       if (cx - tw / 2 < lz.x && cy < lz.b) cy = lz.b;
@@ -2019,6 +2177,852 @@ export class Game {
     this.playAt('knock', e.x, e.y);
   }
 
+  // --- Compañero y relevo (pisos `duo`; ver docs/prompt-nivel-10-climax.md, tanda A) -------------------------------------------------------------------------
+  // `player` es el agente activo y `partner` el otro: queda quieto, visible y vulnerable (los enemigos lo ven y lo atacan). `swapControl` los intercambia (también
+  // su máscara y su sangre). R vuelve a empezar con el primer agente al mando y el compañero donde estaba.
+  defaultPartnerMask() {
+    const cur = MASKS.indexOf(this.mask);
+    const i = MASKS.findIndex((m, k) => k !== cur && this.isMaskUnlocked(m));
+    return i >= 0 ? i : cur;
+  }
+
+  makePartner(start) {
+    if (this.partnerMaskIndex == null) this.partnerMaskIndex = this.defaultPartnerMask();
+    this.partnerMask = MASKS[this.partnerMaskIndex];
+    const pos = this.partnerPos || { x: start.x + 26, y: start.y };
+    const t = new Player(pos.x, pos.y, maskEffects(this.partnerMask), this.partnerMask.id, true);
+    t.agentId = 'support';
+    t.gender = this.gender === 'female' ? 'male' : 'female';
+    t.angle = -Math.PI / 2;
+    t.bloodLevel = this.goreOn ? bloodLevelFor(this.partnerBlood.gore) : 0;
+    this.partner = t;
+  }
+
+  toggleDebugPartner() {
+    if (this.state !== 'playing' && this.state !== 'cleared') return;
+    if (this.partner) { this.partner = null; this.debugDuo = false; this.duoOn = false; this.addFloat(this.player.x, this.player.y - 24, 'SIN COMPAÑERO', COLORS.text, 1, 1); return; }
+    if (this.swapped) return;
+    this.debugDuo = true; this.duoOn = true; this.partnerPos = null; this.partnerMaskIndex = null;
+    this.makePartner({ x: this.player.x, y: this.player.y });
+    this.addFloat(this.partner.x, this.partner.y - 24, 'COMPAÑERO', COLORS.player, 1, 1.2);
+  }
+
+  // Intercambia la máscara y la sangre acumulada del agente activo y del compañero (el HUD y el dibujo siguen a `this.mask`/`this.gore`).
+  swapBundles() {
+    for (const k of ['gore', 'goreGreen', 'maskBits', 'accG', 'accT']) { const t = this[k]; this[k] = this.partnerBlood[k]; this.partnerBlood[k] = t; }
+    [this.mask, this.partnerMask] = [this.partnerMask, this.mask];
+  }
+
+  // Relevo: el control pasa al otro agente en un fotograma (cámara al instante, 0,25 s sin atacar para que la pulsación no se vuelva un golpe).
+  swapControl(force = false) {
+    const a = this.player, b = this.partner;
+    if (!b || !b.alive || !a.alive) return false;
+    if (!force && ((this.state !== 'playing' && this.state !== 'cleared') || a.exec || a.vomit || this.panel)) return false;
+    a.cancelExecution();
+    this.player = b; this.partner = a;
+    // Quien vuelve a ser jugador deja de ser el aliado de IA: pierde la inmortalidad y la munición infinita (queda con un cargador normal).
+    b.immortal = false;
+    if (b.weapon && b.weapon.ammo >= 9999) b.weapon = { type: b.weapon.type, ammo: WEAPON_DEFS[b.weapon.type].maxAmmo };
+    this.swapBundles();
+    this.swapped = !this.swapped;
+    b.cooldown = Math.max(b.cooldown, 0.25);
+    this.sfx.voice = b.gender === 'female' ? 1.22 : 1;
+    this.camera.snap(b.x, b.y);
+    this.addFloat(b.x, b.y - 26, `RELEVO: ${this.mask.name}`, COLORS.player, 1, 1.4);
+    this.sfx.play('pickup');
+    this.fx.kick(0.3);
+    this.touch.haptic(20);
+    return true;
+  }
+
+  // --- Fase final del piso 10 (tanda C): reencuentro, elección de rol y asalto final -----------------------------------------------------------------------
+  // El jugador (el compañero) llega hasta el agente rescatado → cinemática de REENCUENTRO → elección de ROL: LIMPIEZA (te quedas dentro con el primer agente; el compañero
+  // cubre desde la calle) o PERÍMETRO (te quedas fuera con el compañero frente a 2 oleadas; el primer agente limpia dentro). El aliado lo lleva la IA (`updateAlly`) y es inmortal.
+  agentMasks() {
+    const mainActive = this.player.agentId === 'main';
+    return { main: mainActive ? this.mask : this.partnerMask, support: mainActive ? this.partnerMask : this.mask, mainP: mainActive ? this.player : this.partner, supportP: mainActive ? this.partner : this.player };
+  }
+
+  startReunion() {
+    this.state = 'reunion';
+    this.reunion = { t: 0 };
+    const a = this.player, b = this.partner;
+    a.angle = Math.atan2(b.y - a.y, b.x - a.x); b.angle = a.angle + Math.PI;
+    this.showCallout('REENCUENTRO', COLORS.player, 2.2, '¡LO HICIMOS!');
+    this.addFloat((a.x + b.x) / 2, Math.min(a.y, b.y) - 26, '¡ESTÁS BIEN!', COLORS.player, 1, 1.8);
+    this.sfx.play('pickup');
+    this.maskMouse = this.mouseInternal();
+  }
+
+  updateReunion(dt) {
+    const R = this.reunion, a = this.player, b = this.partner;
+    R.t += dt;
+    this.callout && (this.callout.t -= dt) <= 0 && (this.callout = null);
+    for (const f of this.floatingTexts) f.t -= dt;
+    this.floatingTexts = this.floatingTexts.filter((f) => f.t > 0);
+    this.camera.update(dt, (a.x + b.x) / 2, (a.y + b.y) / 2);
+    if (R.t >= 2.4) { this.state = 'role'; this.roleIndex = 0; this.roleT = 0; this.callout = null; }
+  }
+
+  roleLayout() {
+    const w = this.scene.width, h = this.scene.height, sf = this.safe, gap = 8, cw = Math.floor((w - 24 - gap) / 2), top = 36, ch = Math.max(90, h - top - 22 - sf.b);
+    return [0, 1].map((i) => ({ x: 12 + i * (cw + gap), y: top, w: cw, h: ch }));
+  }
+
+  updateRoleSelect() {
+    const input = this.input;
+    this.roleT = (this.roleT || 0) + 1 / 60;
+    if (input.wasPressed('ArrowLeft') || input.wasPressed('KeyA')) this.roleIndex = 0;
+    if (input.wasPressed('ArrowRight') || input.wasPressed('KeyD')) this.roleIndex = 1;
+    const m = this.mouseInternal(), cards = this.roleLayout();
+    const moved = Math.hypot(m.x - this.maskMouse.x, m.y - this.maskMouse.y) > 0.5;
+    this.maskMouse = m;
+    const hov = cards.findIndex((c) => m.x >= c.x && m.x < c.x + c.w && m.y >= c.y && m.y < c.y + c.h);
+    if (hov >= 0 && moved) this.roleIndex = hov;
+    if (this.roleT < 0.5) return; // que la pulsación que cerró la cinemática no confirme sola
+    if (input.touchMode && input.mousePressed.left && hov >= 0 && hov !== this.roleIndex) { this.roleIndex = hov; return; } // táctil: el primer toque elige, el segundo confirma
+    const ok = input.wasPressed('Space') || input.wasPressed('Enter') || input.wasPressed('NumpadEnter') || (input.mousePressed.left && hov >= 0);
+    if (!ok) return;
+    if (hov >= 0 && input.mousePressed.left) this.roleIndex = hov;
+    this.chooseRole(this.roleIndex);
+  }
+
+  chooseRole(idx) {
+    this.state = 'playing';
+    this.player.cooldown = 0.3;
+    this.sfx.play('pickup');
+    this.beginFinal(idx === 0 ? 'limpieza' : 'perimetro', false);
+  }
+
+  // Empieza el asalto final con el rol elegido. `retry` (R): la trampa ya está resuelta, ambos agentes en el despacho y solo quedan los FINAL_KEEP enemigos más lejos de él.
+  beginFinal(role, retry = false) {
+    const T = this.trap;
+    if (!T || !this.partner) return;
+    if (retry) {
+      T.state = 'done'; T.fade = 0; T.t = GAS_TIME;
+      for (const d of T.doors) { const door = this.doors.find((x) => x.tx === d.tx && x.ty === d.ty); if (door) { door.locked = false; door.closing = false; door.offset = 0; door.angVel = 0; } }
+      this.partner.away = false;
+      this.player.x = T.center.x - 24; this.player.y = T.center.y; this.partner.x = T.center.x + 24; this.partner.y = T.center.y;
+      const far = this.enemies.filter((e) => e.alive).sort((p, q) => Math.hypot(q.x - T.center.x, q.y - T.center.y) - Math.hypot(p.x - T.center.x, p.y - T.center.y));
+      far.slice(FINAL_KEEP).forEach((e) => { e.alive = false; });
+      this.inside = true;
+    }
+    this.trapRetry = false;
+    this.finalRole = role; this.finalRetry = true;
+    const want = role === 'limpieza' ? 'main' : 'support';
+    if (this.player.agentId !== want) this.swapControl(true);
+    const ext = T.ext, out = role === 'limpieza' ? this.partner : this.player;
+    out.x = ext.x; out.y = ext.y; out.angle = -Math.PI / 2;
+    const ally = this.partner;
+    ally.immortal = true; ally.weapon = { type: 'smg', ammo: 9999 }; ally.fireCd = 0; ally.path = null; ally.pathT = 0;
+    this.final = { role, wave: 0, stage: 'wait', timer: 3.5, done: false, montage: null, ambushPending: false };
+    // Emboscada: solo si juegas LIMPIEZA (dentro) y al elegirlo quedan menos de AMBUSH_MIN enemigos vivos; con 3 o más no ocurre nunca (y con R, que deja 6, tampoco).
+    if (role === 'limpieza' && this.hatch && !this.hatch.used && this.enemies.filter((e) => e.alive).length < AMBUSH_MIN) this.final.ambushPending = true;
+    if (role === 'perimetro') this.supplyDrop(true); // quien defiende la calle empieza armado y con armas a mano
+    this.camera.snap(this.player.x, this.player.y);
+    this.showCallout(role === 'limpieza' ? 'LIMPIEZA' : 'PERÍMETRO', COLORS.player, 2.4, role === 'limpieza' ? 'DESPEJA EL EDIFICIO' : 'DEFIENDE LA CALLE: 2 OLEADAS');
+  }
+
+  updateFinal(dt) {
+    const F = this.final;
+    this.updateAlly(dt);
+    if (F.ambushPending) { F.ambushPending = false; this.startAmbush(); return; } // antes de comprobar si el piso está despejado
+    if (F.done) return;
+    if (F.role === 'limpieza') { if (this.enemies.every((e) => !e.alive)) F.done = true; return; }
+    // PERÍMETRO: oleadas por la calle; al caer la segunda, el compañero termina la limpieza interior
+    const waveAlive = this.enemies.some((e) => e.alive && e.wave === F.wave);
+    if (F.stage === 'wait') { F.timer -= dt; if (F.timer <= 0) this.spawnWave(1); }
+    else if (F.stage === 'fight' && !waveAlive) {
+      if (F.wave < WAVES.length) { F.stage = 'gap'; F.timer = 5; this.supplyDrop(false); this.addFloat(this.player.x, this.player.y - 26, `OLEADA ${F.wave}/${WAVES.length} DERROTADA`, COLORS.player, 1, 1.6); }
+      else { F.stage = 'secure'; F.montage = { t: 0 }; this.showCallout('PERÍMETRO ASEGURADO', COLORS.player, 2.6, 'TU COMPAÑERO TERMINA LA LIMPIEZA'); this.sfx.play('unlock'); }
+    } else if (F.stage === 'gap') { F.timer -= dt; if (F.timer <= 0) this.spawnWave(F.wave + 1); }
+    else if (F.stage === 'secure') {
+      F.montage.t -= dt;
+      if (F.montage.t <= 0) {
+        const left = this.enemies.find((e) => e.alive && !e.wave);
+        if (left) { F.montage.t = 0.3; this.killEnemy(left, Math.random() * 6.28, 'bullet'); } else F.done = true;
+      }
+    }
+  }
+
+  // Suministros en la calle junto a quien defiende el perímetro: al empezar un subfusil en la mano y escopeta, pistola, bate y subfusil por el suelo; entre oleadas, más escopeta y subfusil.
+  supplyDrop(initial) {
+    const pl = this.player;
+    if (initial && !pl.weapon) pl.weapon = { type: 'smg', ammo: 30 };
+    const types = initial ? ['shotgun', 'smg', 'gun', 'bat'] : ['shotgun', 'smg', 'smg'];
+    types.forEach((type, i) => {
+      let at = { x: pl.x, y: pl.y };
+      for (let k = 0; k < 14; k++) {
+        const a = (i / types.length) * TAU + k * 0.6, r = 42 + (k >> 2) * 14, x = pl.x + Math.cos(a) * r, y = pl.y + Math.sin(a) * r;
+        if (!isSolidAt(this.map, x, y) && !isSolidAt(this.map, x + 9, y) && !isSolidAt(this.map, x - 9, y) && !isSolidAt(this.map, x, y + 9) && !isSolidAt(this.map, x, y - 9)) { at = { x, y }; break; }
+      }
+      this.pickups.push(new Pickup(type, at.x, at.y));
+      this.particles.neon(at.x, at.y, Math.random() * TAU, 5, 3);
+    });
+    this.sfx.play('pickup');
+    this.addFloat(pl.x, pl.y - 26, '¡SUMINISTROS!', COLORS.enemy, 1, 1.6);
+  }
+
+  // --- El final del piso 10 (tanda E): detonación, huida en pareja, beso y salida en moto ------------------------------------------------------------------
+  // Con la fase final ganada (`final.done`): en LIMPIEZA el jugador activa el DETONADOR del despacho (mantener PATEAR/INTERACTUAR 1,5 s); en PERÍMETRO lo hace solo el agente
+  // interior (IA) a los 3,2 s. Entonces: el edificio estalla (16 explosiones escalonadas, la destrucción crece sobre su huella), el agente interior CORRE hasta la moto mientras el
+  // otro le espera, se encuentran (beso con zoom ×2, corazones y el edificio ardiendo detrás, la música se calma), el atardecer tiñe la pantalla y se van juntos en la moto (el
+  // otro agente va detrás) por el portón: `FIN`. Solo cinemática: no se puede perder. Mantener ENTER 1,2 s salta a la salida (Espacio no).
+  updateEndingTrigger(dt) {
+    const F = this.final, T = this.trap;
+    if (!F || !F.done || this.ending || this.endingDone) return;
+    if (F.role === 'perimetro') { F.autoT = (F.autoT ?? 3.2) - dt; if (F.autoT <= 0) this.startEnding(); return; }
+    const d = T.detonator, p = this.player;
+    this.detNear = !!(d && p.alive && Math.hypot(p.x - d.x, p.y - d.y) < 34);
+    const held = this.keys.down('kick') || this.keys.down('execute'), tap = this.keys.pressed('kick') || this.keys.pressed('execute');
+    if (this.detNear && held) this.detHold += dt;
+    else if (this.detNear && tap) this.detHold += 0.45;
+    else this.detHold = Math.max(0, this.detHold - dt * 0.8);
+    if (this.detHold >= DETONATE_TIME) this.startEnding();
+  }
+
+  startEnding() {
+    const F = this.final, T = this.trap, inter = F.role === 'limpieza';
+    const runner = inter ? this.player : this.partner, waiter = inter ? this.partner : this.player, M = T.meet;
+    this.endingDone = true; this.detNear = false; this.detHold = 0;
+    this.state = 'ending';
+    this.callout = null; this.leaveAsk = 0;
+    const path = findPath(this.map, runner.x, runner.y, M.x - 14, M.y) || [{ x: M.x - 14, y: M.y }];
+    const times = [];
+    for (let i = 0; i < ENDING_BLASTS; i++) times.push(0.9 + i * 0.42 + Math.random() * 0.25);
+    this.ending = { t: 0, phase: 'run', runner, waiter, path, blastT: times, nextBlast: 0, kissT: 0, skipHold: 0, heartT: 0 };
+    this.showCallout('¡DETONACIÓN ARMADA!', COLORS.blood, 1.8, 'CORRED HACIA LA MOTO');
+    this.sfx.play('lockdown');
+    this.sfx.setMusic('action');
+    this.camera.addShake(8);
+    this.touch.haptic([60, 40, 60]);
+  }
+
+  walkPath(a, path, speed, dt) {
+    while (path.length && Math.hypot(path[0].x - a.x, path[0].y - a.y) < 8) path.shift();
+    if (!path.length) return true;
+    const dx = path[0].x - a.x, dy = path[0].y - a.y, d = Math.hypot(dx, dy) || 1;
+    moveAndSlide(this.map, a, (dx / d) * speed * dt, (dy / d) * speed * dt);
+    a.angle = Math.atan2(dy, dx);
+    return false;
+  }
+
+  updateEnding(dt, skipKey) {
+    const E = this.ending, T = this.trap, M = T.meet, z = this.entry.zone;
+    E.t += dt;
+    E.skipHold = skipKey ? E.skipHold + dt : 0;
+    if (E.skipHold > 1.2) { this.skipEnding(); return; }
+    if (this.callout && (this.callout.t -= dt) <= 0) this.callout = null;
+    for (const f of this.floatingTexts) f.t -= dt;
+    this.floatingTexts = this.floatingTexts.filter((f) => f.t > 0);
+    this.particles.update(dt, this.map, (kind, p) => this.bake(kind, p));
+    this.flashT = Math.max(0, this.flashT - dt);
+    for (const b of this.blasts) b.t += dt;
+    this.blasts = this.blasts.filter((b) => b.t < b.max);
+    for (const h of this.hearts) { h.t += dt; h.y -= 22 * dt; }
+    this.hearts = this.hearts.filter((h) => h.t < 1.8);
+    // Explosiones escalonadas por toda la huella del edificio (las últimas, más grandes)
+    while (E.nextBlast < E.blastT.length && E.t >= E.blastT[E.nextBlast]) {
+      const size = 0.8 + (E.nextBlast / E.blastT.length) * 0.9;
+      // 6 de cada 10 estallan cerca del corredor (para que se vean y se sientan), el resto por toda la huella del edificio
+      const bx0 = z.x0 + 40, bx1 = z.x1 - 40, by0 = z.y0 + 40, by1 = this.mainDoor.cy - 24;
+      let bx, by;
+      if (E.phase === 'run' && Math.random() < 0.6) { bx = clamp(E.runner.x + rand(-130, 130), bx0, bx1); by = clamp(E.runner.y + rand(-120, 30), by0, by1); }
+      else { bx = bx0 + Math.random() * (bx1 - bx0); by = by0 + Math.random() * (by1 - by0); }
+      this.blast(bx, by, size);
+      E.nextBlast++;
+    }
+    this.destroyed = clamp((E.t - 1.6) / 9, 0, 1); // el edificio se va viniendo abajo
+    this.sunset = clamp((E.t - 2.5) / 8, 0, 1);    // y el cielo se tiñe de atardecer
+    let fx, fy;
+    if (E.phase === 'run') {
+      // Salvaguarda: si la carrera se alarga (atascado contra algo, ruta imposible), se coloca a los dos en el punto de encuentro para que la secuencia siga.
+      if (E.t > 14 && E.path.length) { E.path.length = 0; E.runner.x = M.x - 14; E.runner.y = M.y; E.waiter.x = M.x + 14; E.waiter.y = M.y; }
+      const arrived = this.walkPath(E.runner, E.path, 260, dt);
+      if (!E.runner.exec && Math.random() < 0.5) this.particles.dust(E.runner.x, E.runner.y, 1);
+      // el otro agente sale a su encuentro hasta el punto de la moto
+      const wx = M.x + 14, wy = M.y;
+      if (Math.hypot(wx - E.waiter.x, wy - E.waiter.y) > 4) { const a = Math.atan2(wy - E.waiter.y, wx - E.waiter.x); moveAndSlide(this.map, E.waiter, Math.cos(a) * 130 * dt, Math.sin(a) * 130 * dt); E.waiter.angle = a; }
+      fx = arrived ? (E.runner.x + E.waiter.x) / 2 : E.runner.x; fy = arrived ? (E.runner.y + E.waiter.y) / 2 : E.runner.y;
+      if (arrived && Math.hypot(wx - E.waiter.x, wy - E.waiter.y) < 6) { // se encuentran: el beso
+        E.phase = 'kiss'; E.kissT = 0;
+        E.runner.x = M.x - 12; E.runner.y = M.y; E.waiter.x = M.x + 12; E.waiter.y = M.y;
+        E.runner.angle = 0; E.waiter.angle = Math.PI;
+        this.camera.mulTarget = 2; // zoom ×2 (múltiplo exacto: el pixel art sigue nítido)
+        this.sfx.setMusic('menu');
+        this.callout = null;
+      }
+    } else {
+      E.kissT += dt; E.heartT -= dt;
+      fx = (E.runner.x + E.waiter.x) / 2; fy = (E.runner.y + E.waiter.y) / 2;
+      if (E.heartT <= 0) { E.heartT = 0.32; this.hearts.push({ x: fx + (Math.random() - 0.5) * 20, y: fy - 12, t: 0 }); }
+      if (E.kissT >= 3.2) { this.camera.mulTarget = 1; this.beginEndingRide(); return; }
+    }
+    this.camera.update(dt, fx, fy);
+  }
+
+  blast(x, y, size) {
+    this.blasts.push({ x, y, t: 0, max: 0.7 + size * 0.5, r: 16 + size * 18 });
+    for (let i = 0; i < 10; i++) this.particles.fire(x + rand(-12, 12), y + rand(-12, 12));
+    this.particles.sparks(x, y, Math.random() * TAU, 12, 3.14);
+    this.particles.dust(x, y, 8);
+    this.camera.addShake(5 + size * 5);
+    this.playAt('blast', x, y, 1);
+    if (size > 1.4 && this.settings.get('strobeEnabled')) this.flashT = 0.08; // el destello respeta la opción de luces estroboscópicas
+  }
+
+  skipEnding() {
+    const E = this.ending, M = this.trap.meet;
+    this.destroyed = 1; this.sunset = 1; this.blasts = []; this.hearts = [];
+    E.runner.x = M.x - 12; E.runner.y = M.y; E.waiter.x = M.x + 12; E.waiter.y = M.y;
+    this.camera.mulTarget = 1;
+    this.beginEndingRide();
+  }
+
+  // De la escena del beso a la salida: el agente que controlas conduce y el otro va detrás (rider); mismo recorrido de la fuga normal por el portón.
+  beginEndingRide() {
+    const E = this.ending;
+    this.rider = this.player === E.runner ? E.waiter : E.runner;
+    this.rider.rideFrom = { x: this.rider.x, y: this.rider.y };
+    this.ending = null;
+    this.endingRide = true;
+    this.sfx.setMusic('menu');
+    this.startLeaving(true);
+    this.showCallout('FIN', COLORS.player, 3.2, 'NEON RUSH');
+  }
+
+  rideRider(k) {
+    const r = this.rider;
+    if (!r) return;
+    const b = this.bike, a = b.angle || 0, z = b.z || 0;
+    const rx = b.x - 18 * Math.cos(a), ry = b.y - 18 * Math.sin(a) - z;
+    r.x = lerp(r.rideFrom.x, rx, k); r.y = lerp(r.rideFrom.y, ry, k);
+    r.angle = a;
+  }
+
+  // Destrucción del edificio (tinte de humo y brasas sobre su huella), bolas de fuego y corazones (en el mundo, tras las paredes).
+  drawEnding(ctx) {
+    if (!(this.destroyed > 0 || this.blasts.length || this.hearts.length)) return;
+    ctx.save();
+    if (this.destroyed > 0) {
+      const z = this.entry.zone, x0 = z.x0, y0 = z.y0, w = z.x1 - z.x0, h = this.mainDoor.cy + TILE / 2 - z.y0, k = this.destroyed, t = performance.now() / 1000;
+      ctx.fillStyle = `rgba(28,10,6,${0.55 * k})`; ctx.fillRect(x0, y0, w, h);
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.fillStyle = `rgba(255,90,20,${0.1 * k})`; ctx.fillRect(x0, y0, w, h);
+      for (let i = 0; i < 26; i++) { // brasas: posiciones fijas que parpadean
+        const hx = Math.sin(i * 91.7) * 0.5 + 0.5, hy = Math.sin(i * 47.3 + 2) * 0.5 + 0.5;
+        if (Math.sin(t * (3 + (i % 5)) + i) > 0.1 - k * 0.4) { ctx.fillStyle = i % 3 ? '#ff7a1a' : '#ffd166'; ctx.globalAlpha = 0.35 + 0.4 * k; pixelRect(ctx, x0 + hx * w, y0 + hy * h, 2, 2); }
+      }
+      ctx.globalAlpha = 1;
+    }
+    ctx.globalCompositeOperation = 'lighter';
+    for (const b of this.blasts) { // bolas de fuego que se expanden y se apagan
+      const k = b.t / b.max, r = (b.r * (0.35 + 0.9 * Math.sqrt(k))) / WORLD_PX;
+      ctx.globalAlpha = 0.34 * (1 - k); ctx.fillStyle = '#ff7a1a'; pixelDisc(ctx, b.x, b.y, r, WORLD_PX);
+      ctx.globalAlpha = 0.5 * (1 - k); ctx.fillStyle = '#ffd166'; pixelDisc(ctx, b.x, b.y, r * 0.55, WORLD_PX);
+      ctx.globalAlpha = 0.5 * (1 - k) * (1 - k); ctx.fillStyle = '#ffffff'; pixelDisc(ctx, b.x, b.y, r * 0.25, WORLD_PX);
+    }
+    ctx.globalCompositeOperation = 'source-over';
+    const HEART = ['.##.##.', '#######', '#######', '.#####.', '..###..', '...#...'];
+    for (const h of this.hearts) { // corazones que suben
+      ctx.globalAlpha = Math.max(0, 1 - h.t / 1.8);
+      HEART.forEach((row, j) => { for (let i = 0; i < 7; i++) if (row[i] === '#') { ctx.fillStyle = j < 2 && i < 3 ? '#ff8ab8' : '#ff2a85'; pixelRect(ctx, h.x + (i - 3) * WORLD_PX, h.y + j * WORLD_PX, 1, 1); } });
+    }
+    ctx.restore();
+  }
+
+  // Atardecer: bandas cálidas sobre toda la pantalla (naranja arriba, magenta abajo) y el destello corto de las explosiones grandes (solo con las luces estroboscópicas activadas).
+  drawSunset(ctx, w, h) {
+    if (this.sunset > 0) {
+      const bands = 8, bh = Math.ceil(h / bands);
+      for (let i = 0; i < bands; i++) {
+        const f = i / (bands - 1);
+        ctx.fillStyle = `rgba(${255},${Math.round(140 - 98 * f)},${Math.round(60 + 73 * f)},${(0.2 - 0.08 * f) * this.sunset})`;
+        ctx.fillRect(0, i * bh, w, bh);
+      }
+    }
+    if (this.flashT > 0) { ctx.fillStyle = `rgba(255,255,255,${0.2 * (this.flashT / 0.08)})`; ctx.fillRect(0, 0, w, h); }
+    // Pista para saltar la cinemática (mantener ENTER) con su barra
+    const E = this.ending;
+    if (E && this.state === 'ending') {
+      const txt = this.hint('MANTÉN ENTER: SALTAR', 'ESPERA...'), cx = Math.round(w / 2), y = h - CINE_BAR + 4;
+      drawText(ctx, txt, cx, y, { color: '#9d8fb8', align: 'center' });
+      if (E.skipHold > 0) { ctx.fillStyle = '#05000f'; ctx.fillRect(cx - 41, y + 10, 82, 4); ctx.fillStyle = COLORS.player; ctx.fillRect(cx - 40, y + 11, Math.round(80 * Math.min(1, E.skipHold / 1.2)), 2); }
+    }
+  }
+
+  // Aviso junto al detonador (LIMPIEZA): qué mantener y una barra de progreso.
+  drawDetonatorHud(ctx, w, h) {
+    if (!this.trap || this.state !== 'cleared' || !this.detNear || this.ending) return;
+    const d = this.trap.detonator, s = this.camera.worldToScreen(d.x, d.y + 22);
+    const msg = this.hint(`MANTÉN ${this.keys.label('kick')} · DETONAR EL EDIFICIO`, 'BOTA (TOCA VARIAS VECES) · DETONAR'), p = this.keepOnScreen(s.x, s.y, measureText(msg), 8);
+    drawText(ctx, msg, p.x, p.y, { color: COLORS.blood, align: 'center', shadow: COLORS.background });
+    if (this.detHold > 0) { const bw = 40, bx = Math.round(p.x - bw / 2), by = Math.round(p.y + 11); ctx.fillStyle = '#05000f'; ctx.fillRect(bx - 1, by - 1, bw + 2, 5); ctx.fillStyle = COLORS.blood; ctx.fillRect(bx, by, Math.round(bw * Math.min(1, this.detHold / DETONATE_TIME)), 3); }
+  }
+
+  // Cinemática de la emboscada (no se puede saltar; dura ~3,7 s y no usa destellos): la cámara va a la trampilla, que tiembla y suelta polvo; se abre de golpe y salen los refuerzos de uno en uno.
+  startAmbush() {
+    this.hatch.used = true;
+    this.callout = null; // el cartel del rol no tapa la trampilla
+    this.hatch.state = 'rumble';
+    this.state = 'ambush';
+    this.ambush = { t: 0, spawned: 0, rumbleAt: 0 };
+    this.sfx.play('lockdown');
+  }
+
+  updateAmbush(dt) {
+    const A = this.ambush, H = this.hatch;
+    A.t += dt;
+    if (this.callout && (this.callout.t -= dt) <= 0) this.callout = null;
+    for (const f of this.floatingTexts) f.t -= dt;
+    this.floatingTexts = this.floatingTexts.filter((f) => f.t > 0);
+    this.particles.update(dt, this.map, (kind, p) => this.bake(kind, p)); // el polvo y las chispas siguen moviéndose
+    this.camera.update(dt, H.x, H.y);
+    if (H.state === 'rumble') {
+      if (A.t - A.rumbleAt > 0.18) { A.rumbleAt = A.t; this.camera.addShake(1.5); this.particles.dust(H.x + (Math.random() - 0.5) * 56, H.y + (Math.random() - 0.5) * 56, 1); }
+      if (A.t >= 1.4) { // la tapa sale despedida
+        H.state = 'open'; H.open = 0;
+        this.sfx.play('unlock'); this.sfx.play('crunch');
+        this.camera.addShake(11);
+        this.particles.dust(H.x, H.y, 16);
+        this.particles.sparks(H.x, H.y, -Math.PI / 2, 14, 1.2);
+        this.showCallout('¡EMBOSCADA!', COLORS.blood, 2.4, 'REFUERZOS POR LA TRAMPILLA');
+      }
+    } else H.open = Math.min(1, H.open + dt * 4);
+    const next = 1.7 + A.spawned * 0.3;
+    if (H.state === 'open' && A.spawned < AMBUSH.length && A.t >= next) this.spawnAmbushEnemy(A.spawned++);
+    if (A.spawned >= AMBUSH.length && A.t >= 1.7 + AMBUSH.length * 0.3 + 0.9) { this.ambush = null; this.state = 'playing'; }
+  }
+
+  spawnAmbushEnemy(i) {
+    const H = this.hatch, d = AMBUSH[i], p = this.player;
+    const a = (i / AMBUSH.length) * TAU + 0.6, x = H.x + Math.cos(a) * 14, y = H.y + Math.sin(a) * 14;
+    const en = this.makeEnemy({ x, y, patrol: [{ x, y }], weapon: d.weapon || null, kind: d.kind, melee: null });
+    en.found = true; en.alarmed = true; en.state = 'chase'; en.target = { x: p.x, y: p.y }; en.attackCd = 0.8; en.ambush = true;
+    this.enemies.push(en);
+    this.particles.dust(x, y, 6);
+    this.playAt('alert', x, y, 1);
+  }
+
+  // La trampilla abierta (sobre el suelo, bajo los personajes): el hueco con una escalera, un resplandor y la tapa levantada de canto.
+  drawHatch(ctx) {
+    const H = this.hatch;
+    if (!H || H.state === 'closed') return;
+    const x0 = H.tx * TILE, y0 = H.ty * TILE;
+    ctx.save();
+    const jit = H.state === 'rumble' ? (Math.floor(performance.now() / 45) % 2 ? 1 : -1) : 0; // temblor antes de abrirse
+    if (H.state === 'open') {
+      ctx.fillStyle = '#15121f'; pixelRect(ctx, x0 + 2, y0 + 2, 30, 30);
+      ctx.fillStyle = '#02020a'; pixelRect(ctx, x0 + 4, y0 + 4, 26, 26);
+      ctx.fillStyle = '#0e0e1c'; pixelRect(ctx, x0 + 4, y0 + 4, 26, 3); pixelRect(ctx, x0 + 4, y0 + 4, 3, 26);
+      ctx.fillStyle = '#4a4a62'; for (let k = 0; k < 4; k++) pixelRect(ctx, x0 + 12, y0 + 9 + k * 5, 10, 1); // peldaños
+      ctx.fillStyle = '#3a3a52'; pixelRect(ctx, x0 + 11, y0 + 8, 1, 17); pixelRect(ctx, x0 + 22, y0 + 8, 1, 17);
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.globalAlpha = 0.16; ctx.fillStyle = '#ff7a1a'; pixelRect(ctx, x0 + 4, y0 + 4, 26, 26); // luz de abajo
+      ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1;
+      const lid = Math.max(2, Math.round(28 * (1 - H.open))); // la tapa gira sobre su bisagra (arriba): se ve cada vez más de canto
+      ctx.fillStyle = '#15121f'; pixelRect(ctx, x0 + 2, y0 - lid / 1, 30, lid + 1);
+      ctx.fillStyle = '#4e4e68'; pixelRect(ctx, x0 + 3, y0 - lid + 1, 28, lid - 1);
+      ctx.fillStyle = '#3a3a52'; pixelRect(ctx, x0 + 5, y0 - lid + 3, 24, Math.max(1, lid - 5));
+    } else { // temblor: la placa vibra y se levanta un poco por los bordes
+      ctx.fillStyle = '#15121f'; pixelRect(ctx, x0 + jit, y0, 32, 32);
+      ctx.fillStyle = '#4e4e68'; pixelRect(ctx, x0 + 1 + jit, y0 + 1, 30, 30);
+      ctx.fillStyle = '#02020a'; pixelRect(ctx, x0 + 30, y0 + 4, 2, 26); pixelRect(ctx, x0 + 4, y0 + 30, 26, 2); // rendija oscura
+    }
+    ctx.restore();
+  }
+
+  spawnWave(n) {
+    const F = this.final, p = this.player, T = this.trap, used = { w: 0, e: 0 };
+    F.wave = n; F.stage = 'fight';
+    for (const d of WAVES[n - 1]) {
+      const sp = T.spawns[d.side][used[d.side]++ % 6];
+      const en = this.makeEnemy({ x: sp.x, y: sp.y, patrol: [{ x: sp.x, y: sp.y }], weapon: d.weapon || null, kind: d.kind, melee: d.melee || null });
+      en.wave = n; en.found = true; en.alarmed = true; en.state = 'chase'; en.target = { x: p.x, y: p.y }; en.attackCd = 0.6;
+      this.enemies.push(en);
+      this.particles.dust(sp.x, sp.y, 6);
+    }
+    this.showCallout(`OLEADA ${n}/${WAVES.length}`, COLORS.blood, 2.2, '¡REFUERZOS EN LA CALLE!');
+    this.playAt('alert', p.x, p.y, 1);
+    this.camera.addShake(5);
+  }
+
+  // IA del aliado (el agente que no controlas): dispara a todo enemigo con visión a ≤ 300 u; en PERÍMETRO avanza por el edificio hacia el enemigo interior más cercano
+  // (BFS cada 0,7 s); en LIMPIEZA se queda en su puesto de la calle. Inmortal.
+  updateAlly(dt) {
+    const F = this.final, a = this.partner, map = this.map;
+    if (!a || !a.alive) return;
+    a.fireCd = Math.max(0, (a.fireCd || 0) - dt);
+    let tgt = null, bd = 300;
+    for (const e of this.enemies) {
+      if (!e.alive || e.state === 'down') continue;
+      const d = Math.hypot(e.x - a.x, e.y - a.y);
+      if (d < bd && lineOfSight(map, a.x, a.y, e.x, e.y)) { bd = d; tgt = e; }
+    }
+    if (tgt) {
+      a.angle = Math.atan2(tgt.y - a.y, tgt.x - a.x);
+      if (a.fireCd <= 0) { this.allyShoot(a); a.fireCd = 0.26; }
+    }
+    if (!F || F.role !== 'perimetro' || F.done || (tgt && bd < 150)) return; // sin fase final (liberado, antes del reencuentro): se queda en su sitio
+    let goal = null, gd = Infinity;
+    for (const e of this.enemies) if (e.alive && !e.wave) { const d = Math.hypot(e.x - a.x, e.y - a.y); if (d < gd) { gd = d; goal = e; } }
+    if (!goal) return;
+    a.pathT = (a.pathT || 0) - dt;
+    if (!a.path || a.pathT <= 0) { a.path = findPath(map, a.x, a.y, goal.x, goal.y); a.pathT = 0.7; }
+    const path = a.path;
+    if (!path) return;
+    while (path.length && Math.hypot(path[0].x - a.x, path[0].y - a.y) < 8) path.shift();
+    if (!path.length) return;
+    const dx = path[0].x - a.x, dy = path[0].y - a.y, d = Math.hypot(dx, dy) || 1;
+    moveAndSlide(map, a, (dx / d) * 130 * dt, (dy / d) * 130 * dt);
+    if (!tgt) a.angle = Math.atan2(dy, dx);
+  }
+
+  allyShoot(a) {
+    const def = WEAPON_DEFS.smg, cos = Math.cos(a.angle), sin = Math.sin(a.angle);
+    let bx = a.x + cos * 14, by = a.y + sin * 14;
+    if (isSolidAt(this.map, bx, by)) { bx = a.x; by = a.y; }
+    const bl = new Bullet(bx, by, a.angle + (Math.random() - 0.5) * def.spread * 2, def.bulletSpeed, 'player', def.range);
+    bl.src = 'smg';
+    this.bullets.push(bl);
+    this.particles.sparks(a.x + cos * 22, a.y + sin * 22, a.angle, 5, 0.45);
+    this.playAt(def.sound, a.x, a.y, 0.7);
+    a.muzzle = 0.05;
+  }
+
+  drawFinalHud(ctx, w, h) {
+    const F = this.final;
+    if (!F || this.state !== 'playing') return;
+    const cx = Math.round(w / 2), y = 38 + this.safe.t;
+    let txt;
+    if (F.role === 'limpieza') txt = 'ROL: LIMPIEZA';
+    else if (F.stage === 'wait') txt = `PERÍMETRO · OLEADA 1 EN ${Math.ceil(F.timer)}`;
+    else if (F.stage === 'gap') txt = `OLEADA ${F.wave + 1} EN ${Math.ceil(F.timer)}`;
+    else if (F.stage === 'secure') txt = 'PERÍMETRO ASEGURADO';
+    else txt = `PERÍMETRO · OLEADA ${F.wave}/${WAVES.length}`;
+    drawText(ctx, txt, cx, y, { color: COLORS.player, align: 'center', shadow: COLORS.background });
+  }
+
+  // Pantalla de ELIGE TU ROL FINAL: dos tarjetas con el agente y su máscara, el rol y lo que hace el otro.
+  drawRoleSelect(ctx, w, h) {
+    ctx.fillStyle = 'rgba(13, 2, 33, 0.88)';
+    ctx.fillRect(0, 0, w, h);
+    const cx = Math.round(w / 2), title = 'ELIGE TU ROL FINAL';
+    drawText(ctx, title, cx, 5, { color: COLORS.wall, scale: this.fitScale(title, w - 12, 2), align: 'center' });
+    drawText(ctx, 'EL OTRO AGENTE LO LLEVA LA IA (INMORTAL)', cx, 24, { color: '#9d8fb8', align: 'center' });
+    const A = this.agentMasks(), cards = this.roleLayout(), now = performance.now();
+    const name = (p) => (AGENTS[p.gender] || AGENTS.male).name;
+    const info = [
+      { role: 'LIMPIEZA', agent: A.mainP, mask: A.main, lines: ['ENTRAS A LIMPIAR EL EDIFICIO', `${name(A.supportP)} CUBRE DESDE LA CALLE`, 'GANAS AL CAER TODOS'] },
+      { role: 'PERÍMETRO', agent: A.supportP, mask: A.support, lines: ['TE QUEDAS FUERA: 2 OLEADAS', `${name(A.mainP)} LIMPIA DENTRO`, 'GANAS AL SOBREVIVIR'] },
+    ];
+    cards.forEach((c, i) => {
+      const sel = this.roleIndex === i, ag = AGENTS[info[i].agent.gender] || AGENTS.male;
+      ctx.fillStyle = sel ? ag.tint : '#140a24'; ctx.fillRect(c.x, c.y, c.w, c.h);
+      ctx.fillStyle = sel ? ag.color : '#3a2a5a';
+      ctx.fillRect(c.x, c.y, c.w, 1); ctx.fillRect(c.x, c.y + c.h - 1, c.w, 1); ctx.fillRect(c.x, c.y, 1, c.h); ctx.fillRect(c.x + c.w - 1, c.y, 1, c.h);
+      if (sel) { ctx.fillRect(c.x + 1, c.y + 1, c.w - 2, 1); }
+      const pv = { x: c.x + Math.round((c.w - 64) / 2), y: c.y + 6, w: 64, h: 64 };
+      drawAgentPreview(ctx, pv, info[i].mask.id, info[i].agent.gender, now);
+      const ty = pv.y + pv.h + 5;
+      drawText(ctx, `${ag.name} · ${info[i].mask.name}`, c.x + c.w / 2, ty, { color: sel ? ag.color : '#7d6f98', align: 'center' });
+      drawText(ctx, info[i].role, c.x + c.w / 2, ty + 11, { color: sel ? COLORS.text : '#7d6f98', scale: this.fitScale(info[i].role, c.w - 8, 2), align: 'center' });
+      info[i].lines.forEach((l, k) => drawText(ctx, l, c.x + c.w / 2, ty + 29 + k * 9, { color: sel ? '#c9bfe0' : '#5b4f78', scale: 1, align: 'center' }));
+    });
+    drawText(ctx, this.hint('FLECHAS: ELEGIR · ESPACIO / ENTER: CONFIRMAR', 'TOCA UNA TARJETA · TÓCALA DE NUEVO PARA CONFIRMAR'), cx, h - 12 - this.safe.b, { color: '#9d8fb8', align: 'center' });
+  }
+
+  civiliansHelp() { return civiliansHelp(this.civilianRecord); }
+
+  // --- Trampa de gas del piso 10 (tanda B: docs/prompt-nivel-10-climax.md) -----------------------------------------------------------------------
+  // idle → (el primer agente pisa el centro del despacho) → gas → (el compañero rompe la ventilación) → done | (tiempo 0) → failed (asfixia).
+  ventNear() {
+    const T = this.trap, p = this.player;
+    if (!T || T.state !== 'gas' || !p.alive) return false;
+    const r = T.room, tx = Math.floor(p.x / TILE), ty = Math.floor(p.y / TILE);
+    return Math.hypot(p.x - T.vent.sx, p.y - T.vent.sy) < 30 && !(tx >= r.x0 && tx <= r.x1 && ty >= r.y0 && ty <= r.y1); // fuera del despacho
+  }
+
+  beginTrap(retry = false) {
+    const T = this.trap, a = this.player, b = this.partner;
+    if (!T || T.state !== 'idle' || !b) return;
+    T.victim = a; T.hold = 0; T.cough = 1.2; T.fade = 1; T.t = GAS_TIME;
+    this.trapRetry = true;
+    for (const d of T.doors) {
+      const door = this.doors.find((x) => x.tx === d.tx && x.ty === d.ty);
+      if (!door) continue;
+      if (retry) { door.locked = true; door.closing = false; door.offset = 0; door.angVel = 0; } else door.lock(); // reintento: ya selladas
+    }
+    b.x = this.entry.x; b.y = this.entry.y; b.angle = -Math.PI / 2; // el compañero llega por la entrada del edificio
+    if (retry) { // fase 2 directa (R): sin cinemática, el gas ya corre
+      a.x = T.center.x; a.y = T.center.y;
+      b.away = false;
+      T.state = 'gas';
+      this.swapControl(true);
+      this.sfx.play('lockdown');
+      this.showTrapInstruction();
+      return;
+    }
+    // Primera vez: mini cinemática por WALKIE-TALKIE (el reloj aún no corre): el atrapado avisa a su compañero por su nombre y este responde; luego el control pasa a él.
+    T.state = 'radio';
+    b.away = false;
+    a.cancelExecution();
+    const nameA = (AGENTS[a.gender] || AGENTS.male).name, nameB = (AGENTS[b.gender] || AGENTS.male).name;
+    this.state = 'radio';
+    this.radioCine = {
+      t: 0, end: 5.0, split: 2.9, cut: false,
+      lines: [
+        { who: a, mask: this.mask, lines: [`¡${nameB}, ME HAN ENCERRADO,`, 'HAY GAS!'], from: 0.35 },
+        { who: b, mask: this.partnerMask, lines: [`¡AGUANTA, ${nameA}!`, '¡VOY PARA ALLÁ!'], from: 3.1 },
+      ],
+    };
+    this.showCallout('¡TRAMPA!', COLORS.blood, 2.2, 'GAS TÓXICO · SALA SELLADA');
+    this.camera.addShake(10);
+    this.fx.kick(0.8);
+    this.sfx.play('lockdown');
+    this.touch.haptic([60, 40, 60]);
+  }
+
+  // Cinemática de radio: el mundo congelado (salvo las puertas, que acaban de sellarse), cámara en el atrapado y luego en el compañero; Espacio/Enter/clic la salta.
+  updateRadio(dt, skip) {
+    const R = this.radioCine, a = this.trap.victim, b = this.partner;
+    const before = R.t;
+    R.t += dt;
+    this.updateDoors(dt); // los portazos terminan de cerrarse
+    if (this.callout && (this.callout.t -= dt) <= 0) this.callout = null;
+    for (const f of this.floatingTexts) f.t -= dt;
+    this.floatingTexts = this.floatingTexts.filter((f) => f.t > 0);
+    for (const L of R.lines) if (before < L.from && R.t >= L.from) { this.sfx.play('empty'); this.sfx.play('pickup', 0.6); } // chasquido de radio al empezar cada línea
+    if (!R.cut && R.t >= R.split) { R.cut = true; this.camera.snap(b.x, b.y); } // corte al compañero en la entrada
+    const f = R.cut ? b : a;
+    this.camera.update(dt, f.x, f.y);
+    if (skip && R.t > 0.8) R.t = R.end;
+    if (R.t >= R.end) this.endRadio();
+  }
+
+  endRadio() {
+    const T = this.trap;
+    this.radioCine = null;
+    T.state = 'gas'; T.t = GAS_TIME; T.hold = 0; T.cough = 1.2; T.fade = 1;
+    this.state = 'playing';
+    this.swapControl(true);
+    this.showTrapInstruction();
+  }
+
+  // Instrucción táctica para quien pasa a controlar al compañero: cartel destacado + marcador en el mapa (ver drawObjectiveMarker) + guía permanente bajo el temporizador.
+  showTrapInstruction() {
+    const T = this.trap, name = (AGENTS[(T.victim || this.partner).gender] || AGENTS.male).name;
+    this.showCallout(`¡SALVA A ${name}!`, COLORS.blood, 3.6, `ROMPE LA VENTILACIÓN · ${T.vent.face === 'e' ? 'PARED ESTE DEL DESPACHO' : 'PARED SUR DEL DESPACHO'}`);
+  }
+
+  // Rumbo y distancia hasta la ventilación desde el jugador (para la guía en pantalla).
+  ventGuide() {
+    const T = this.trap, p = this.player, dx = T.vent.sx - p.x, dy = T.vent.sy - p.y;
+    const dirs = ['ESTE', 'SURESTE', 'SUR', 'SUROESTE', 'OESTE', 'NOROESTE', 'NORTE', 'NORESTE'];
+    const dir = dirs[(Math.round(Math.atan2(dy, dx) / (Math.PI / 4)) + 8) % 8];
+    return `${dir} · ${Math.round(Math.hypot(dx, dy) / TILE)} CASILLAS`;
+  }
+
+  // Caja de diálogo del walkie-talkie (abajo, sobre las barras de cine): retrato y nombre del que habla, texto que se teclea y un walkie con la antena parpadeando.
+  drawRadioBox(ctx, w, h) {
+    const R = this.radioCine;
+    if (!R || this.state !== 'radio') return;
+    const cur = [...R.lines].reverse().find((L) => R.t >= L.from);
+    if (!cur) return;
+    const ag = AGENTS[cur.who.gender] || AGENTS.male;
+    const bh = 46, bw = Math.min(w - 20, 330), bx = Math.round((w - bw) / 2), by = h - CINE_BAR - bh - 6 - this.safe.b;
+    ctx.fillStyle = 'rgba(5, 0, 15, 0.92)'; ctx.fillRect(bx, by, bw, bh);
+    ctx.fillStyle = ag.color;
+    ctx.fillRect(bx, by, bw, 1); ctx.fillRect(bx, by + bh - 1, bw, 1); ctx.fillRect(bx, by, 1, bh); ctx.fillRect(bx + bw - 1, by, 1, bh);
+    ctx.drawImage(bloodyMaskPortrait(cur.mask, 0, cur.who.gender, []), bx + 5, by + 6, 32, 32);
+    ctx.fillStyle = ag.color; ctx.fillRect(bx + 4, by + 5, 34, 1); ctx.fillRect(bx + 4, by + 38, 34, 1); ctx.fillRect(bx + 4, by + 5, 1, 34); ctx.fillRect(bx + 37, by + 5, 1, 34);
+    drawText(ctx, `${ag.name} · RADIO`, bx + 44, by + 5, { color: ag.color });
+    // texto tecleado (30 caracteres por segundo)
+    let left = Math.floor((R.t - cur.from) * 30);
+    cur.lines.forEach((ln, i) => {
+      const part = ln.slice(0, Math.max(0, left));
+      left -= ln.length;
+      if (part) drawText(ctx, part, bx + 44, by + 17 + i * 10, { color: COLORS.text, shadow: null });
+    });
+    // walkie: cuerpo, antena y piloto que parpadea
+    const wx = bx + bw - 14, wy = by + 6;
+    ctx.fillStyle = '#14141e'; ctx.fillRect(wx, wy + 5, 8, 14);
+    ctx.fillStyle = '#6b6b85'; ctx.fillRect(wx + 1, wy + 6, 6, 12);
+    ctx.fillStyle = '#14141e'; ctx.fillRect(wx + 5, wy, 1, 6);
+    ctx.fillStyle = Math.floor(R.t * 6) % 2 ? '#ff2a4a' : '#7d3a4a'; ctx.fillRect(wx + 4, wy - 1, 3, 2);
+    if (R.t > 0.8) drawText(ctx, this.hint('ESPACIO: SALTAR', 'TOCA: SALTAR'), bx + bw - 6, by + bh - 20, { color: '#7d6f98', align: 'right' });
+  }
+
+  updateTrap(dt) {
+    const T = this.trap, p = this.player;
+    if (T.state === 'idle') {
+      const q = T.trigger, tx = Math.floor(p.x / TILE), ty = Math.floor(p.y / TILE);
+      if (this.state === 'playing' && this.inside && p.alive && p.agentId === 'main' && tx >= q.x0 && tx <= q.x1 && ty >= q.y0 && ty <= q.y1) this.beginTrap(false);
+      return;
+    }
+    if (T.state === 'done') {
+      T.fade = Math.max(0, T.fade - dt * 0.4); // el gas se disipa despacio
+      const pt = this.partner;
+      if (!this.final && !this.reunion && this.state === 'playing' && p.alive && pt && pt.alive && Math.hypot(p.x - pt.x, p.y - pt.y) < 46) this.startReunion(); // reencuentro
+      return;
+    }
+    if (T.state !== 'gas' || this.state !== 'playing') return; // el reloj corre solo jugando (se congela en forcejeos, menús y pausa: update no llega aquí)
+    const victim = T.victim;
+    if (!p.exec) T.t -= dt; // y se congela en las ejecuciones
+    // Ventilación: mantener PATEAR/INTERACTUAR junto a la pared (en táctil, 3-4 toques).
+    const near = this.ventNear();
+    const tap = this.keys.pressed('kick') || this.keys.pressed('execute');
+    const held = this.keys.down('kick') || this.keys.down('execute');
+    if (near && held) T.hold += dt;
+    else if (near && tap) T.hold += 0.4;
+    else T.hold = Math.max(0, T.hold - dt * 0.6);
+    if (near && T.hold > 0 && Math.random() < 0.5) this.particles.sparks(T.vent.sx, T.vent.sy - 14, -Math.PI / 2, 2, 0.7);
+    if (T.hold >= VENT_TIME) { this.trapSolved(); return; }
+    // Gas en el despacho y tos del agente atrapado
+    T.cough -= dt;
+    if (victim && victim.alive && T.cough <= 0) {
+      T.cough = 1.6 + Math.random() * 1.4;
+      const sc = this.camera.worldToScreen(victim.x, victim.y);
+      if (sc.x > 0 && sc.x < this.scene.width && sc.y > 0 && sc.y < this.scene.height) { // la tos solo se ve si el agente está en pantalla (si no, el texto se clavaría en el borde)
+        this.addFloat(victim.x, victim.y - 26, ['¡COF!', '¡COF, COF!', '¡AGH!'][Math.floor(Math.random() * 3)], '#9be32a', 1, 1.1);
+        this.camera.addShake(2);
+      }
+    }
+    if (Math.random() < 0.5) { const r = T.room; this.particles.gas((r.x0 + Math.random() * (r.x1 - r.x0 + 1)) * TILE, (r.y0 + Math.random() * (r.y1 - r.y0 + 1)) * TILE); }
+    if (T.t <= 0) this.trapFail();
+  }
+
+  trapSolved() {
+    const T = this.trap, left = Math.max(0, Math.round(T.t));
+    T.state = 'done'; T.fade = 1; T.hold = 0;
+    this.trapRetry = false;
+    for (const d of T.doors) { const door = this.doors.find((x) => x.tx === d.tx && x.ty === d.ty); if (door) door.unlock(); }
+    this.particles.sparks(T.vent.sx, T.vent.sy - 14, -Math.PI / 2, 24, 1.4);
+    this.particles.dust(T.vent.sx, T.vent.sy - 10, 14);
+    this.camera.addShake(14);
+    this.fx.kick(0.8);
+    this.sfx.play('unlock');
+    this.sfx.play('crunch');
+    const bonus = 1000 + left * 20;
+    this.score.addBonus(bonus);
+    this.showCallout('VENTILACIÓN ROTA', COLORS.player, 2.6, `EL GAS SE DISIPA · +${bonus}`);
+    const v = T.victim;
+    if (v && v.alive) {
+      // El agente liberado se defiende solo hasta el reencuentro: pasa a ser el aliado de IA (inmortal, subfusil sin límite, dispara a todo enemigo con visión).
+      v.immortal = true; v.weapon = { type: 'smg', ammo: 9999 }; v.fireCd = 0.4;
+      this.addFloat(v.x, v.y - 26, '¡ESTOY BIEN! ¡TE CUBRO!', COLORS.player, 1, 1.8);
+    }
+  }
+
+  // Tiempo agotado: el agente atrapado se asfixia (la cámara viaja hasta él, cae, la pantalla se apaga en verde) y sale la pantalla de muerte.
+  trapFail() {
+    const T = this.trap;
+    T.state = 'failed';
+    this.state = 'dead';
+    this.deathMsg = 'SE QUEDÓ SIN AIRE';
+    this.asphyx = { t: 0, fell: false };
+    this.camera.addShake(4);
+  }
+
+  stepAsphyx(dt) {
+    const A = this.asphyx, v = this.trap && this.trap.victim;
+    A.t += dt;
+    if (v && !A.fell && A.t >= 1.3) {
+      A.fell = true;
+      v.alive = false;
+      this.drawCorpse(v.x, v.y, 0.6, 'playerCorpse');
+      this.camera.addShake(8);
+      this.sfx.play('death');
+    }
+  }
+
+  // Gas en pantalla: tinte verde y viñeta que se cierran con el tiempo (no estorban al que controlas: el gas está en el despacho), y la cinemática de asfixia.
+  drawGas(ctx, w, h) {
+    const T = this.trap, A = this.asphyx;
+    if (!T || (T.state !== 'gas' && T.state !== 'done' && T.state !== 'failed')) return;
+    const k = T.state === 'done' ? T.fade * (1 - T.t / GAS_TIME) : T.state === 'failed' ? 1 : 1 - T.t / GAS_TIME;
+    if (k <= 0.005) return;
+    ctx.save();
+    ctx.fillStyle = `rgba(70,200,60,${0.03 + 0.14 * k})`;
+    ctx.fillRect(0, 0, w, h);
+    for (let i = 0; i < 6; i++) { // viñeta escalonada (más ancha cuanto más gas)
+      const inset = i * 3, a = (0.07 + 0.1 * k) * (1 - i / 6) * (0.5 + k);
+      ctx.fillStyle = `rgba(8,40,10,${a})`;
+      ctx.fillRect(inset, inset, w - 2 * inset, 3); ctx.fillRect(inset, h - 3 - inset, w - 2 * inset, 3);
+      ctx.fillRect(inset, inset, 3, h - 2 * inset); ctx.fillRect(w - 3 - inset, inset, 3, h - 2 * inset);
+    }
+    if (A) { ctx.fillStyle = `rgba(10,50,10,${Math.min(0.88, A.t / 2.2 * 0.88)})`; ctx.fillRect(0, 0, w, h); }
+    ctx.restore();
+  }
+
+  // Temporizador del gas (arriba al centro): cifra grande y barra; rojo y parpadeante bajo 10 s.
+  drawTrapHud(ctx, w, h) {
+    const T = this.trap;
+    if (!T || T.state !== 'gas' || this.state !== 'playing') return;
+    const cx = Math.round(w / 2), t = Math.max(0, T.t), low = t < 10, y = 38 + this.safe.t;
+    const col = low ? (Math.floor(performance.now() / 180) % 2 ? COLORS.blood : '#ffffff') : '#9be32a';
+    const txt = `GAS ${Math.ceil(t)}`;
+    drawText(ctx, txt, cx, y, { color: col, scale: 2, align: 'center', shadow: COLORS.background });
+    const bw = 90, bx = cx - bw / 2, by = y + 17;
+    ctx.fillStyle = '#05000f'; ctx.fillRect(bx - 1, by - 1, bw + 2, 6);
+    ctx.fillStyle = col; ctx.fillRect(bx, by, Math.round(bw * (t / GAS_TIME)), 4);
+    // Guía: qué hacer y hacia dónde (hasta que se llega a la ventilación)
+    if (!this.ventNear() && this.player.agentId === 'support') {
+      const nm = (AGENTS[(T.victim || this.partner).gender] || AGENTS.male).name;
+      drawText(ctx, `SALVA A ${nm}: ROMPE LA VENTILACIÓN`, cx, by + 8, { color: COLORS.enemy, align: 'center', shadow: COLORS.background });
+      drawText(ctx, `VENTILACIÓN: ${this.ventGuide()}`, cx, by + 18, { color: '#9be32a', align: 'center', shadow: COLORS.background });
+    }
+    // Aviso junto a la ventilación
+    if (this.ventNear()) {
+      const s = this.camera.worldToScreen(T.vent.sx, T.vent.sy + 20), msg = this.hint(`MANTÉN ${this.keys.label('kick')} · ROMPER VENTILACIÓN`, 'BOTA (TOCA VARIAS VECES) · ROMPER');
+      const p = this.keepOnScreen(s.x, s.y, measureText(msg), 8);
+      drawText(ctx, msg, p.x, p.y, { color: '#9be32a', align: 'center', shadow: COLORS.background });
+      if (T.hold > 0) { const bw2 = 40, bx2 = Math.round(p.x - bw2 / 2), by2 = Math.round(p.y + 11); ctx.fillStyle = '#05000f'; ctx.fillRect(bx2 - 1, by2 - 1, bw2 + 2, 5); ctx.fillStyle = '#9be32a'; ctx.fillRect(bx2, by2, Math.round(bw2 * Math.min(1, T.hold / VENT_TIME)), 3); }
+    }
+  }
+
+  // Rejilla de ventilación en la cara sur de la pared del despacho (sobre las paredes): chapa con ranuras; al romperse queda un hueco oscuro que expulsa humo.
+  drawVent(ctx) {
+    const T = this.trap;
+    if (!T) return;
+    const v = T.vent, east = v.face === 'e', broken = T.state === 'done';
+    const x = east ? v.x + TILE / 2 - 3 : v.x, y = east ? v.y : v.y + TILE / 2 - 10;
+    ctx.save();
+    if (east) { ctx.translate(x, y); ctx.rotate(-Math.PI / 2); ctx.translate(-x, -y); } // la rejilla se dibuja de lado en la cara este (mismo dibujo girado)
+    ctx.fillStyle = '#0a0a14'; pixelRect(ctx, x - 12, y - 2, 12, 6);
+    if (broken) {
+      ctx.fillStyle = '#02020a'; pixelRect(ctx, x - 10, y - 1, 10, 5);
+      ctx.fillStyle = '#3a3a52'; pixelRect(ctx, x - 12, y + 4, 3, 1); pixelRect(ctx, x + 6, y + 2, 4, 1);
+      if (Math.random() < 0.08) this.particles.smoke(east ? v.sx : x + (Math.random() - 0.5) * 12, east ? v.sy : y);
+    } else {
+      ctx.fillStyle = '#6b6b85'; pixelRect(ctx, x - 11, y - 1, 11, 5);
+      ctx.fillStyle = '#14141e'; for (let i = 0; i < 4; i++) pixelRect(ctx, x - 10, y + i, 9, 1);
+      const on = T.state === 'gas' && Math.floor(performance.now() / 300) % 2;
+      ctx.fillStyle = on ? '#7ddc3a' : '#3a3a52'; pixelRect(ctx, x + 1, y - 2, 2, 2); // piloto: parpadea mientras hay gas
+    }
+    ctx.restore();
+  }
+
+  // El compañero inactivo cae de un golpe (bala o cuerpo a cuerpo): Game Over con su propio mensaje.
+  killPartner(angle) {
+    const t = this.partner;
+    if (!t || !t.alive || t.immortal || this.state !== 'playing') return; // (en la fase final el aliado es inmortal: la IA no puede pagar su torpeza)
+    t.alive = false;
+    this.state = 'dead';
+    this.deathMsg = 'TU COMPAÑERO HA CAÍDO';
+    this.bleed(t.x, t.y, angle, 1.3, 0.7);
+    this.drawCorpse(t.x, t.y, angle, 'playerCorpse');
+    this.camera.addShake(10);
+    this.fx.kick(1);
+    this.hitstop = HITSTOP.playerDeath;
+    this.sfx.play('death');
+  }
+
+  partnerStrike(e) {
+    const t = this.partner;
+    if (t) this.killPartner(Math.atan2(t.y - e.y, t.x - e.x));
+  }
+
   killPlayer(angle) {
     if (this.state !== 'playing' || !this.player.alive) return;
     const p = this.player;
@@ -2034,6 +3038,91 @@ export class Game {
     this.hitstop = HITSTOP.playerDeath;
     this.sfx.play('death');
     this.sfx.play('grunt', 0.9);
+  }
+
+  // Atropello exagerado por el auto de extracción: el jugador sale despedido hacia la cámara, se estampa contra la «pantalla» (mancha de sangre y de
+  // máscara en el cristal, que gotea) y la pantalla de muerte lo celebra con una burla en vez de HAS MUERTO. Solo es visual y de mensaje: R reintenta como siempre.
+  runOver(car) {
+    const p = this.player;
+    p.alive = false;
+    p.cancelExecution();
+    p.vomit = null;
+    this.state = 'dead';
+    this.callout = null; // el cartel PISO COMPLETADO no tapa la burla
+    this.bleed(p.x, p.y, 0, 1.4, 1);
+    if (p.weapon) this.pickups.push(new Pickup(p.weapon.type, p.x, p.y, p.weapon.ammo));
+    const blobs = [];
+    for (let i = 0; i < 52; i++) {
+      const a = Math.random() * TAU, rr = Math.pow(Math.random(), 0.7);
+      blobs.push({ a, rr, s: 2 + Math.floor(Math.random() * 6), drip: Math.random() < 0.3 ? 8 + Math.random() * 26 : 0, tox: false });
+    }
+    const MSGS = ['ATROPELLADO POR TUS ALIADOS', 'EL RESCATE SALIÓ BIEN. PARA ELLOS', 'GRACIAS POR SALVARNOS. ¡CRUNCH!', 'TAXI... Y AL PARABRISAS', 'LOS REHENES VIVEN. TÚ NO'];
+    this.runover = { t: 0, x: p.x, y: p.y, a0: p.angle, spin: (Math.random() < 0.5 ? -1 : 1) * (7 + Math.random() * 4), blobs, hit: false, msg: MSGS[Math.floor(Math.random() * MSGS.length)] };
+    this.camera.addShake(12);
+    this.fx.kick(1);
+    this.sfx.play('death');
+    this.sfx.play('hit');
+    this.touch.haptic([40, 30, 90]);
+  }
+
+  // Avanza el vuelo (0,7 s hacia la cámara); al estamparse: sacudida, destello y crujido.
+  stepRunover(dt) {
+    const ro = this.runover;
+    ro.t += dt;
+    if (!ro.hit && ro.t >= RUNOVER_FLIGHT) {
+      ro.hit = true;
+      this.camera.addShake(22);
+      this.fx.kick(1);
+      this.sfx.play('crunch');
+      this.sfx.play('hit');
+    }
+  }
+
+  // Pantalla: el jugador (con su máscara y su ropa) crece y gira hacia la cámara; al impactar queda una mancha en el cristal con grietas, restos de
+  // máscara y regueros que resbalan despacio. Va bajo la franja de la pantalla de muerte.
+  drawRunover(ctx, w, h) {
+    const ro = this.runover;
+    if (!ro) return;
+    const s0 = this.camera.worldToScreen(ro.x, ro.y), cx = w / 2, cy = h * 0.42;
+    const k = Math.min(1, ro.t / RUNOVER_FLIGHT), e = k * k;
+    if (!ro.hit) {
+      const px = Math.round(s0.x + (cx - s0.x) * e), py = Math.round(s0.y + (cy - s0.y) * e - Math.sin(k * Math.PI) * 18);
+      const sc = 1 + e * (Math.max(w, h) / 22);
+      ctx.save();
+      ctx.translate(px, py);
+      ctx.rotate(ro.a0 + ro.spin * ro.t);
+      ctx.scale(sc / WORLD_PX, sc / WORLD_PX);
+      drawSprite(ctx, playerBody(this.mask.id, this.goreOn ? this.player.bloodLevel : 0, this.player.gender), 0, 0);
+      drawMaskHead(ctx, this.mask.id, this.goreOn ? this.player.bloodLevel : 0);
+      ctx.restore();
+      return;
+    }
+    // Impacto: destello que se apaga y la mancha en el cristal.
+    const age = ro.t - RUNOVER_FLIGHT, R = Math.min(w, h) * 0.34;
+    if (age < 0.12) { ctx.fillStyle = `rgba(255,255,255,${0.7 * (1 - age / 0.12)})`; ctx.fillRect(0, 0, w, h); }
+    // restos de la máscara (la cabeza grande aplastada contra el cristal, desvaneciéndose despacio) y de la cazadora
+    ctx.save();
+    ctx.globalAlpha = Math.max(0.25, 0.85 - age * 0.12);
+    ctx.translate(Math.round(cx), Math.round(cy + Math.min(age * 6, 14)));
+    ctx.rotate(ro.a0 + ro.spin * RUNOVER_FLIGHT);
+    const sc = 1 + (Math.max(w, h) / 22);
+    ctx.scale(sc / WORLD_PX, sc / WORLD_PX);
+    drawSprite(ctx, playerBody(this.mask.id, 0, this.player.gender), 0, 0);
+    drawMaskHead(ctx, this.mask.id, 0);
+    ctx.restore();
+    // sangre: salpicadura radial + regueros
+    for (const b of ro.blobs) {
+      const x = Math.round(cx + Math.cos(b.a) * b.rr * R), y = Math.round(cy + Math.sin(b.a) * b.rr * R);
+      ctx.fillStyle = b.rr > 0.75 ? COLORS.bloodMid : b.s > 4 ? COLORS.blood : COLORS.bloodDark;
+      ctx.fillRect(x, y, b.s, b.s);
+      if (b.drip) { const len = Math.min(b.drip, age * 5 + 2); ctx.fillStyle = COLORS.bloodDark; ctx.fillRect(x + (b.s >> 1), y + b.s, 1 + (b.s > 4 ? 1 : 0), Math.round(len)); }
+    }
+    // grietas del cristal (rayos de píxeles desde el punto de impacto)
+    ctx.fillStyle = 'rgba(220,240,255,0.55)';
+    for (let i = 0; i < 7; i++) {
+      const a = (i / 7) * TAU + 0.4, len = R * (0.7 + ((i * 37) % 10) / 14);
+      for (let d = 4; d < len; d += 3) ctx.fillRect(Math.round(cx + Math.cos(a) * d + Math.sin(d * 0.9) * 1.2), Math.round(cy + Math.sin(a) * d), 1, 1);
+    }
   }
 
   // Patada a la puerta que haya delante del jugador. Devuelve true si había puerta.
@@ -2077,10 +3166,60 @@ export class Game {
   }
 
   makeNoise(x, y, radius) {
+    // Un ruido hecho por el jugador (disparo, golpe, patada) delata su posición 0,8 s aunque esté en la sombra (ver Enemy.canSee).
+    if (this.map.dark && Math.hypot(x - this.player.x, y - this.player.y) < 6) this.map.reveal = 0.8;
     if (this.sewer) this.sewer.heard(x, y, radius);
     if (this.street) this.street.noise(x, y, radius); // los civiles de la calle oyen lo que pasa dentro (alerta indirecta)
+    // Los enemigos investigan el origen del ruido; tras una pared o una puerta cerrada se oye más apagado (radio ×0,6).
     for (const e of this.enemies) {
-      if (e.alive && Math.hypot(e.x - x, e.y - y) < radius) e.hear(x, y);
+      if (!e.alive) continue;
+      const d = Math.hypot(e.x - x, e.y - y);
+      if (d >= radius) continue;
+      if (d > radius * 0.6 && !lineOfSight(this.map, x, y, e.x, e.y)) continue;
+      e.hear(x, y);
+    }
+  }
+
+  // Alerta general (operador de cámaras): todos los enemigos vivos que no estén ya en combate, derribados o en pánico corren hacia (x, y), desfasados hasta 0,8 s
+  // para repartir las rutas (el presupuesto de BFS por fotograma hace el resto). El jefe no responde.
+  generalAlarm(x, y) {
+    for (const e of this.enemies) {
+      if (!e.alive || e.kind === 'boss') continue;
+      e.answerAlarm(x, y, Math.random() * 0.8);
+    }
+  }
+
+  // Un enemigo da la voz (te ha visto o ha encontrado un cadáver): los de las salas contiguas (hasta ALARM_REACH casillas de recorrido, atravesando
+  // puertas) se ponen en estado de combate y corren a la zona, los más lejanos un poco después. Una pasada de BFS por alarma (con enfriamiento de 5 s
+  // por enemigo), nada por fotograma.
+  raiseAlarm(src, x, y) {
+    if (src.shoutCd > 0) return;
+    if (src.kind === 'operator') { src.shoutCd = 5; this.generalAlarm(x, y); return; } // el operador que te ve da la alerta a TODO el edificio
+    src.shoutCd = 5;
+    const m = this.map, W = m.w;
+    if (!this._alarmDist || this._alarmDist.length !== W * m.h) this._alarmDist = new Int16Array(W * m.h);
+    const dist = this._alarmDist;
+    dist.fill(-1);
+    const s = Math.floor(src.y / TILE) * W + Math.floor(src.x / TILE);
+    const q = [s];
+    dist[s] = 0;
+    for (let i = 0; i < q.length; i++) {
+      const c = q[i], dc = dist[c];
+      if (dc >= ALARM_REACH) continue;
+      const cx = c % W, cy = (c / W) | 0;
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const nx = cx + dx, ny = cy + dy;
+        if (isWallTile(m, nx, ny)) continue;
+        const ni = ny * W + nx;
+        if (dist[ni] !== -1) continue;
+        dist[ni] = dc + 1;
+        q.push(ni);
+      }
+    }
+    for (const e of this.enemies) {
+      if (!e.alive || e === src || e.kind === 'boss') continue;
+      const d = dist[Math.floor(e.y / TILE) * W + Math.floor(e.x / TILE)];
+      if (d >= 0) e.answerAlarm(x, y, d * 0.03);
     }
   }
 
@@ -2279,10 +3418,13 @@ export class Game {
     if (!over) this.drawBike(ctx);
     this.drawObjectiveMarker(ctx);
     this.particles.drawGround(ctx);
+    this.cams.drawCones(ctx); // conos de las cámaras de seguridad, sobre el suelo
+    this.drawHatch(ctx); // trampilla abierta (piso 10)
     // Muebles sobre la sangre (lo que cae debajo queda oculto) y bajo los personajes.
     ctx.drawImage(this.propsLayer, 0, 0, pixelW, pixelH);
     this.sewer.draw(ctx); // sobre los muebles de la calle: la cabeza nunca queda tapada ni cortada
     this.street.draw(ctx);
+    this.hostages.draw(ctx);
     for (const e of this.enemies) if (e.alive && e.state === 'down') e.draw(ctx, this.time, this);
     this.drawExecuteMarks(ctx);
     this.drawLockMark(ctx);
@@ -2291,6 +3433,8 @@ export class Game {
     for (const b of this.bullets) b.draw(ctx);
     for (const e of this.enemies) if (e.standing) e.draw(ctx, this.time, this);
     this.drawPoison(ctx);
+    if (this.darkLayer) ctx.drawImage(this.darkLayer, 0, 0, pixelW, pixelH);
+    this.drawPartner(ctx); // penumbra: atenúa enemigos y objetos; el jugador se dibuja encima (siempre se ve)
     if (this.player.alive) {
       if (this.state === 'playing' || this.state === 'cleared') this.player.drawAim(ctx, this);
       if (!over) this.player.draw(ctx);
@@ -2305,11 +3449,17 @@ export class Game {
     ctx.globalAlpha = 1;
     ctx.drawImage(this.wallLayer, 0, 0, pixelW, pixelH);
     if (this.wallBloodDirty && this.goreOn) ctx.drawImage(this.wallBloodLayer, 0, 0, pixelW, pixelH);
+    this.cams.drawBodies(ctx); // cámaras montadas en las paredes
+    this.drawVent(ctx); // ventilación del despacho (piso 10)
+    this.drawEnding(ctx); // destrucción del edificio, bolas de fuego y corazones (final)
+    this.hostages.drawOver(ctx, performance.now() / 1000); // auto de extracción (con las aberturas de la valla por donde entra y sale)
     if (over) {
       // Encima de la valla: el portón que se abre (o la abertura del carril), y después la moto con el jugador.
       if (this.state === 'leaving' && this.exit) this.exit.drawOver(ctx);
       else if (this.state === 'arriving') BikeExit.drawArrivalGap(ctx, this);
       this.drawBike(ctx);
+      this.hostages.drawRiding(ctx); // el rehén que se sube a la moto va detrás del protagonista
+      if (this.rider && this.rider.alive) this.rider.draw(ctx); // el otro agente, en el final
       if (this.player.alive) this.player.draw(ctx);
     }
 
@@ -2317,12 +3467,30 @@ export class Game {
 
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     this.drawStrobe(ctx);
+    this.drawGas(ctx, this.scene.width, this.scene.height);
     this.drawScuffleFx(ctx);
     this.renderHud(ctx);
     this.drawScuffleUI(ctx);
     this.drawFade(ctx);
 
     this.fx.compose(this.ctx, this.scene, this.frameDt);
+  }
+
+  // El compañero inactivo: se dibuja con su máscara y su ropa, con una marca sobre la cabeza (nombre de su máscara) para distinguirlo.
+  drawPartner(ctx) {
+    const t = this.partner;
+    if (!t || !t.alive || t.away || !['playing', 'cleared', 'scuffle', 'dead', 'reunion', 'radio', 'ambush', 'ending'].includes(this.state)) return;
+    const T = this.trap, gassed = T && T.state === 'gas' && T.victim === t, k = gassed ? 1 - T.t / GAS_TIME : 0;
+    const ox = t.x;
+    if (gassed) t.x += Math.sin(performance.now() / 70) * (0.5 + k * 2.5); // tambaleo del agente atrapado en el gas
+    t.draw(ctx);
+    t.x = ox;
+    const time = performance.now() / 1000;
+    const name = this.partnerMask ? this.partnerMask.name : '';
+    if (this.state !== 'ending') drawText(ctx, name, t.x, t.y - t.r - 14, { color: '#9d8fb8', scale: WORLD_PX, align: 'center' });
+    ctx.fillStyle = COLORS.player;
+    const b = Math.round(Math.sin(time * 6)) * WORLD_PX;
+    pixelRect(ctx, t.x - 1, t.y - t.r - 8 + b, 3, 1); pixelRect(ctx, t.x, t.y - t.r - 6 + b, 1, 1); // flecha ▼ sobre el compañero
   }
 
   // Casilla de salida parpadeante + flecha alrededor del jugador apuntando hacia ella.
@@ -2366,9 +3534,15 @@ export class Game {
     if (this.state === 'playing' && !this.inside) {
       const d = this.mainDoor;
       r = { x: d.cx - TILE / 2, y: d.cy - TILE / 2, w: TILE, h: TILE, label: 'ENTRADA', below: true };
+    } else if (this.state === 'cleared' && this.trap) {
+      const d = this.trap.detonator;
+      if (d && this.final && this.final.role === 'limpieza' && !this.endingDone && !this.detNear) r = { x: d.x - TILE / 2, y: d.y - TILE / 2, w: TILE, h: TILE, label: 'DETONADOR', below: true };
     } else if (this.state === 'cleared') {
       const b = this.bike;
       r = { x: b.park.x - b.w / 2, y: b.park.y - b.h / 2, w: b.w, h: b.h, label: 'MOTO', below: false };
+    } else if (this.state === 'playing' && this.trap && this.trap.state === 'gas' && !this.ventNear()) { // piso 10: marcador sobre el punto desde el que se rompe la ventilación
+      const v = this.trap.vent;
+      r = { x: v.sx - TILE / 2, y: v.sy - TILE / 2, w: TILE, h: TILE, label: 'VENTILACIÓN', below: true };
     }
     if (!r) return;
     const blink = Math.floor(performance.now() / 250) % 2 === 0;
@@ -2392,6 +3566,7 @@ export class Game {
   }
 
   renderDebug(ctx) {
+    this.cams.drawDebug(ctx); // conos de las cámaras de seguridad (piso 8)
     for (const e of this.enemies) if (e.alive) e.drawDebug(ctx, this);
     for (const d of this.doors) d.drawDebug(ctx);
     if (this.player.alive) this.player.drawDebug(ctx);
@@ -2546,6 +3721,7 @@ export class Game {
       ['COMBO MÁXIMO', `X${r.maxCombo}`],
       ['BONUS DE TIEMPO', `+${r.timeBonus.toLocaleString('es')}`],
       ...(r.challenge ? [['RETO', r.challenge.ok ? `CUMPLIDO +${r.challenge.bonus}` : 'FALLIDO']] : []),
+      ...(r.hostages ? [['REHENES', `${r.hostages.saved}/${r.hostages.total} LIBERADOS${r.hostages.killed ? ` · ${r.hostages.killed} MUERTO${r.hostages.killed > 1 ? 'S' : ''} -${r.hostages.penalty.toLocaleString('es')}` : ''}`]] : []),
       ...(r.civilians ? [['CIVILES', `-${r.civilians.penalty.toLocaleString('es')} (${[r.civilians.hurt && `${r.civilians.hurt} HERIDO${r.civilians.hurt > 1 ? 'S' : ''}`, r.civilians.killed && `${r.civilians.killed} MUERTO${r.civilians.killed > 1 ? 'S' : ''}`].filter(Boolean).join(' · ')})`]] : []),
       ['PUNTOS DEL PISO', r.levelScore.toLocaleString('es')],
       ['PUNTUACIÓN TOTAL', r.total.toLocaleString('es')],
@@ -2576,8 +3752,8 @@ export class Game {
     }
     if (Math.floor(performance.now() / 400) % 2 === 0) {
       const prompt = r.last
-        ? this.hint('FIN DEL EDIFICIO · ESPACIO / ENTER: VER RÉCORDS', 'FIN DEL EDIFICIO · TOCA PARA VER LOS RÉCORDS')
-        : this.hint('ESPACIO / ENTER → SIGUIENTE PISO · R REPETIR', 'TOCA PARA CONTINUAR');
+        ? this.hint('FIN DEL EDIFICIO · ENTER: VER RÉCORDS', 'FIN DEL EDIFICIO · TOCA PARA VER LOS RÉCORDS')
+        : this.hint('ENTER → SIGUIENTE PISO · R REPETIR', 'TOCA PARA CONTINUAR');
       drawText(ctx, prompt, cx, y, { color: COLORS.player, align: 'center' });
     }
   }
@@ -2688,9 +3864,10 @@ export class Game {
     ctx.fillStyle = 'rgba(13, 2, 33, 0.82)';
     ctx.fillRect(0, 0, w, h);
     const cx = Math.round(w / 2);
-    const title = 'ELIGE TU MÁSCARA';
+    const title = this.maskPhase === 'support' ? 'MÁSCARA DE APOYO' : 'ELIGE TU MÁSCARA';
     drawText(ctx, title, cx, 6, { color: COLORS.wall, scale: this.fitScale(title, w - 12), align: 'center' });
-    drawText(ctx, `PRÓXIMO: ${this.levelName}`, cx, 25, { color: '#9d8fb8', align: 'center' });
+    const sup = this.maskPhase === 'support', shown = sup ? (this.gender === 'female' ? 'male' : 'female') : this.gender; // fase de apoyo: se elige para el OTRO agente
+    drawText(ctx, sup ? `${AGENTS[this.gender].name} YA ESTÁ ELEGIDO · ELIGE LA MÁSCARA DE ${AGENTS[shown].name}` : `PRÓXIMO: ${this.levelName}`, cx, 25, { color: sup ? AGENTS[shown].color : '#9d8fb8', align: 'center' });
     // Atajos de la esquina (en táctil son los botones VOLVER y RÉCORDS)
     if (!this.input.touchMode && w >= 340) {
       drawText(ctx, 'ESC: MENÚ', 6 + this.safe.l, 6 + this.safe.t, { color: '#7d6f98' });
@@ -2732,7 +3909,7 @@ export class Game {
 
     // Selector de agente: cada botón lleva su símbolo (♂ / ♀) y su neón (JACK cian, VEX magenta) cuando está activo.
     for (const b of genders) {
-      const ag = AGENTS[b.id], on = this.gender === b.id;
+      const ag = AGENTS[b.id], on = shown === b.id, locked = sup && b.id === this.gender; // bloqueado: el primer protagonista ya elegido
       ctx.save();
       if (on) { ctx.shadowColor = ag.color; ctx.shadowBlur = 9; }
       ctx.fillStyle = on ? ag.color : '#3a2a55';
@@ -2742,17 +3919,21 @@ export class Game {
       ctx.fillRect(b.x + 1, b.y + 1, b.w - 2, b.h - 2);
       drawGenderIcon(ctx, b.x + 7, b.y + Math.round((b.h - 9) / 2), b.id, on ? ag.color : '#7d6f98');
       drawText(ctx, ag.name, b.x + 20 + Math.round((b.w - 22) / 2), b.y + Math.round((b.h - CELL_H) / 2), { color: on ? COLORS.text : '#7d6f98', align: 'center' });
+      if (locked) { // opción deshabilitada: oscurecida con candado
+        ctx.fillStyle = 'rgba(5, 0, 15, 0.62)'; ctx.fillRect(b.x, b.y, b.w, b.h);
+        drawPadlock(ctx, b.x + b.w - 14, b.y + Math.round((b.h - 16) / 2), '#7d6f98', 2);
+      }
     }
 
     // Vista previa en vivo (agente + máscara elegidos) y la ficha de la máscara a su derecha.
     const mask = MASKS[this.maskIndex], now = performance.now() / 1000;
-    drawAgentPreview(ctx, preview, mask.id, this.gender, now);
+    drawAgentPreview(ctx, preview, mask.id, shown, now);
     if (!this.isMaskUnlocked(mask)) {
       ctx.fillStyle = 'rgba(5, 0, 15, 0.7)';
       ctx.fillRect(preview.x + 1, preview.y + 1, preview.w - 2, preview.h - 2);
       drawPadlock(ctx, Math.round(preview.x + preview.w / 2 - 10), Math.round(preview.y + preview.h / 2 - 12), COLORS.player, 3);
     }
-    drawText(ctx, AGENTS[this.gender].name, preview.x + 5, preview.y + preview.h - 11, { color: AGENTS[this.gender].color }); // rótulo dentro del visor
+    drawText(ctx, AGENTS[shown].name, preview.x + 5, preview.y + preview.h - 11, { color: AGENTS[shown].color }); // rótulo dentro del visor
     let y = preview.y + 2;
     const maskLocked = !this.isMaskUnlocked(mask);
     drawText(ctx, mask.name, descCx, y, { color: maskLocked ? '#7d6f98' : COLORS.player, scale: 2, align: 'center' });
@@ -2854,12 +4035,14 @@ export class Game {
   // flecha parpadeante y borde que late). Solo sale cuando el cartel grande ya se ha ido.
   drawGoalPanel(ctx, w, h) {
     if (this.state !== 'cleared' || this.callout) return;
-    const text = 'REGRESA A LA MOTO';
+    const text = this.trap ? (this.final && this.final.role === 'limpieza' ? 'ACTIVA EL DETONADOR · DESPACHO' : null) : 'REGRESA A LA MOTO'; // piso 10: el objetivo es detonar
+    if (!text) return;
     const e = 1 - Math.pow(1 - clamp(this.goalAge / 0.3, 0, 1), 3);
-    const scale = this.fitScale(text, w - 60, 2);
+    const colX = this.input.touchMode ? this.touch.rightColumn().x : w; // en táctil, el panel se queda a la izquierda de la columna de botones
+    const scale = this.fitScale(text, colX - 60, 2);
     const tw = measureText(text) * scale, th = CELL_H * scale;
     const pw = tw + 34, ph = th + 12;
-    const x = Math.round(w / 2 - pw / 2);
+    const x = Math.round(colX / 2 - pw / 2);
     // En escritorio, por encima de la línea de controles de abajo (dos filas de texto).
     const bottom = this.input.touchMode ? 10 : 10 + 2 * (CELL_H + 2);
     const y = Math.round(h - this.safe.b - bottom - ph + (1 - e) * (ph + 14 + bottom));
@@ -2941,6 +4124,13 @@ export class Game {
       this.drawCrosshair(ctx);
       return;
     }
+    if (this.state === 'role') { // elección de rol final: pantalla completa, sin HUD debajo
+      this.drawRoleSelect(ctx, w, h);
+      this.drawToast(ctx);
+      this.drawPanel(ctx, w, h);
+      this.drawCrosshair(ctx);
+      return;
+    }
     if (this.state === 'initials') {
       this.drawInitials(ctx, w, h);
       this.drawPanel(ctx, w, h);
@@ -2957,6 +4147,14 @@ export class Game {
     this.drawPopups(ctx);
     this.drawFloatingTexts(ctx);
     this.street.drawHud(ctx, w, h);
+    this.hostages.drawHud(ctx, w, h);
+    this.hostages.drawLeaveAsk(ctx, w, h);
+    this.drawTrapHud(ctx, w, h);
+    this.drawFinalHud(ctx, w, h);
+    this.drawDetonatorHud(ctx, w, h);
+    this.drawSunset(ctx, w, h);
+    if (this.state === 'reunion' || this.state === 'radio' || this.state === 'ambush' || this.state === 'ending') { ctx.fillStyle = '#05000f'; ctx.fillRect(0, 0, w, CINE_BAR); ctx.fillRect(0, h - CINE_BAR, w, CINE_BAR); } // barras de cine durante el reencuentro y la radio
+    this.drawRadioBox(ctx, w, h);
     this.drawExecutePrompt(ctx);
     const boss = this.enemies.find((e) => e.kind === 'boss' && e.alive && e.awake);
     if (boss && this.state !== 'cleared') drawBossBar(ctx, boss, w, 32 + this.safe.t);
@@ -2981,6 +4179,16 @@ export class Game {
       ctx.fillRect(L + 28 + i * 6, 34 + T, 4, 3);
     }
     if (p.noAmmoFlash > 0) drawText(ctx, 'SIN MUNICIÓN', L + 28, 37 + T, { color: COLORS.blood });
+    // Compañero del relevo: mini retrato (apagado: el activo es el grande) y el nombre de su máscara. Debajo del retrato (PC) o a su derecha (táctil: ahí va REINICIAR).
+    if (this.partner) {
+      const tl = this.input.touchMode, px = tl ? L + 66 : L, py = tl ? 24 + T : 52 + T;
+      ctx.fillStyle = this.partner.alive ? '#140a24' : '#3a0a14'; ctx.fillRect(px - 1, py - 1, 16, 16);
+      ctx.globalAlpha = this.partner.alive ? 0.9 : 0.35;
+      ctx.drawImage(bloodyMaskPortrait(this.partnerMask, this.goreOn ? this.partner.bloodLevel : 0, 'male', this.partnerBlood.maskBits), px, py, 14, 14);
+      ctx.globalAlpha = 1;
+      drawText(ctx, !this.partner.alive ? 'CAÍDO' : this.partner.away ? 'EN CAMINO' : this.trap && this.trap.state === 'gas' && this.trap.victim === this.partner ? 'ATRAPADO' : 'APOYO', px + (tl ? 0 : 18), py + (tl ? 17 : 1), { color: this.partner.alive ? '#7d6f98' : COLORS.blood });
+      if (!tl) drawText(ctx, this.partnerMask.name, px + 18, py + 9, { color: '#5b4f78' });
+    }
 
     const alive = this.enemies.filter((e) => e.alive).length;
     drawText(ctx, `ENEMIGOS ${alive}/${this.enemies.length}`, R, 4 + T, { color: COLORS.enemy, align: 'right' });
@@ -3004,7 +4212,7 @@ export class Game {
 
     if (this.debug) {
       drawText(ctx, `DEBUG · ${this.fps} FPS · BALAS ${this.bullets.length} · PART ${this.particles.list.length} · CASQ ${this.particles.shells.length}`, L, 54 + T, { color: COLORS.debug });
-      drawText(ctx, `ESCENA ${w}X${h} · ESCALA ${this.view.scale} · MÁSCARA ${this.mask.id} · MANCHAS ${this.stains} · SANGRE ${this.player.bloodLevel} (${this.gore.toFixed(1)}) · PISADAS ${this.prints.list.length} · SUELAS ${this.player.soles} · ${this.inside ? 'DENTRO' : 'FUERA'} PUERTA ${this.mainDoor.locked ? 'BLOQUEADA' : this.mainDoor.closing ? 'CERRANDO' : 'LIBRE'}`, L, 65 + T, { color: COLORS.debug });
+      drawText(ctx, `ESCENA ${w}X${h} · ESCALA ${this.view.scale} · MÁSCARA ${this.mask.id} · MANCHAS ${this.stains} · SANGRE ${this.player.bloodLevel} (${this.gore.toFixed(1)}) · PISADAS ${this.prints.list.length} · SUELAS ${this.player.soles} · CIVILES ${this.civilianRecord.hurt}/${this.civilianRecord.killed}/${this.civilianRecord.gifts} ${this.civiliansHelp()} · ${this.inside ? 'DENTRO' : 'FUERA'} PUERTA ${this.mainDoor.locked ? 'BLOQUEADA' : this.mainDoor.closing ? 'CERRANDO' : 'LIBRE'}`, L, 65 + T, { color: COLORS.debug });
     }
 
     const cx = Math.round(w / 2);
@@ -3026,16 +4234,21 @@ export class Game {
       ctx.fillStyle = '#05000f';
       ctx.fillRect(0, 0, w, CINE_BAR);
       ctx.fillRect(0, h - CINE_BAR, w, CINE_BAR);
-      drawText(ctx, this.hint('ESPACIO · CLIC: SALTAR', 'TOCA: SALTAR'), cx, h - CINE_BAR + 4, { color: '#9d8fb8', align: 'center' });
+      if (!this.endingRide) drawText(ctx, this.hint('ESPACIO · CLIC: SALTAR', 'TOCA: SALTAR'), cx, h - CINE_BAR + 4, { color: '#9d8fb8', align: 'center' }); // la salida del final no se salta
     }
-    if (this.state === 'dead') {
+    if (this.state === 'dead') this.drawRunover(ctx, w, h);
+    if (this.state === 'dead' && !(this.asphyx && this.asphyx.t < 2.6)) { // (con la cinemática de asfixia, la franja sale al final)
       // En táctil la franja crece para alojar los botones REINTENTAR / TERMINAR / RÉCORDS.
       const touch = this.input.touchMode;
       const bandH = touch ? 26 + 8 + this.touch.buttonSize('X').h + 8 : 52;
       ctx.fillStyle = 'rgba(13, 2, 33, 0.6)';
       ctx.fillRect(0, Math.round(h / 2) - 26, w, bandH);
-      drawText(ctx, 'HAS MUERTO', cx, Math.round(h / 2) - 22, { color: COLORS.blood, scale: this.fitScale('HAS MUERTO', w - 12, 3), align: 'center' });
-      if (!touch) drawText(ctx, 'R REINTENTAR PISO · ENTER TERMINAR PARTIDA · T RÉCORDS', cx, Math.round(h / 2) + 10, { color: COLORS.text, align: 'center' });
+      const title = this.runover ? this.runover.msg : (this.deathMsg || 'HAS MUERTO'); // atropellado por el auto de extracción: burla en vez de HAS MUERTO
+      drawText(ctx, title, cx, Math.round(h / 2) - 22, { color: COLORS.blood, scale: this.fitScale(title, w - 12, 3), align: 'center' });
+      if (!touch) {
+        if (this.endAskActive()) drawText(ctx, 'ESC DE NUEVO: TERMINAR Y PERDER EL PROGRESO · R: REINTENTAR', cx, Math.round(h / 2) + 10, { color: Math.floor(performance.now() / 250) % 2 ? COLORS.blood : COLORS.text, align: 'center' });
+        else drawText(ctx, 'R REINTENTAR PISO · ESC TERMINAR PARTIDA · T RÉCORDS', cx, Math.round(h / 2) + 10, { color: COLORS.text, align: 'center' });
+      }
       if (this.showRecords) this.drawRecordsOverlay(ctx, w, h);
       else { const ss = this.statsSummary(); this.drawStatsPanel(ctx, Math.round(cx - this.statsPanelWidth(ss) / 2), Math.min(Math.round(h / 2) - 26 + bandH + 6, h - this.safe.b - 6 - 53), ss); } // sin pasar de la zona segura inferior
       this.touch.drawScreenButtons(ctx);

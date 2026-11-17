@@ -84,6 +84,8 @@ export class Player {
     this.perks = perks;
     this.maskId = maskId;
     this.masked = masked;
+    this.agentId = 'main'; // 'main' (el primer agente) | 'support' (el compañero del relevo, ver Game.swapControl)
+    this.gender = 'male';
     this.vomit = null; // { t, dur, spurts, wasMasked }: vomitando por culpa (ver startVomit)
     this.bloodLevel = 0;  // 0..BLOOD_LEVELS: cuánta sangre lleva encima (lo fija Game)
     this.soles = 0;       // pisadas manchadas que le quedan
@@ -224,6 +226,12 @@ export class Player {
     ctx.fillStyle = '#ffffff';
     pixelDisc(ctx, x, y, 2, WORLD_PX);
     ctx.restore();
+  }
+
+  // El personaje que NO se controla (el compañero del relevo): solo anima la cola de caballo y recupera el enfriamiento; queda quieto, visible y vulnerable.
+  idleUpdate(dt) {
+    this.cooldown = Math.max(0, this.cooldown - dt);
+    this.updateTail(dt, false);
   }
 
   // Cola de caballo (solo aspecto femenino): se balancea de lado a lado al correr y se queda atrás al girar, y vuelve a
@@ -450,6 +458,7 @@ export class Player {
       }
       // Los civiles de la calle también reciben el golpe (huyen y penalizan al final del piso: ver StreetLife.meleeHit).
       if (game.street.meleeHit(this, def)) hit = true;
+      if (game.hostages.meleeHit(this, def)) hit = true; // rehén: el primer golpe lo tumba (aviso), el segundo lo mata
       // Si no hay a quién pegar pero hay una puerta delante, el golpe es una patada.
       const kicked = !hit && game.kickDoor(this);
       if (!kicked) game.recordAttack(this.weapon ? this.weapon.type : 'fists', hit); // estadísticas: golpe y si conectó

@@ -55,6 +55,17 @@ for (let i = 0; i < LEVELS.length; i++) {
       if (hud(sw.tx, sw.ty)) fail(`${tag}: alcantarilla bajo el HUD`);
       if (st.fire && Math.abs(sw.tx - st.fire.tx) + Math.abs(sw.ty - st.fire.ty) < 7) fail(`${tag}: alcantarilla pegada a la fogata`);
     }
+    // Rehenes (dentro del edificio): al menos 1, alcanzables y separados >= 2 casillas de cada enemigo (posición, puntos de ruta y recorrido).
+    if (!L.hostages.length && !L.noHostages) fail(`${tag}: sin rehenes`);
+    const segD = (px, py, ax, ay, bx, by) => { const vx = bx - ax, vy = by - ay, l2 = vx * vx + vy * vy, t = l2 ? Math.max(0, Math.min(1, ((px - ax) * vx + (py - ay) * vy) / l2)) : 0; return Math.hypot(ax + vx * t - px, ay + vy * t - py); };
+    for (const hs of L.hostages) {
+      if (!reach(hs)) fail(`${tag}: rehén (${hs.tx},${hs.ty}) inalcanzable`);
+      for (const e of L.enemies) {
+        const pts = e.patrol || [];
+        const d = Math.min(Math.hypot(e.x - hs.x, e.y - hs.y), ...pts.map((q) => Math.hypot(q.x - hs.x, q.y - hs.y)), pts.length >= 2 ? segD(hs.x, hs.y, pts[0].x, pts[0].y, pts[pts.length - 1].x, pts[pts.length - 1].y) : Infinity);
+        if (d < 2 * TILE) fail(`${tag}: rehén (${hs.tx},${hs.ty}) a ${(d / TILE).toFixed(1)} casillas de un enemigo`);
+      }
+    }
   }
 }
 console.log(bad ? `\n${bad} PROBLEMAS EN LA CALLE` : 'Calle exterior correcta');
