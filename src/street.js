@@ -273,7 +273,8 @@ export class StreetLife {
     const cam = g.camera;
     const label = (text, wx, wy, color = COLORS.text) => {
       const s = cam.worldToScreen(wx, wy);
-      drawText(ctx, text, s.x, s.y, { color, align: 'center', shadow: COLORS.background });
+      const p = g.keepOnScreen(s.x, s.y, measureText(text), 8);
+      drawText(ctx, text, p.x, p.y, { color, align: 'center', shadow: COLORS.background });
     };
     const key = g.hint(g.keys.label('kick'), 'PATEAR');
     const t = g.player.alive && !g.panel ? this.nearTarget() : null;
@@ -287,7 +288,9 @@ export class StreetLife {
     const n = this.npc;
     if (n && n.sayT > 0 && n.say) {
       const s = cam.worldToScreen(n.x, n.y - 24);
-      const tw = measureText(n.say), bx = clamp(Math.round(s.x - tw / 2) - 4, 3, w - tw - 11), by = Math.round(s.y) - 3; // dentro de la pantalla
+      // La caja entera (texto + 4 px de relleno por lado) con margen de seguridad en los cuatro bordes.
+      const tw = measureText(n.say), bp = g.keepOnScreen(s.x, s.y - 3, tw + 8, 13, 6);
+      const bx = Math.round(bp.x - (tw + 8) / 2), by = Math.round(bp.y);
       ctx.fillStyle = 'rgba(13, 2, 33, 0.92)'; ctx.fillRect(bx, by, tw + 8, 13);
       ctx.fillStyle = n.scared ? COLORS.blood : COLORS.player;
       ctx.fillRect(bx, by, tw + 8, 1); ctx.fillRect(bx, by + 12, tw + 8, 1); ctx.fillRect(bx, by, 1, 13); ctx.fillRect(bx + tw + 7, by, 1, 13);

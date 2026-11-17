@@ -1042,7 +1042,9 @@ export class Game {
 
     // Cruzar el umbral (dos casillas dentro de la puerta principal, ya fuera del barrido de la hoja)
     // activa el combate: no hay salida hasta despejar el edificio.
-    if (this.state === 'playing' && !this.inside && this.player.alive && this.player.y < this.entry.lockY) this.beginLockdown();
+    // El bloqueo solo salta al cruzar el umbral HACIA DENTRO: y por encima del umbral Y dentro de la huella del edificio
+    // (la calle de arriba y de los lados también tiene y < lockY, y ahí no se bloquea nada).
+    if (this.state === 'playing' && !this.inside && this.player.alive && this.inBuilding(this.player)) this.beginLockdown();
     if (this.state === 'playing' && this.inside && this.enemies.every((e) => !e.alive)) {
       this.state = 'cleared';
       // Se acabó la adrenalina: `setMusic('empty')` corta la música con el frenazo de cinta y
@@ -1472,6 +1474,11 @@ export class Game {
   // El jugador cruzó el umbral: se pone la máscara, la puerta principal se cierra de golpe y se
   // bloquea (el portazo y los efectos llegan cuando acaba de cerrarse: `slamEffects`) y empieza el
   // combate. Se anota el arma con la que entra para que R reaparezca igual.
+  inBuilding(p) {
+    const z = this.entry.zone;
+    return p.y < this.entry.lockY && p.y > z.y0 && p.x > z.x0 && p.x < z.x1;
+  }
+
   beginLockdown() {
     const p = this.player;
     this.inside = true;
@@ -1830,13 +1837,24 @@ export class Game {
     this.floatingTexts.push({ x, y, text, color, scale, t: life, max: life });
   }
 
+  // Centro (x) y arriba (y) de un texto de ancho `tw` y alto `th`, corregidos para que quepa entero en la pantalla, con un margen
+  // y respetando las zonas seguras. Sirve a textos flotantes, popups de puntos, avisos y burbujas (nunca salen cortados).
+  keepOnScreen(x, y, tw, th, margin = 4) {
+    const w = this.scene.width, h = this.scene.height, sf = this.safe;
+    return {
+      x: clamp(x, sf.l + margin + tw / 2, Math.max(sf.l + margin + tw / 2, w - sf.r - margin - tw / 2)),
+      y: clamp(y, sf.t + margin, Math.max(sf.t + margin, h - sf.b - margin - th)),
+    };
+  }
+
   drawFloatingTexts(ctx) {
     for (const f of this.floatingTexts) {
       const age = f.max - f.t;
       const s = this.camera.worldToScreen(f.x, f.y - age * 26);
       ctx.globalAlpha = Math.min(1, f.t * 4);
       const sc = age < 0.1 ? f.scale + 1 : f.scale;
-      drawText(ctx, f.text, s.x, s.y, { color: f.color, scale: sc, align: 'center', shadow: COLORS.background });
+      const p = this.keepOnScreen(s.x, s.y, measureText(f.text) * sc, CELL_H * sc);
+      drawText(ctx, f.text, p.x, p.y, { color: f.color, scale: sc, align: 'center', shadow: COLORS.background });
     }
     ctx.globalAlpha = 1;
   }
@@ -2116,12 +2134,12 @@ export class Game {
     ctx.drawImage(this.floorLayer, 0, 0, pixelW, pixelH);
     ctx.drawImage(this.bloodLayer, 0, 0, pixelW, pixelH);
     if (this.goreOn) this.prints.draw(ctx); // sobre baldosas y sangre, bajo todo lo demás
-    this.sewer.draw(ctx);
     this.drawBike(ctx);
     this.drawObjectiveMarker(ctx);
     this.particles.drawGround(ctx);
     // Muebles sobre la sangre (lo que cae debajo queda oculto) y bajo los personajes.
     ctx.drawImage(this.propsLayer, 0, 0, pixelW, pixelH);
+    this.sewer.draw(ctx); // sobre los muebles de la calle: la cabeza nunca queda tapada ni cortada
     this.street.draw(ctx);
     for (const e of this.enemies) if (e.alive && e.state === 'down') e.draw(ctx, this.time, this);
     this.drawExecuteMarks(ctx);
@@ -2301,7 +2319,8 @@ export class Game {
     for (const pop of this.score.popups) {
       const s = this.camera.worldToScreen(pop.x, pop.y);
       ctx.globalAlpha = Math.min(1, pop.life * 2);
-      drawText(ctx, pop.text, s.x, s.y - CELL_H, { color: COLORS.text, align: 'center', shadow: COLORS.wall });
+      const p = this.keepOnScreen(s.x, s.y - CELL_H, measureText(pop.text), CELL_H);
+      drawText(ctx, pop.text, p.x, p.y, { color: COLORS.text, align: 'center', shadow: COLORS.wall });
     }
     ctx.globalAlpha = 1;
   }

@@ -654,7 +654,8 @@ export function loadLevel(index = 0, rng = Math.random) {
   const main = mainDoors[0];
   if (!main.horizontal) throw new Error(`${def.name}: la puerta principal debe estar en una pared horizontal`);
   const mainDoor = { tx: main.tx, ty: main.ty, x: main.tx * TILE + TILE / 2, y: main.ty * TILE + TILE / 2 };
-  const entry = { x: mainDoor.x, y: mainDoor.y - 2 * TILE, lockY: mainDoor.y - 46 };
+  // `zone` = huella del edificio (sin el anillo de calle de los lados y de arriba): el bloqueo solo se dispara dentro de ella.
+  const entry = { x: mainDoor.x, y: mainDoor.y - 2 * TILE, lockY: mainDoor.y - 46, zone: { x0: OUTSKIRT * TILE, x1: (w - OUTSKIRT) * TILE, y0: OUTSKIRT * TILE } };
   for (const e of enemies) {
     e.patrol = e.axis === 'none' ? [{ x: e.x, y: e.y }] : autoPatrol(map, e.tx, e.ty, e.axis);
     e.kind = e.kind || 'grunt';

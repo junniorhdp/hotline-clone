@@ -1,4 +1,5 @@
 import { pixelRect, pixelDisc, WORLD_PX } from './sprites.js';
+import { isSolidAt } from './map.js';
 import { rand } from './utils.js';
 
 // Easter egg de la calle: de vez en cuando una tapa de alcantarilla se desliza, un cocodrilo asoma la cabeza,
@@ -10,6 +11,7 @@ const SEE_MIN = 190, SEE_MAX = 480; // se elige una tapa que el jugador pueda ve
 const SCARE_DIST = 150;             // si el jugador se acerca a menos de esto, se esconde de inmediato
 const SLIDE = 0.7, RISE = 0.6, GRIN = 3.6, SINK = 0.5, CLOSE = 0.7, PANIC_SINK = 0.18, PANIC_CLOSE = 0.3;
 const COVER_SHIFT = 16;             // px internos que se desliza la tapa
+const FACES = [[1, 0], [0, 1], [-1, 0], [0, -1]]; // derecha, abajo, izquierda, arriba (índice = c.face)
 const SCALE = 1.5;                  // tamaño de la cabeza respecto al diseño base (más visible al pasar corriendo)
 
 export class Sewer {
@@ -39,11 +41,10 @@ export class Sewer {
     }
     cur.t += dt;
     if (!cur.panic && cur.phase !== 'close' && cur.phase !== 'sink' && Math.hypot(cur.x - p.x, cur.y - p.y) < SCARE_DIST) this.scare(cur, game);
-    // Mira hacia el jugador (solo en los 4 ejes: se dibuja alineado a la rejilla).
-    const dx = p.x - cur.x, dy = p.y - cur.y;
+    // Gira hacia el jugador (solo en los 4 ejes), pero solo hacia lados con sitio y sin chocar con la tapa.
     if (cur.phase === 'rise' || cur.phase === 'grin') {
-      cur.face = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 0 : 2) : (dy > 0 ? 1 : 3);
-      if (cur.face === (cur.dir > 0 ? 0 : 2)) cur.face = dy > 0 ? 1 : 3; // nunca mira hacia donde está la tapa
+      const f = this.pickFace(cur, game);
+      if (f !== cur.face && !(FACES[f][0] === cur.dir)) cur.face = f;
     }
     const dur = { slide: SLIDE, rise: RISE, grin: GRIN, sink: cur.panic ? PANIC_SINK : SINK, close: cur.panic ? PANIC_CLOSE : CLOSE }[cur.phase];
     const k = Math.min(1, cur.t / dur);
@@ -54,9 +55,33 @@ export class Sewer {
     if (cur.t >= dur) this.next(cur, game);
   }
 
+  // ¿Hay sitio para la cabeza (largo ~34 u y ancho ~28 u) mirando en la dirección f? Nada sólido (valla, mueble, pared).
+  roomFor(c, game, f) {
+    const [fx, fy] = FACES[f];
+    for (const k of [14, 26, 38]) for (const lat of [-14, 0, 14]) {
+      if (isSolidAt(game.map, c.x + fx * k - fy * lat, c.y + fy * k + fx * lat)) return false;
+    }
+    return true;
+  }
+
+  // Lado al que asoma: el más alineado con el jugador de los que tienen sitio (si ninguno, el que tenga más espacio libre).
+  pickFace(c, game) {
+    const p = game.player, dx = p.x - c.x, dy = p.y - c.y, len = Math.hypot(dx, dy) || 1;
+    const order = [0, 1, 2, 3].sort((a, b) => (FACES[b][0] * dx + FACES[b][1] * dy) / len - (FACES[a][0] * dx + FACES[a][1] * dy) / len);
+    return order.find((f) => this.roomFor(c, game, f)) ?? order[0];
+  }
+
+  // Lado al que se desliza la tapa: izquierda o derecha con sitio libre, mejor el opuesto al jugador y nunca hacia donde mira.
+  pickDir(c, game) {
+    const away = game.player.x > c.x ? -1 : 1;
+    const ok = (d) => FACES[c.face][0] !== d && ![14, 28, 44].some((k) => isSolidAt(game.map, c.x + d * k, c.y));
+    return [away, -away].find(ok) ?? (FACES[c.face][0] === away ? -away : away);
+  }
+
   start(c, game) {
     c.phase = 'slide'; c.t = 0; c.panic = false; c.slide = 0; c.rise = 0;
-    c.dir = game.player.x > c.x ? -1 : 1; // la tapa se desliza al lado opuesto al jugador (la cabeza mira hacia él)
+    c.face = this.pickFace(c, game);
+    c.dir = this.pickDir(c, game);
     game.playAt('manholeScrape', c.x, c.y, 0.9);
   }
 
@@ -117,7 +142,8 @@ export class Sewer {
     ctx.save();
     ctx.beginPath();
     const r0 = Math.round(12 * S / 1.5), far = Math.round(34 * S / 1.5);
-    const x0 = Math.min(-r0, r0 + fx * far), x1 = Math.max(-r0, r0 + fx * far), y0 = Math.min(-r0, r0 + fy * far), y1 = Math.max(-r0, r0 + fy * far);
+    // La zona visible = el agujero (±r0) + el tramo hacia donde mira. (Antes, mirando a la izquierda o arriba, el rectángulo no incluía el agujero y la cabeza salía cortada.)
+    const x0 = Math.min(-r0, fx * far), x1 = Math.max(r0, fx * far), y0 = Math.min(-r0, fy * far), y1 = Math.max(r0, fy * far);
     ctx.rect((cx + x0) * WORLD_PX, (cy + y0) * WORLD_PX, (x1 - x0) * WORLD_PX, (y1 - y0) * WORLD_PX);
     ctx.clip();
     // Rectángulo en coordenadas locales del diseño base (u hacia donde mira, v lateral), escalado y alineado a píxeles.

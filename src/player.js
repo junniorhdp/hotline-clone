@@ -14,6 +14,7 @@ const DODGE_TURN_COS = 0.35;  // giro de más de ~70° respecto al rumbo anterio
 const DODGE_DECAY = 0.13;     // s: constante de caída del empujón
 const PICKUP_RADIUS = 30;
 const BUFF_SPEED = 1.18;       // lata de la máquina expendedora (game.buff): +18 % de velocidad…
+const MAX_SPEED_STACK = 1.45;  // tope del multiplicador de velocidad acumulado (pico con empujón ≈ 430 u/s: < 7,2 u por paso, sin atravesar paredes)
 const BUFF_COOLDOWN = 0.8;     // …y -20 % de espera entre ataques
 const THROW_SPEED = 720;
 const NOISE_RADIUS_KICK = 260;
@@ -143,7 +144,9 @@ export class Player {
       this.hx = mx;
       this.hy = my;
       this.moving = true;
-      const speed = SPEED * this.perks.speedMul * mag * (1 + this.boost) * (game.buff ? BUFF_SPEED : 1);
+      // Los bonus de velocidad se SUMAN (STRIKE +30 %, lata +18 %) y el total tiene tope: así no se disparan al acumularse.
+      const bonus = (this.perks.speedMul - 1) + (game.buff ? BUFF_SPEED - 1 : 0);
+      const speed = SPEED * Math.min(MAX_SPEED_STACK, 1 + bonus) * mag * (1 + this.boost);
       const hit = moveAndSlide(map, this, mx * speed * dt, my * speed * dt);
       if ((hit.hitX || hit.hitY) && this.bumpCd <= 0) {
         game.particles.dust(this.x + (hit.hitX ? Math.sign(mx) * this.r : 0), this.y + (hit.hitY ? Math.sign(my) * this.r : 0), 4);
