@@ -16,7 +16,7 @@
 // un único número), se migra como una entrada "heredada". Cualquier JSON corrupto o entrada
 // inválida se descarta en la lectura; nunca se escribe nada que no sea el formato válido.
 // TEMPORAL: con true, el selector de pisos deja elegir cualquier piso sin haber completado el anterior. Poner a false para volver al desbloqueo normal.
-const UNLOCK_ALL_FLOORS = true;
+const UNLOCK_ALL_FLOORS = false;
 
 const STORAGE_KEY = 'neonrush.scores.v1';
 const LEGACY_KEY = 'neonrush.highscore';
