@@ -331,7 +331,7 @@ siguiente piso (`goToLevel`) … tras el último → `gameover` → `menu` o par
 | **NEON** | `neon` | gallo | ninguna: la experiencia clásica, la máscara "de serie" |
 | **BRUTE** | `oso` | oso | puñetazos mortales (matan al instante, sin derribar) |
 | **STRIKE** | `guepardo` | guepardo | +30 % de velocidad de movimiento |
-| **BLADE** | `tiburon` | tiburón | te pones la máscara con un cuchillo (si no has cogido otra arma antes) |
+| **BLADE** | `tiburon` | tiburón | te pones la máscara con un **cuchillo de carnicero** exclusivo (si no has cogido otra arma antes) |
 | **GHOST** | `buho` | búho | tus balas van +20 % más rápidas y con la mitad de dispersión |
 
 - **El `id` no se cambia nunca**, solo el `name`: lo usan los sprites (`head_<id>`, `body_<id>`) y
@@ -395,6 +395,11 @@ siguiente piso (`goToLevel`) … tras el último → `gameover` → `menu` o par
     ámbar enormes y pico naranja.
   - Para añadir una máscara: entrada en `MASKS` (con su retrato) + cuadrícula en `MASK_HEADS` +
     colores en `MASK_SKINS` + ropa en `OUTFITS` (si falta la cabeza o el cuerpo se usa el de NEON).
+- **Máscara del HUD con sangre** (`Game.drawHudMask` → `bloodyMaskPortrait(máscara, nivel, 'male', maskBits)`): la miniatura de arriba a la izquierda se va llenando de manchas procedurales (7/16/28/42/60 gotas por nivel, las viejas oscuras y las recientes vivas, con coágulos, regueros y brillos húmedos)
+  a medida que sube `player.bloodLevel`; el bitmap está en caché por máscara, nivel y mezcla, así que dibujarla cuesta un solo `drawImage`.
+  - **Mezcla rojo / verde**: `Game.maskBits` guarda, por cada gota de la máscara, si es **verde tóxica (1)** o **roja (0)**. `stainPlayer(power, angle, tox)` acumula lo que ensucia desde el último nivel (`accG`/`accT`) y, al subir de nivel, las gotas NUEVAS salen verdes con esa proporción (aleatoriamente), así que la máscara muestra la mezcla de fluidos que el personaje ha acumulado.
+    Mancha en verde: matar/rematar con un arma oxidada o a un intoxicado (`isToxicKill`), y civiles envenenados. **Pisar un charco o cadáver** mancha un poco (`Game.soak`, 0,2 de sangre como mucho cada 1,4 s) con el color del charco (`bloodUnderfoot` devuelve 0 · 1 roja · 2 verde; los charcos guardan `tox`). Todo se reinicia con `resetStains()` (piso o partida nuevos); R lo conserva. El cuerpo del jugador y las huellas siguen siendo rojos.
+  - **Giro frenético**: al llegar al **nivel máximo** (5) la miniatura gira (~9 rad/s con tirones y un latido de tamaño ±7 %) mientras `state === 'playing'`; se **detiene de golpe y vuelve recta** en cuanto el estado deja de ser `playing` —al caer el último enemigo (`cleared`, "SALIDAS DESBLOQUEADAS"), en la fuga, la muerte o los menús—. Un solo `drawImage` con transformación por fotograma: sin coste apreciable.
 - HUD: miniatura del retrato (12×12 a ×2) bajo el arma y, debajo del nombre, el contador de
   brutalidad (ver abajo); los resultados muestran la máscara usada.
 
@@ -606,7 +611,8 @@ Alcance en unidades del mundo (1 casilla = 32). Cadencia = segundos entre ataque
 | Puños | `fists` | derriba | 24 (arco 99°) | 0,32 s | — | con la máscara BRUTE matan |
 | Bate | `bat` | mata | 40 (arco 153°) | 0,42 s | — | el melee de más alcance |
 | Tubo de hierro | `pipe` | mata | 36 (arco 135°) | 0,30 s | — | más rápido que el bate |
-| Cuchillo | `knife` | mata | 30 (arco 108°) | 0,25 s | — | arma inicial de BLADE |
+| Cuchillo | `knife` | mata | 30 (arco 108°) | 0,25 s | — | el de los enemigos y de los pisos |
+| Cuchillo de carnicero | `cleaver` | mata | **38** (arco 144°) | 0,27 s | — | **exclusivo de BLADE** (arma inicial): más alcance, golpe más pesado (sacudida 3,5) y **ejecución más rápida**: 2 hachazos en 0,44 s (el cuchillo: 3 puñaladas en 0,7 s); contra el jefe quita 3,5 por golpe y 4,5 en ejecución (cuchillo: 2 y 3,5). No sale en pisos ni contenedores y los enemigos no lo recogen. Se anima como el tubo (levanta y golpea; `POSE_STYLE`) |
 | Pistola | `gun` | mata | ilimitado | 0,20 s, semiautomática | 6 | dispersión ±0,02 rad |
 | Escopeta | `shotgun` | mata | 270 | 0,65 s | 4 | 6 perdigones, dispersión ±0,3 rad |
 | Subfusil | `smg` | mata | ilimitado | 0,075 s (≈12 disparos/s), **automático** | 30 | dispersión ±0,12 rad |

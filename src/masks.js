@@ -81,8 +81,8 @@ export const MASKS = [
     id: 'tiburon',
     name: 'BLADE',
     lockFloor: 3,
-    passive: ['EMPIEZAS CADA PISO', 'CON UN CUCHILLO.'],
-    effects: { startWeapon: 'knife' },
+    passive: ['EMPIEZAS CON UN CUCHILLO', 'DE CARNICERO (+ALCANCE).'],
+    effects: { startWeapon: 'cleaver' },
     palette: { g: '#6c7fa8', G: '#45557a', w: '#f5f3ff' },
     rows: [
       '.....kk.....',

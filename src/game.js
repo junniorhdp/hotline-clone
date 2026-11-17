@@ -9,7 +9,7 @@ import { TouchControls } from './touch.js';
 import { Settings } from './settings.js';
 import { KeyBinds } from './keybinds.js';
 import { Boss, drawBossBar } from './boss.js';
-import { bloodyMaskPortrait, villainPortrait, villainDef, AGENTS, drawGenderIcon, drawAgentPreview, drawPadlock } from './portraits.js';
+import { bloodyMaskPortrait, PORTRAIT_PAD, BLOOD_DROPS, villainPortrait, villainDef, AGENTS, drawGenderIcon, drawAgentPreview, drawPadlock } from './portraits.js';
 import { Ads } from './ads.js';
 import { Sewer } from './sewer.js';
 import { StreetLife, newStreetRun } from './street.js';
@@ -175,7 +175,7 @@ export class Game {
     this.score = new Score(this.history.best());
     // Sangre del personaje: se acumula con las bajas DEL PISO. Al reintentar con R se conserva (el
     // jugador reaparece como murió); al pasar de piso (`goToLevel`) y al empezar partida empieza limpia.
-    this.gore = 0;
+    this.resetStains();
     // Edificio: el piso empieza en la calle. Al cruzar el umbral (`inside`) se bloquea la puerta
     // principal hasta despejarlo; `entered` y `entryWeapon` recuerdan ese momento para que R
     // reaparezca dentro, sin repetir la llegada.
@@ -331,7 +331,7 @@ export class Game {
     this.streetRun = newStreetRun();
     this.score.startLevel();
     this.scuffleCount = 0;
-    this.gore = 0; // el siguiente piso se empieza limpio: ropa y máscara sin sangre
+    this.resetStains(); // el siguiente piso se empieza limpio: ropa y máscara sin sangre
     this.entered = false;
     this.entryWeapon = null;
     this.reset({ arrival: true });
@@ -816,7 +816,7 @@ export class Game {
     this.buff = null;
     this.streetRun = newStreetRun();
     this.score.newRun(this.history.best());
-    this.gore = 0;
+    this.resetStains();
     this.scuffleCount = 0;
     this.levelIndex = index;
     this.entered = false;
@@ -1416,7 +1416,7 @@ export class Game {
     const vdef = villainDef(sc.e.kind);
     frame(px, COLORS.player); frame(ex, vdef.frame);
     // Tú: el retrato de tu máscara con la sangre que llevas (nivel 0 si la sangre está desactivada).
-    ctx.drawImage(bloodyMaskPortrait(this.mask, this.goreOn ? this.player.bloodLevel : 0, this.gender), px, topY, 56, 56);
+    ctx.drawImage(bloodyMaskPortrait(this.mask, this.goreOn ? this.player.bloodLevel : 0, this.gender, this.maskBits), px, topY, 56, 56);
     // Él: un rostro en penumbra por tipo de enemigo; los ojos parpadean de vez en cuando.
     ctx.drawImage(villainPortrait(sc.e.kind), ex + 4, topY + 4, 48, 48);
     ctx.fillStyle = 'rgba(5, 0, 15, 0.22)';
@@ -1710,8 +1710,9 @@ export class Game {
     this.dropWeapon(e);
     if (e.carrier) this.dropMask(e);
     e.corpse = { x: e.x + Math.cos(angle) * 8, y: e.y + Math.sin(angle) * 8 }; // donde se estampa el cadáver
-    this.bleed(e.x, e.y, angle, feel.power, feel.wide, this.isToxicKill(e, cause));
-    this.stainPlayer(feel.power, angle);
+    const tox = this.isToxicKill(e, cause);
+    this.bleed(e.x, e.y, angle, feel.power, feel.wide, tox);
+    this.stainPlayer(feel.power, angle, tox);
     this.drawCorpse(e.x, e.y, angle, e.corpseSprite || (e.armed ? 'armedCorpse' : 'enemyCorpse'), e.corpseScale || 1);
     this.camera.addShake(feel.shake);
     this.fx.kick(feel.fx);
@@ -1736,23 +1737,51 @@ export class Game {
     if (!this.goreOn) { this.prints.clear(); this.player.soles = 0; }
   }
 
-  stainPlayer(power, angle) {
+  // Vuelve a dejar limpio al personaje (piso nuevo o partida nueva): sangre acumulada y la mezcla de colores de su máscara.
+  resetStains() {
+    this.gore = 0;       // total de sangre (roja + verde)
+    this.goreGreen = 0;  // parte verde tóxica
+    this.maskBits = [];  // por cada gota de la máscara del HUD: 1 verde, 0 roja (ver bloodyMaskPortrait)
+    this.accG = 0; this.accT = 0; // lo acumulado desde el último nivel (decide el color de las manchas nuevas)
+    this.soakAt = 0;
+  }
+
+  // `tox`: la sangre que te mancha es verde tóxica. Las manchas nuevas de la máscara toman el color de lo que las ha causado, así que
+  // la máscara acaba reflejando la mezcla de fluidos (rojo y verde) que has acumulado.
+  stainPlayer(power, angle, tox = false) {
     this.gore += power; // se sigue contando: si se vuelve a activar la sangre, el personaje la recupera
-    if (!this.goreOn) return;
+    if (tox) this.goreGreen += power;
+    this.accT += power;
+    if (tox) this.accG += power;
     const level = bloodLevelFor(this.gore);
+    const need = BLOOD_DROPS[level];
+    if (this.maskBits.length < need) {
+      const frac = this.accT > 0 ? this.accG / this.accT : 0;
+      while (this.maskBits.length < need) this.maskBits.push(Math.random() < frac ? 1 : 0);
+      this.accG = this.accT = 0;
+    }
+    if (!this.goreOn) return;
     if (level === this.player.bloodLevel) return;
     this.player.bloodLevel = level;
-    this.particles.blood(this.player.x, this.player.y, angle + Math.PI, 5, 1.2);
+    this.particles.blood(this.player.x, this.player.y, angle + Math.PI, 5, 1.2, tox);
+  }
+
+  // Pisar un charco (o un cadáver) mancha un poco, como mucho cada 1,4 s, con el color del fluido.
+  soak(tox, angle) {
+    const now = performance.now();
+    if (now - this.soakAt < 1400) return;
+    this.soakAt = now;
+    this.stainPlayer(0.2, angle + Math.PI, tox);
   }
 
   // ¿Pisa (x, y) sangre fresca? Un cadáver o un charco de baja: empapa las suelas del jugador.
   bloodUnderfoot(x, y) {
-    if (!this.goreOn) return false;
+    if (!this.goreOn) return 0;
     for (const e of this.enemies) {
-      if (!e.alive && e.corpse && Math.hypot(e.corpse.x - x, e.corpse.y - y) < CORPSE_STEP_RADIUS) return true;
+      if (!e.alive && e.corpse && Math.hypot(e.corpse.x - x, e.corpse.y - y) < CORPSE_STEP_RADIUS) return e.toxic ? 2 : 1;
     }
-    for (const p of this.pools) if (Math.hypot(p.x - x, p.y - y) < p.r) return true;
-    return false;
+    for (const p of this.pools) if (Math.hypot(p.x - x, p.y - y) < p.r) return p.tox ? 2 : 1;
+    return 0;
   }
 
   // Todo el desangrado de una baja: partículas (sangre, restos, chispas de neón), charco y
@@ -1914,7 +1943,7 @@ export class Game {
     } else {
       this.particles.neon(e.x, e.y, angle, 8, 0.9);
     }
-    this.stainPlayer(0.35, angle);
+    this.stainPlayer(0.35, angle, this.isToxicKill(e, 'execution'));
     this.camera.addShake(4);
     this.hitstop = Math.max(this.hitstop, 0.03);
     this.sfx.play(style === 'knife' ? 'hit' : 'crunch', 0.6);
@@ -2051,7 +2080,7 @@ export class Game {
     const poolR = rand(5, 7) * power;
     pixelDisc(ctx, px + cos * 3, py + sin * 3, poolR);
     if (track) {
-      this.pools.push({ x: x + cos * 6, y: y + sin * 6, r: poolR * WORLD_PX * 0.9 });
+      this.pools.push({ x: x + cos * 6, y: y + sin * 6, r: poolR * WORLD_PX * 0.9, tox: this.bpal === TOXIC });
       if (this.pools.length > MAX_POOLS) this.pools.shift();
     }
     ctx.fillStyle = this.bpal.blood;
@@ -2394,6 +2423,23 @@ export class Game {
     ctx.fillRect(barX, barY, barW, 3);
     ctx.fillStyle = color;
     ctx.fillRect(barX, barY, Math.round(barW * t), 3);
+  }
+
+  // Máscara del HUD con la sangre (roja, verde o mezclada) que lleva el personaje. Al llegar al nivel MÁXIMO gira de forma frenética (con
+  // tirones y un latido de tamaño) mientras se juega el piso; se detiene de golpe en cuanto cae el último enemigo (estado 'cleared') o termina
+  // la partida. Un solo drawImage por fotograma (el bitmap está en caché por máscara, nivel y mezcla).
+  drawHudMask(ctx, x, y, p) {
+    const lv = this.goreOn ? p.bloodLevel : 0;
+    const img = bloodyMaskPortrait(this.mask, lv, 'male', this.maskBits);
+    if (!(lv >= BLOOD_LEVELS && this.state === 'playing' && p.alive)) { ctx.drawImage(img, x - PORTRAIT_PAD, y - PORTRAIT_PAD); return; }
+    const t = performance.now() / 1000;
+    ctx.save();
+    ctx.translate(x + 12, y + 12);
+    ctx.rotate(t * 9 + Math.sin(t * 23) * 0.7);
+    const sc = 1 + Math.sin(t * 31) * 0.07;
+    ctx.scale(sc, sc);
+    ctx.drawImage(img, -(12 + PORTRAIT_PAD), -(12 + PORTRAIT_PAD));
+    ctx.restore();
   }
 
   drawResults(ctx, w, h) {
@@ -2845,7 +2891,7 @@ export class Game {
     ctx.fillStyle = '#140a24';
     ctx.fillRect(L - 1, 24 + T, 26, 26);
     ctx.globalAlpha = p.masked ? 1 : 0.4; // en la mano todavía: se apaga hasta ponérsela
-    ctx.drawImage(maskIcon(this.mask), L, 25 + T, 24, 24);
+    this.drawHudMask(ctx, L, 25 + T, p);
     ctx.globalAlpha = 1;
     drawText(ctx, this.mask.name, L + 28, 25 + T, { color: '#9d8fb8' });
     // Brutalidad: una gota por nivel de sangre que lleva el personaje.

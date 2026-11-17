@@ -25,7 +25,8 @@ export const FINISH_RANGE = 34;      // distancia (además del radio) para remat
 // anteriores solo hieren (sangre, sacudida y sonido) para que se vea un remate brutal y distinto.
 export const EXEC_STYLES = {
   stomp: { time: 0.42, hits: [0.27] },              // sin arma: pisotón
-  smash: { time: 0.42, hits: [0.27] },              // arma de fuego vacía: culatazo de arriba abajo
+  smash: { time: 0.42, hits: [0.27] },
+  cleaver: { time: 0.44, hits: [0.15, 0.31] },      // cuchillo de carnicero (BLADE): dos hachazos rápidos              // arma de fuego vacía: culatazo de arriba abajo
   bat: { time: 0.64, hits: [0.44] },                // bate: swing enorme y lento hacia la cabeza
   pipe: { time: 0.58, hits: [0.2, 0.4] },           // tubo: dos golpes secos
   rustpipe: { time: 0.58, hits: [0.2, 0.4] },       // tubo oxidado: igual que el tubo
@@ -35,7 +36,9 @@ export const EXEC_STYLES = {
   burst: { time: 0.52, hits: [0.24, 0.31, 0.38] },  // subfusil: ráfaga de tres
 };
 // Armas con la misma ejecución y gesto de ataque que una base (las improvisadas de la calle).
-const STYLE_ALIAS = { rustpipe: 'pipe', crowbar: 'pipe', rustknife: 'knife' };
+const STYLE_ALIAS = { rustpipe: 'pipe', crowbar: 'pipe', rustknife: 'knife', cleaver: 'pipe' };
+// El cuchillo de carnicero tiene su propia ejecución (EXEC_STYLES.cleaver) pero se anima como el tubo (levanta y golpea).
+const POSE_STYLE = { cleaver: 'pipe' };
 // Retroceso al disparar (segundos que dura, empuje del arma hacia atrás y del cuerpo, y si bombea).
 const RECOIL = {
   gun: { time: 0.14, kick: 3, lean: 1 },
@@ -239,8 +242,10 @@ export class Player {
   // 1 en la primera a 1 - SOLE_FADE en la última.
   updateSoles(game, moved) {
     if (!game.goreOn) { this.soles = 0; return; } // sin sangre: ni suelas manchadas ni huellas
-    if (game.bloodUnderfoot(this.x, this.y)) {
+    const fluid = game.bloodUnderfoot(this.x, this.y); // 0 nada · 1 sangre roja · 2 sangre verde
+    if (fluid) {
       this.wetSoles();
+      game.soak(fluid === 2, this.angle); // pisar un charco también te mancha (y tiñe la máscara del HUD con su color)
       return;
     }
     if (this.soles <= 0 || moved <= 0) return;
@@ -329,7 +334,7 @@ export class Player {
     const w = this.weapon, def = this.def;
     let style = 'stomp';
     if (w) {
-      if (def.melee) style = STYLE_ALIAS[w.type] || w.type; // bat | pipe | knife
+      if (def.melee) style = w.type === 'cleaver' ? 'cleaver' : STYLE_ALIAS[w.type] || w.type; // bat | pipe | knife | cleaver
       else if (w.ammo > 0) style = { gun: 'shoot', shotgun: 'blast', smg: 'burst' }[w.type] || 'shoot';
       else style = 'smash';
     }
@@ -372,7 +377,7 @@ export class Player {
   // con todo el feedback (hit-stop, sacudida, crujido, charco grande y puntos de EJECUCIÓN van en
   // `killEnemy`) y, de la parte del jugador, las suelas empapadas.
   landExecution(game, ex, last) {
-    const e = ex.target, def = this.def, style = ex.style;
+    const e = ex.target, def = this.def, style = POSE_STYLE[ex.style] || ex.style;
     const angle = Math.atan2(e.y - this.y, e.x - this.x);
     const cos = Math.cos(this.angle), sin = Math.sin(this.angle);
     const gun = style === 'shoot' || style === 'blast' || style === 'burst';
@@ -594,7 +599,7 @@ export class Player {
   // levanta (pisotón, bate, tubo, culatazo) se ve al doble de tamaño y va POR ENCIMA del jugador. El
   // cuchillo no se levanta: se echa atrás y puñala hacia delante; las armas de fuego apuntan y retroceden.
   execPose() {
-    const ex = this.exec, spec = ex.spec, style = ex.style, hits = spec.hits;
+    const ex = this.exec, spec = ex.spec, style = POSE_STYLE[ex.style] || ex.style, hits = spec.hits;
     const d = Math.hypot(ex.target.x - this.x, ex.target.y - this.y);
     const reach = Math.max(10, d - 2);
     // Ciclo actual: i = golpe que toca; start = cuándo empezó su carga.

@@ -1,6 +1,7 @@
 import { buildSprite, drawSprite, playerBody, drawMaskHead } from './sprites.js';
 import { maskIcon } from './masks.js';
 import { COLORS, seededRandom, hashString } from './utils.js';
+import { TOXIC } from './particles.js';
 
 // Retratos de la pantalla "VS" del forcejeo (ver game.drawScuffleUI):
 //  - `bloodyMaskPortrait(mask, nivel)`: el retrato de frente de la máscara (el de las tarjetas y el HUD) ampliado
@@ -10,9 +11,10 @@ import { COLORS, seededRandom, hashString } from './utils.js';
 //    como única luz (el matón común bajo su gorra, el corredor con capucha y pañuelo).
 
 // --- Sangre sobre la máscara ---------------------------------------------------------------------
-const BLOOD_DROPS = [0, 7, 16, 28, 42, 60]; // gotas por nivel de sangre (0..5)
+export const BLOOD_DROPS = [0, 7, 16, 28, 42, 60]; // gotas por nivel de sangre (0..5)
 const portraitCache = new Map();
-const PAD = 2; // margen (px del retrato) alrededor de la máscara: ahí asoman el pelo y la chaqueta
+export const PORTRAIT_PAD = 2;
+const PAD = PORTRAIT_PAD; // margen (px del retrato) alrededor de la máscara: ahí asoman el pelo y la chaqueta
 const baseCache = new Map();
 const dropsCache = new Map();
 
@@ -61,10 +63,13 @@ function drawFemaleBack(ctx) {
 
 // `gender`: 'male' (el retrato de siempre) o 'female' (con pelo, coleta, cuello y chaqueta). La sangre va encima de la
 // máscara igual en los dos.
-export function bloodyMaskPortrait(mask, level = 0, gender = 'male') {
+// `mix` = para cada gota (en su orden de aparición) 1 si es de sangre VERDE tóxica y 0 si es roja (ver Game.maskBits): la máscara refleja la mezcla
+// de fluidos que el personaje ha acumulado. Sin `mix` todo es rojo.
+export function bloodyMaskPortrait(mask, level = 0, gender = 'male', mix = null) {
   const lv = Math.max(0, Math.min(5, level | 0));
   const female = gender === 'female';
-  const key = `${mask.id}:${lv}:${female ? 'f' : 'm'}`;
+  const nDrops = BLOOD_DROPS[lv];
+  const key = `${mask.id}:${lv}:${female ? 'f' : 'm'}:${mix ? mix.slice(0, nDrops).join('') : ''}`;
   if (portraitCache.has(key)) return portraitCache.get(key);
   const c = document.createElement('canvas');
   c.width = c.height = 24 + PAD * 2;
@@ -79,13 +84,14 @@ export function bloodyMaskPortrait(mask, level = 0, gender = 'male') {
       const [x0, y0] = px[i];
       const x = x0 + PAD, y = y0 + PAD;
       const age = i / n; // las primeras gotas son las más viejas
-      ctx.fillStyle = age < 0.35 ? COLORS.bloodDark : age < 0.7 ? COLORS.bloodMid : COLORS.blood;
+      const pal = mix && mix[i] === 1 ? TOXIC : { dark: COLORS.bloodDark, mid: COLORS.bloodMid, blood: COLORS.blood, wet: COLORS.bloodWet };
+      ctx.fillStyle = age < 0.35 ? pal.dark : age < 0.7 ? pal.mid : pal.blood;
       ctx.fillRect(x, y, 1, 1);
       if (i % 5 === 0 && x < 23 + PAD && y < 23 + PAD) ctx.fillRect(x, y, 2, 2);       // coágulo
       if (i % 7 === 3) {                                                     // reguero hacia abajo (solo sobre la máscara)
         for (let d = 1; d <= 3 && opaque.has((y0 + d) * 24 + x0); d++) ctx.fillRect(x, y + d, 1, 1);
       }
-      if (age > 0.85 && i % 3 === 0) { ctx.fillStyle = COLORS.bloodWet; ctx.fillRect(x, y, 1, 1); } // brillo húmedo
+      if (age > 0.85 && i % 3 === 0) { ctx.fillStyle = pal.wet; ctx.fillRect(x, y, 1, 1); } // brillo húmedo
     }
   }
   portraitCache.set(key, c);

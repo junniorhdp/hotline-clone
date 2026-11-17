@@ -183,7 +183,7 @@ export class Vagrant {
     this.state = 'dead';
     this.say = null; this.sayT = 0;
     game.bleed(this.x, this.y, angle, 1, 0.8, this.toxic);
-    if (Math.hypot(game.player.x - this.x, game.player.y - this.y) < 90) game.stainPlayer(0.8, angle);
+    if (Math.hypot(game.player.x - this.x, game.player.y - this.y) < 90) game.stainPlayer(0.8, angle, this.toxic);
     if (this.street) this.street.civilianDied(this);
   }
 
