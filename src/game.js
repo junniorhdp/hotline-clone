@@ -19,13 +19,14 @@ import { weaponCategory } from './weapons.js';
 import { buildOptionsMenu, buildPauseMenu } from './options-menu.js';
 import { Player, bloodLevelFor, FINISH_RANGE } from './player.js';
 import { Enemy, resetAiBudget } from './enemy.js';
+const RUNOVER_FLIGHT = 0.7; // s que tarda el jugador atropellado en estamparse contra la «pantalla»
 const ALARM_REACH = 18; // casillas de recorrido (a través de puertas) a las que llega un grito de alerta
 import { Door, ENEMY_PUSH_SPEED } from './doors.js';
 import { Pickup, Bullet, ENEMY_WEAPONS, WEAPON_DEFS, segmentPointDistance } from './weapons.js';
 import { Particles, Footprints, GIB_COLORS, TOXIC, RED, TOXIC_GIBS, VOMIT, palOf } from './particles.js';
 import { Sfx } from './audio.js';
 import { ScreenFx } from './effects.js';
-import { drawSprite, pixelDisc, pixelRect, BLOOD_LEVELS, WORLD_PX } from './sprites.js';
+import { drawSprite, pixelDisc, pixelRect, BLOOD_LEVELS, WORLD_PX, playerBody, drawMaskHead } from './sprites.js';
 import { drawText, measureText, CELL_H } from './pixelfont.js';
 import { COLORS, TAU, rand, clamp, angleDiff, closestOnSegment, seededRandom, hashString } from './utils.js';
 
@@ -954,6 +955,7 @@ export class Game {
     this.sewer.bind(this);
     this.guilt = null;
     this.street = new StreetLife(this); // contenedores, moneda, máquina, cabina y vagabundo de la calle
+    this.runover = null; // atropello en curso (ver runOver)
     this.hostages = new Hostages(this, level.hostages || []); // rehenes atados a sillas dentro del edificio (ver hostages.js)
     this.pools = [];
     // masks (selección) | arriving (llega en moto) | playing (fuera o dentro: ver `inside`) | dead |
@@ -1083,6 +1085,10 @@ export class Game {
     this.sewer.update(dt, this);
     this.street.update(dt);
     this.hostages.update(dt);
+    // Atropello: el auto de extracción en marcha arrolla al jugador que se le cruza.
+    const car = this.hostages.car;
+    if (car && this.player.alive && (this.state === 'playing' || this.state === 'cleared') && car.hits(this.player.x, this.player.y, this.player.r)) this.runOver(car);
+    if (this.runover) this.stepRunover(dt);
     // Culpa: 3 s después de matar (o herir de muerte) a un civil, el jugador se quita la máscara y vomita (vulnerable y quieto).
     if (this.guilt) {
       const gp = this.player;
@@ -2066,6 +2072,91 @@ export class Game {
     this.hitstop = HITSTOP.playerDeath;
     this.sfx.play('death');
     this.sfx.play('grunt', 0.9);
+  }
+
+  // Atropello exagerado por el auto de extracción: el jugador sale despedido hacia la cámara, se estampa contra la «pantalla» (mancha de sangre y de
+  // máscara en el cristal, que gotea) y la pantalla de muerte lo celebra con una burla en vez de HAS MUERTO. Solo es visual y de mensaje: R reintenta como siempre.
+  runOver(car) {
+    const p = this.player;
+    p.alive = false;
+    p.cancelExecution();
+    p.vomit = null;
+    this.state = 'dead';
+    this.callout = null; // el cartel PISO COMPLETADO no tapa la burla
+    this.bleed(p.x, p.y, 0, 1.4, 1);
+    if (p.weapon) this.pickups.push(new Pickup(p.weapon.type, p.x, p.y, p.weapon.ammo));
+    const blobs = [];
+    for (let i = 0; i < 52; i++) {
+      const a = Math.random() * TAU, rr = Math.pow(Math.random(), 0.7);
+      blobs.push({ a, rr, s: 2 + Math.floor(Math.random() * 6), drip: Math.random() < 0.3 ? 8 + Math.random() * 26 : 0, tox: false });
+    }
+    const MSGS = ['ATROPELLADO POR TUS ALIADOS', 'EL RESCATE SALIÓ BIEN. PARA ELLOS', 'GRACIAS POR SALVARNOS. ¡CRUNCH!', 'TAXI... Y AL PARABRISAS', 'LOS REHENES VIVEN. TÚ NO'];
+    this.runover = { t: 0, x: p.x, y: p.y, a0: p.angle, spin: (Math.random() < 0.5 ? -1 : 1) * (7 + Math.random() * 4), blobs, hit: false, msg: MSGS[Math.floor(Math.random() * MSGS.length)] };
+    this.camera.addShake(12);
+    this.fx.kick(1);
+    this.sfx.play('death');
+    this.sfx.play('hit');
+    this.touch.haptic([40, 30, 90]);
+  }
+
+  // Avanza el vuelo (0,7 s hacia la cámara); al estamparse: sacudida, destello y crujido.
+  stepRunover(dt) {
+    const ro = this.runover;
+    ro.t += dt;
+    if (!ro.hit && ro.t >= RUNOVER_FLIGHT) {
+      ro.hit = true;
+      this.camera.addShake(22);
+      this.fx.kick(1);
+      this.sfx.play('crunch');
+      this.sfx.play('hit');
+    }
+  }
+
+  // Pantalla: el jugador (con su máscara y su ropa) crece y gira hacia la cámara; al impactar queda una mancha en el cristal con grietas, restos de
+  // máscara y regueros que resbalan despacio. Va bajo la franja de la pantalla de muerte.
+  drawRunover(ctx, w, h) {
+    const ro = this.runover;
+    if (!ro) return;
+    const s0 = this.camera.worldToScreen(ro.x, ro.y), cx = w / 2, cy = h * 0.42;
+    const k = Math.min(1, ro.t / RUNOVER_FLIGHT), e = k * k;
+    if (!ro.hit) {
+      const px = Math.round(s0.x + (cx - s0.x) * e), py = Math.round(s0.y + (cy - s0.y) * e - Math.sin(k * Math.PI) * 18);
+      const sc = 1 + e * (Math.max(w, h) / 22);
+      ctx.save();
+      ctx.translate(px, py);
+      ctx.rotate(ro.a0 + ro.spin * ro.t);
+      ctx.scale(sc / WORLD_PX, sc / WORLD_PX);
+      drawSprite(ctx, playerBody(this.mask.id, this.goreOn ? this.player.bloodLevel : 0, this.gender), 0, 0);
+      drawMaskHead(ctx, this.mask.id, this.goreOn ? this.player.bloodLevel : 0);
+      ctx.restore();
+      return;
+    }
+    // Impacto: destello que se apaga y la mancha en el cristal.
+    const age = ro.t - RUNOVER_FLIGHT, R = Math.min(w, h) * 0.34;
+    if (age < 0.12) { ctx.fillStyle = `rgba(255,255,255,${0.7 * (1 - age / 0.12)})`; ctx.fillRect(0, 0, w, h); }
+    // restos de la máscara (la cabeza grande aplastada contra el cristal, desvaneciéndose despacio) y de la cazadora
+    ctx.save();
+    ctx.globalAlpha = Math.max(0.25, 0.85 - age * 0.12);
+    ctx.translate(Math.round(cx), Math.round(cy + Math.min(age * 6, 14)));
+    ctx.rotate(ro.a0 + ro.spin * RUNOVER_FLIGHT);
+    const sc = 1 + (Math.max(w, h) / 22);
+    ctx.scale(sc / WORLD_PX, sc / WORLD_PX);
+    drawSprite(ctx, playerBody(this.mask.id, 0, this.gender), 0, 0);
+    drawMaskHead(ctx, this.mask.id, 0);
+    ctx.restore();
+    // sangre: salpicadura radial + regueros
+    for (const b of ro.blobs) {
+      const x = Math.round(cx + Math.cos(b.a) * b.rr * R), y = Math.round(cy + Math.sin(b.a) * b.rr * R);
+      ctx.fillStyle = b.rr > 0.75 ? COLORS.bloodMid : b.s > 4 ? COLORS.blood : COLORS.bloodDark;
+      ctx.fillRect(x, y, b.s, b.s);
+      if (b.drip) { const len = Math.min(b.drip, age * 5 + 2); ctx.fillStyle = COLORS.bloodDark; ctx.fillRect(x + (b.s >> 1), y + b.s, 1 + (b.s > 4 ? 1 : 0), Math.round(len)); }
+    }
+    // grietas del cristal (rayos de píxeles desde el punto de impacto)
+    ctx.fillStyle = 'rgba(220,240,255,0.55)';
+    for (let i = 0; i < 7; i++) {
+      const a = (i / 7) * TAU + 0.4, len = R * (0.7 + ((i * 37) % 10) / 14);
+      for (let d = 4; d < len; d += 3) ctx.fillRect(Math.round(cx + Math.cos(a) * d + Math.sin(d * 0.9) * 1.2), Math.round(cy + Math.sin(a) * d), 1, 1);
+    }
   }
 
   // Patada a la puerta que haya delante del jugador. Devuelve true si había puerta.
@@ -3103,13 +3194,15 @@ export class Game {
       ctx.fillRect(0, h - CINE_BAR, w, CINE_BAR);
       drawText(ctx, this.hint('ESPACIO · CLIC: SALTAR', 'TOCA: SALTAR'), cx, h - CINE_BAR + 4, { color: '#9d8fb8', align: 'center' });
     }
+    if (this.state === 'dead') this.drawRunover(ctx, w, h);
     if (this.state === 'dead') {
       // En táctil la franja crece para alojar los botones REINTENTAR / TERMINAR / RÉCORDS.
       const touch = this.input.touchMode;
       const bandH = touch ? 26 + 8 + this.touch.buttonSize('X').h + 8 : 52;
       ctx.fillStyle = 'rgba(13, 2, 33, 0.6)';
       ctx.fillRect(0, Math.round(h / 2) - 26, w, bandH);
-      drawText(ctx, 'HAS MUERTO', cx, Math.round(h / 2) - 22, { color: COLORS.blood, scale: this.fitScale('HAS MUERTO', w - 12, 3), align: 'center' });
+      const title = this.runover ? this.runover.msg : 'HAS MUERTO'; // atropellado por el auto de extracción: burla en vez de HAS MUERTO
+      drawText(ctx, title, cx, Math.round(h / 2) - 22, { color: COLORS.blood, scale: this.fitScale(title, w - 12, 3), align: 'center' });
       if (!touch) drawText(ctx, 'R REINTENTAR PISO · ENTER TERMINAR PARTIDA · T RÉCORDS', cx, Math.round(h / 2) + 10, { color: COLORS.text, align: 'center' });
       if (this.showRecords) this.drawRecordsOverlay(ctx, w, h);
       else { const ss = this.statsSummary(); this.drawStatsPanel(ctx, Math.round(cx - this.statsPanelWidth(ss) / 2), Math.min(Math.round(h / 2) - 26 + bandH + 6, h - this.safe.b - 6 - 53), ss); } // sin pasar de la zona segura inferior

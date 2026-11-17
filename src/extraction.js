@@ -34,6 +34,12 @@ export class ExtractionCar {
     return { x: this.stopX - ((n - 1) * 15) / 2 + i * 15, y: this.y - 34 };
   }
 
+  // ¿Atropella a (x, y, r)? Solo mientras el auto se mueve de verdad (llegando o saliendo), no con el auto parado esperando a los rehenes.
+  hits(x, y, r) {
+    if ((this.phase !== 'arrive' && this.phase !== 'depart') || this.v < 60) return false;
+    return Math.abs(x - this.x) < LEN / 2 + 2 + r * 0.5 && Math.abs(y - this.y) < WID / 2 + 2 + r * 0.5;
+  }
+
   get busy() { return this.phase !== 'depart' && this.phase !== 'gone'; }
 
   update(dt, game, hostages) {
