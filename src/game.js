@@ -11,6 +11,7 @@ import { KeyBinds } from './keybinds.js';
 import { Boss, drawBossBar } from './boss.js';
 import { bloodyMaskPortrait, villainPortrait, villainDef, AGENTS, drawGenderIcon, drawAgentPreview, drawPadlock } from './portraits.js';
 import { Ads } from './ads.js';
+import { Sewer } from './sewer.js';
 import { weaponCategory } from './weapons.js';
 import { buildOptionsMenu, buildPauseMenu } from './options-menu.js';
 import { Player, bloodLevelFor, FINISH_RANGE } from './player.js';
@@ -900,6 +901,8 @@ export class Game {
     this.bullets = [];
     this.particles.clear();
     this.prints.clear();
+    this.sewer = new Sewer(this.map.sewers); // easter egg: cocodrilo en la alcantarilla
+    this.sewer.bind(this);
     this.pools = [];
     // masks (selección) | arriving (llega en moto) | playing (fuera o dentro: ver `inside`) | dead |
     // cleared (despejado: vuelve a la moto) | leaving (se sube y se va) | results
@@ -1021,6 +1024,7 @@ export class Game {
     this.updatePickups(dt);
     this.particles.update(dt, this.map, (kind, p) => this.bake(kind, p));
     this.prints.update(dt);
+    this.sewer.update(dt, this);
 
     this.bullets = this.bullets.filter((b) => b.alive);
     this.pickups = this.pickups.filter((p) => p.alive);
@@ -1885,6 +1889,7 @@ export class Game {
   }
 
   makeNoise(x, y, radius) {
+    if (this.sewer) this.sewer.heard(x, y, radius);
     for (const e of this.enemies) {
       if (e.alive && Math.hypot(e.x - x, e.y - y) < radius) e.hear(x, y);
     }
@@ -2071,6 +2076,7 @@ export class Game {
     ctx.drawImage(this.floorLayer, 0, 0, pixelW, pixelH);
     ctx.drawImage(this.bloodLayer, 0, 0, pixelW, pixelH);
     if (this.goreOn) this.prints.draw(ctx); // sobre baldosas y sangre, bajo todo lo demás
+    this.sewer.draw(ctx);
     this.drawBike(ctx);
     this.drawObjectiveMarker(ctx);
     this.particles.drawGround(ctx);

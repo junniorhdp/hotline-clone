@@ -60,6 +60,7 @@ HTML5 Canvas, JavaScript Vanilla (ES Modules) y Vite. Sin frameworks ni librerí
   - `pixelfont.js` — fuente bitmap 5×7 propia (con tildes y Ñ) y `drawText`; cachea cada texto renderizado.
   - `input.js` — teclado, ratón y dedos (Pointer Events); distingue "mantenido" de "pulsado este paso".
   - `keybinds.js` — controles de PC reasignables (`KEY_CONFIG`, `KeyBinds`, `keyLabel`). Ver "Controles de PC reasignables".
+  - `sewer.js` — easter egg de la calle: `Sewer` (tapa de alcantarilla que se desliza y cocodrilo que sonríe). Ver "Perímetro exterior y alcantarilla".
   - `ads.js` — gestor de pausa para un SDK de anuncios (Poki / CrazyGames): `triggerInterstitial` / `triggerRewarded`. Ver "Anuncios (ads.js)".
   - `settings.js` — ajustes del jugador: lista declarativa `OPTIONS` + gestor `Settings` (`localStorage`). Ver "Ajustes y menús".
   - `options-menu.js` — menús modales de lista `ListMenu` (OPCIONES y PAUSA) con estética neón.
@@ -193,6 +194,19 @@ Cada piso empieza **en la calle**, no dentro. El ciclo (`game.js`) es:
     alcanzable, patrullas sin cruzar puertas, exterior sin enemigos y camino de la puerta a la moto.
   - Comprobar después que nadie se atasca simulando movimiento real (`moveAndSlide`) y la
     navegación de los enemigos (`Enemy.goTo`) hacia el jugador, patrullas, armas y la entrada.
+
+## Perímetro exterior y alcantarilla
+- **Anillo de calle** (`withOutskirts` en `map.js`, `OUTSKIRT` = 6 casillas): al cargar un piso se rodea el mapa de `LEVELS` por **arriba, izquierda y derecha** (al sur ya está la calle del propio piso)
+  con calle nocturna desierta. Lo escrito en `LEVELS` **no cambia**: `rows`, `zones` y `props` se desplazan (6, 6) al cargar, así que los pisos se siguen diseñando con sus coordenadas de siempre. La miniatura
+  del selector de pisos y `check:levels` leen el mapa ya cargado / el original, sin problema. El mapa cargado mide `w + 12` × `h + 6`.
+- **Cámara**: `Camera.setBounds` usa el mapa ampliado, así que la cámara puede subir a la calle; la habitación superior ya no queda bajo el HUD de arriba a la derecha.
+- **Contenido** (generado con semilla por piso, siempre igual): **acera** pegada al edificio (`sidewalk`, losas con juntas y grietas), **asfalto** con grietas y aceite, **farolas** (`lamp`, sólidas, con charco de luz translúcido),
+  **contenedores** (`dumpster`, sólidos) contra la valla, basura/barriles/manchas/papeles sueltos y **tapas de alcantarilla** (`sewer`, decorativas). La puerta del edificio sigue siendo la principal (`N`, vestíbulo → calle).
+- **Valla**: la casilla más externa del mapa es una pared estructural dibujada como **valla metálica** (`drawFence` en `decor.js`, sin neón): es el límite duro de colisión; fuera de ella la cámara no puede pasar.
+- **Cocodrilo** (`Sewer`, `game.sewer`, se recrea en `reset()`; `map.sewers` = tapas): temporizador aleatorio (1.ª vez 14-28 s, luego 25-60 s). Elige una tapa a 190-480 u del jugador (visible). Fases:
+  `slide` (la tapa se desliza 11 px al lado contrario del jugador, 0,7 s, sonido `manholeScrape`) → `rise` (0,6 s, `crocUp`) → `grin` (3,6 s: mira al jugador en los 4 ejes, parpadea, sonrisa con dientes que destellan) → `sink` → `close`.
+  **Se esconde de golpe** (`scare`: hunde la cabeza en 0,18 s y cierra en 0,3 s) si el jugador está a < 150 u o si `makeNoise` suena a menos de min(radio, 520) de la tapa (disparos, golpes fuertes). Es solo dibujo y sonido:
+  no colisiona ni hace daño. Se dibuja con `pixelRect`/`pixelDisc` tras las huellas y antes de la moto.
 
 ## Pantallas y estados (`game.state`)
 Correspondencia entre las pantallas conceptuales y los valores reales de `game.state`:

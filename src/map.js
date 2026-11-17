@@ -1,4 +1,4 @@
-import { segmentIntersectT } from './utils.js';
+import { segmentIntersectT, seededRandom } from './utils.js';
 
 export const TILE = 32;
 const CORNER_TOLERANCE = 8; // px que se "empuja" al jugador para entrar en huecos
@@ -480,8 +480,8 @@ export const LEVELS = [
 // IA los rodea con el pathfinding. El resto de tipos de `props` son decoración de suelo.
 // El arte de cada tipo está en decor.js.
 export const SOLID_PROPS = new Set(['desk', 'deskFlipped', 'counter', 'sofa', 'cashTable', 'shelf', 'tv',
-  'cabinet', 'crates', 'barrel', 'toilet', 'sink', 'cardTable', 'bed', 'bike']);
-export const DECOR_PROPS = new Set(['rug', 'debris', 'trash', 'stain', 'papers']);
+  'cabinet', 'crates', 'barrel', 'toilet', 'sink', 'cardTable', 'bed', 'bike', 'lamp', 'dumpster']);
+export const DECOR_PROPS = new Set(['rug', 'debris', 'trash', 'stain', 'papers', 'sewer']);
 // Celdas de la cuadrícula: 0 suelo · 1 pared estructural · 2 mueble sólido.
 const CELL_WALL = 1;
 const CELL_PROP = 2;
@@ -509,10 +509,64 @@ const MELEE_TYPES = ['bat', 'pipe', 'knife'];
 // aparece si la máscara aún no está desbloqueada (lo decide Game.makeEnemy). Se escoge al más alejado de la entrada (hay que ir a por él).
 const CARRIERS = { 1: 'guepardo', 2: 'tiburon', 3: 'buho' };
 
+// --- Perímetro exterior -----------------------------------------------------------------------
+// Cada piso se rodea al cargarlo con un anillo de calle de OUTSKIRT casillas por arriba, izquierda y derecha (al sur ya está
+// la calle del propio piso): acera junto al edificio, asfalto, farolas, contenedores, basura y tapas de alcantarilla. La
+// casilla más externa es una VALLA (pared: límite duro del mapa). Todo lo escrito en LEVELS conserva sus coordenadas
+// relativas: aquí se desplaza (OUTSKIRT, OUTSKIRT). La cámara usa el tamaño del mapa ya ampliado, así que puede subir a la calle.
+export const OUTSKIRT = 6;
+function withOutskirts(def, index) {
+  const M = OUTSKIRT, w = def.rows[0].length, h = def.rows.length, W = w + 2 * M, H = h + M;
+  const rows = [];
+  rows.push('#'.repeat(W));
+  for (let i = 1; i < M; i++) rows.push('#' + '.'.repeat(W - 2) + '#');
+  def.rows.forEach((r, i) => rows.push(i === h - 1 ? '#'.repeat(W) : '#' + '.'.repeat(M - 1) + r + '.'.repeat(M - 1) + '#'));
+  const zones = [['asphalt', 1, 1, W - 2, M - 1]]; // calle por arriba
+  const sideRows = def.rows.map((r, i) => (i < h - 1 ? i : -1)).filter((i) => i >= 0);
+  const street = (i) => def.rows[i][0] !== '#'; // filas del exterior sur: la calle sigue hasta el borde
+  for (const i of sideRows) { zones.push(['asphalt', 1, M + i, M - 1, M + i], ['asphalt', M + w, M + i, W - 2, M + i]); }
+  zones.push(['sidewalk', M - 1, M - 1, M + w, M - 1]); // acera pegada al edificio: arriba y a los lados
+  for (const i of sideRows) if (!street(i)) zones.push(['sidewalk', M - 1, M + i, M - 1, M + i], ['sidewalk', M + w, M + i, M + w, M + i]);
+  for (const [t, x0, y0, x1, y1] of def.zones || []) zones.push([t, x0 + M, y0 + M, x1 + M, y1 + M]);
+  const props = (def.props || []).map(([t, x, y, pw = 1, ph = 1]) => [t, x + M, y + M, pw, ph]);
+  const rnd = seededRandom(index * 977 + 41);
+  const lampX = [], lampY = [];
+  for (let x = M + 3; x < M + w - 2; x += 9) lampX.push(x + Math.floor(rnd() * 3));
+  for (let y = M + 3; y < M + h - 8; y += 8) lampY.push(y + Math.floor(rnd() * 3));
+  for (const x of lampX) props.push(['lamp', x, M - 1]);
+  for (const y of lampY) props.push(['lamp', M - 1, y], ['lamp', M + w, y]);
+  // Contenedores contra la valla, basura y manchas esparcidas por la calle.
+  const free = new Set();
+  const take = (x, y, pw = 1, ph = 1) => {
+    for (let j = y; j < y + ph; j++) for (let i = x; i < x + pw; i++) { if (free.has(i + ',' + j)) return false; }
+    for (let j = y; j < y + ph; j++) for (let i = x; i < x + pw; i++) free.add(i + ',' + j);
+    return true;
+  };
+  for (const p of props) if (p[1] < M || p[1] >= M + w || p[2] < M) take(p[1], p[2], p[3], p[4]);
+  const sewers = [];
+  const add = (t, x, y, pw = 1, ph = 1) => { if (take(x, y, pw, ph)) props.push([t, x, y, pw, ph]); };
+  add('dumpster', M + 6 + Math.floor(rnd() * 6), 1, 2, 1);
+  add('dumpster', M + w - 14 + Math.floor(rnd() * 6), 1, 2, 1);
+  add('dumpster', 1, M + 6 + Math.floor(rnd() * 5), 1, 2);
+  add('dumpster', W - 2, M + 12 + Math.floor(rnd() * 5), 1, 2);
+  for (let i = 0; i < 26; i++) {
+    const side = Math.floor(rnd() * 3);
+    const x = side === 0 ? 1 + Math.floor(rnd() * (W - 2)) : side === 1 ? 1 + Math.floor(rnd() * (M - 2)) : W - M + 1 + Math.floor(rnd() * (M - 2));
+    const y = side === 0 ? 1 + Math.floor(rnd() * (M - 2)) : M + Math.floor(rnd() * (h - 12));
+    if (x === M - 1 || x === M + w || y === M - 1) continue; // la acera la dejamos limpia
+    add(['trash', 'debris', 'stain', 'papers', 'barrel'][Math.floor(rnd() * 5)], x, y);
+  }
+  // Tapas de alcantarilla: una arriba y una en cada lado, en el asfalto (casillas libres, lejos de las farolas).
+  for (const [x, y] of [[M + Math.floor(w * 0.3) + Math.floor(rnd() * 4), 3], [3, M + 9 + Math.floor(rnd() * 4)], [W - 4, M + 7 + Math.floor(rnd() * 4)], [M + Math.floor(w * 0.72), 3]]) {
+    if (take(x, y)) { props.push(['sewer', x, y]); sewers.push({ tx: x, ty: y }); }
+  }
+  return { rows, zones, props, sewers };
+}
+
 // `rng` (0..1) decide las armas aleatorias; el juego pasa uno con semilla por partida y piso.
 export function loadLevel(index = 0, rng = Math.random) {
   const def = LEVELS[index];
-  const rows = def.rows;
+  const { rows, zones: defZones, props: defProps, sewers } = withOutskirts(def, index);
   const h = rows.length;
   const w = rows[0].length;
   const grid = new Uint8Array(w * h);
@@ -543,15 +597,16 @@ export function loadLevel(index = 0, rng = Math.random) {
   if (mainDoors.length !== 1) throw new Error(`${def.name}: tiene que haber exactamente una puerta principal (N)`);
 
   // Zonas de suelo (habitaciones): rectángulos [tipo, x0, y0, x1, y1]; el resto usa `floor`.
+  map.sewers = sewers.map((c) => ({ ...c, x: c.tx * TILE + TILE / 2, y: c.ty * TILE + TILE / 2 }));
   map.floor = def.floor;
   map.zone = new Array(w * h).fill(def.floor);
-  for (const [type, x0, y0, x1, y1] of def.zones || []) {
+  for (const [type, x0, y0, x1, y1] of defZones) {
     for (let ty = y0; ty <= y1; ty++) for (let tx = x0; tx <= x1; tx++) map.zone[ty * w + tx] = type;
   }
   // Muebles [tipo, x, y, ancho, alto] en casillas. Los sólidos se marcan en la cuadrícula; se
   // valida que no pisen paredes, entidades, puertas ni otros muebles (error de diseño = excepción).
   const occupied = new Set(rows.flatMap((row, ty) => [...row].map((ch, tx) => (ch !== '.' ? ty * w + tx : -1))).filter((i) => i >= 0));
-  map.props = (def.props || []).map(([type, x, y, pw = 1, ph = 1]) => {
+  map.props = defProps.map(([type, x, y, pw = 1, ph = 1]) => {
     const solid = SOLID_PROPS.has(type);
     if (!solid && !DECOR_PROPS.has(type)) throw new Error(`${def.name}: mueble desconocido '${type}'`);
     for (let ty = y; ty < y + ph; ty++) {

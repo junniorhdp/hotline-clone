@@ -145,6 +145,18 @@ export const FLOORS = {
     rect(ctx, '#8a86a8', x0, y0, PX, 1);
     dots(ctx, '#14111f', x0, y0 + PX - 2, PX, 1, 3, rnd);
   },
+  // Acera de la calle: losas de hormigón pálido con juntas, grietas, manchas y algún chicle.
+  sidewalk(ctx, tx, ty, rnd) {
+    const x0 = tx * PX, y0 = ty * PX;
+    rect(ctx, '#3a3552', x0, y0, PX, PX);
+    dots(ctx, '#443f5e', x0, y0, PX, PX, 16, rnd);
+    dots(ctx, '#2c2840', x0, y0, PX, PX, 12, rnd);
+    rect(ctx, '#26223a', x0, y0 + PX - 1, PX, 1); // junta entre losas
+    rect(ctx, '#26223a', x0 + PX - 1, y0, 1, PX);
+    rect(ctx, '#4d4869', x0, y0, PX - 1, 1);
+    if (rnd() < 0.2) crack(ctx, '#1c182c', x0 + 2 + Math.floor(rnd() * 11), y0 + 1, 6 + Math.floor(rnd() * 8), rnd);
+    if (rnd() < 0.08) rect(ctx, '#8a4a6a', x0 + 3 + Math.floor(rnd() * 9), y0 + 3 + Math.floor(rnd() * 9), 2, 1); // chicle
+  },
   // Chapa metálica antideslizante (almacenes, servidores): marcas en diagonal y óxido.
   metal(ctx, tx, ty, rnd) {
     const x0 = tx * PX, y0 = ty * PX;
@@ -243,6 +255,24 @@ const PROP_ART = {
     for (let i = 0; i < w - 4; i++) rect(ctx, '#8a6230', x + 2 + i, y + 2 + Math.round((i * (h - 5)) / (w - 5)), 1, 1);
     rect(ctx, '#8a6230', x + 2, y + 2, w - 4, 1);
   },
+  // Farola: base y poste vistos desde arriba, con la lámpara encendida (su charco de luz va en DECO_ART.lamp).
+  lamp(ctx, x, y, w, h) {
+    const cx = x + w / 2, cy = y + h / 2;
+    ctx.fillStyle = K; pixelDisc(ctx, cx, cy, 4);
+    ctx.fillStyle = '#4a4660'; pixelDisc(ctx, cx, cy, 3);
+    ctx.fillStyle = '#6a6488'; pixelDisc(ctx, cx - 1, cy - 1, 1);
+    ctx.fillStyle = '#ffe08a'; pixelDisc(ctx, cx, cy, 1);
+    rect(ctx, '#fff6c8', cx, cy, 1, 1);
+  },
+  // Contenedor de basura (2×1 o 1×2): tapa verde oscuro con asas y óxido.
+  dumpster(ctx, x, y, w, h, rnd) {
+    box(ctx, '#2a5a3a', x + 1, y + 1, w - 2, h - 2);
+    rect(ctx, '#3a7a50', x + 2, y + 2, w - 4, 1);
+    rect(ctx, '#1d4028', x + 2, y + h - 3, w - 4, 1);
+    if (w >= h) { rect(ctx, K, x + w / 2, y + 2, 1, h - 4); rect(ctx, '#9aa0b8', x + 3, y + h / 2, 3, 1); rect(ctx, '#9aa0b8', x + w - 6, y + h / 2, 3, 1); }
+    else { rect(ctx, K, x + 2, y + h / 2, w - 4, 1); rect(ctx, '#9aa0b8', x + w / 2, y + 3, 1, 3); rect(ctx, '#9aa0b8', x + w / 2, y + h - 6, 1, 3); }
+    dots(ctx, '#8a4a2a', x + 2, y + 2, w - 4, h - 4, 8, rnd);
+  },
   barrel(ctx, x, y, w, h, rnd) {
     const cx = x + w / 2, cy = y + h / 2;
     ctx.fillStyle = K; pixelDisc(ctx, cx, cy, 7);
@@ -293,6 +323,21 @@ const DECO_ART = {
     }
     for (let i = x + 2; i < x + w - 2; i += 2) { rect(ctx, '#c9a07a', i, y, 1, 1); rect(ctx, '#c9a07a', i, y + h - 1, 1, 1); }
     dots(ctx, '#1a0a16', x + 3, y + 3, w - 6, h - 6, Math.floor((w * h) / 60), rnd); // agujeros
+  },
+  // Charco de luz de la farola sobre el suelo (translúcido, en escalones de píxeles).
+  lamp(ctx, x, y, w, h) {
+    const cx = x + w / 2, cy = y + h / 2;
+    ctx.fillStyle = 'rgba(255, 224, 138, 0.07)'; pixelDisc(ctx, cx, cy, 15);
+    ctx.fillStyle = 'rgba(255, 224, 138, 0.08)'; pixelDisc(ctx, cx, cy, 11);
+    ctx.fillStyle = 'rgba(255, 224, 138, 0.10)'; pixelDisc(ctx, cx, cy, 7);
+  },
+  // Base de la alcantarilla: el agujero oscuro con su marco (la tapa la dibuja sewer.js y se desliza).
+  sewer(ctx, x, y, w, h) {
+    const cx = x + w / 2, cy = y + h / 2;
+    ctx.fillStyle = '#0a0712'; pixelDisc(ctx, cx, cy, 7);
+    ctx.fillStyle = '#2a2540'; pixelDisc(ctx, cx, cy, 6);
+    ctx.fillStyle = '#04030a'; pixelDisc(ctx, cx, cy, 5);
+    ctx.fillStyle = '#0b2a2a'; pixelDisc(ctx, cx, cy + 1, 3);
   },
   debris(ctx, x, y, w, h, rnd) {
     for (let i = 0; i < 6; i++) {
@@ -370,6 +415,16 @@ export function renderProps(map) {
 
 // Paredes (solo las estructurales: los muebles no llevan tubo neón) con deterioro: ladrillo
 // visto, manchas, cables sueltos y grafitis mínimos. Devuelve { walls, glow }.
+// Valla del perímetro (límite duro del mapa): rejilla metálica oscura con postes, sin el neón de los muros.
+function drawFence(ctx, x0, y0, tx, ty) {
+  rect(ctx, '#15111f', x0, y0, PX, PX);
+  rect(ctx, '#2c2840', x0, y0 + 2, PX, 1);
+  rect(ctx, '#2c2840', x0, y0 + PX - 4, PX, 1);
+  for (let i = 1; i < PX; i += 3) rect(ctx, '#3e3960', x0 + i, y0, 1, PX);
+  if ((tx + ty) % 4 === 0) rect(ctx, '#5a5480', x0 + 6, y0, 3, PX); // poste
+  rect(ctx, '#0a0812', x0, y0 + PX - 1, PX, 1);
+}
+
 export function renderWalls(map) {
   const walls = makeLayer(map);
   const glow = makeLayer(map);
@@ -383,6 +438,7 @@ export function renderWalls(map) {
     for (let tx = 0; tx < map.w; tx++) {
       if (!solid(tx, ty)) continue;
       const x0 = tx * PX, y0 = ty * PX;
+      if (tx === 0 || ty === 0 || tx === map.w - 1 || ty === map.h - 1) { drawFence(ctx, x0, y0, tx, ty); continue; } // límite del mapa
       // Cara superior: ladrillo oscuro con juntas y brillo arriba-izquierda.
       rect(ctx, '#2a0d3a', x0, y0, PX, PX);
       ctx.fillStyle = '#1d0829';

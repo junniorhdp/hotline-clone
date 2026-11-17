@@ -88,6 +88,18 @@ const SOUNDS = {
   creak(s, v) {
     s.tone({ type: 'sawtooth', from: 170, to: 240, dur: 0.2, gain: 0.035 * v });
   },
+  // Easter egg de la alcantarilla: tapa de hierro arrastrada, cocodrilo que asoma (risa grave) y chapoteo al esconderse.
+  manholeScrape(s, v) {
+    s.noise({ dur: 0.65, gain: 0.35 * v, filter: 'bandpass', freq: 220, freqTo: 600, q: 3 });
+    s.tone({ type: 'sawtooth', from: 70, to: 48, dur: 0.6, gain: 0.18 * v });
+  },
+  crocUp(s, v) {
+    s.noise({ dur: 0.3, gain: 0.3 * v, filter: 'lowpass', freq: 500, freqTo: 1400 });
+  },
+  crocDown(s, v) {
+    s.noise({ dur: 0.35, gain: 0.45 * v, filter: 'lowpass', freq: 1800, freqTo: 250 });
+    s.tone({ type: 'sine', from: 160, to: 45, dur: 0.25, gain: 0.35 * v });
+  },
   ricochet(s, v) {
     s.tone({ type: 'triangle', from: 2600, to: 1200, dur: 0.06, gain: 0.06 * v });
     s.noise({ dur: 0.03, gain: 0.08 * v, filter: 'highpass', freq: 3000 });
