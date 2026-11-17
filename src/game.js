@@ -931,9 +931,11 @@ export class Game {
     this.bannerTimer = INTRO_BANNER_TIME;
     this.sfx.setMusic(retryInside ? 'action' : 'menu'); // la música de combate empieza al entrar
 
-    // Las capas estáticas solo se regeneran al cambiar de piso.
-    if (this.layersLevel !== this.levelIndex) {
-      this.layersLevel = this.levelIndex;
+    // Las capas estáticas solo se regeneran al cambiar de piso O de partida: la calle exterior es distinta en cada partida (runId),
+    // y con R (mismo piso y partida) se conservan.
+    const layersKey = `${this.levelIndex}:${this.runId}`;
+    if (this.layersLevel !== layersKey) {
+      this.layersLevel = layersKey;
       this.floorLayer = renderFloor(this.map);
       const { walls, glow } = renderWalls(this.map);
       this.wallLayer = walls;
@@ -2818,7 +2820,8 @@ export class Game {
     const def = p.def;
     let weaponText = def.name;
     if (p.weapon && def.maxAmmo) weaponText += `  ${p.weapon.ammo}/${def.maxAmmo}`;
-    drawText(ctx, weaponText, L, 4 + T, { color: COLORS.player, scale: 2 });
+    // El nombre del arma no pasa de la mitad izquierda (el centro es del combo, la lata y el jefe): se encoge si hace falta.
+    drawText(ctx, weaponText, L, 4 + T, { color: COLORS.player, scale: this.fitScale(weaponText, Math.max(40, w / 2 - 46 - L), 2) });
     // Miniatura de la máscara equipada (12×12 a ×2) con su nombre.
     ctx.fillStyle = '#140a24';
     ctx.fillRect(L - 1, 24 + T, 26, 26);

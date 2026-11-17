@@ -152,11 +152,11 @@ export class StreetLife {
         g.addFloat(t.x, t.y - 14, `¡${WEAPON_DEFS[t.loot].name}!`, '#c2682a', 1, 1.4);
       } else g.addFloat(t.x, t.y - 14, 'SOLO BASURA', '#9d8fb8', 1, 1.1);
     } else if (t.kind === 'vending') {
-      if (this.run.coins <= 0) { g.addFloat(t.x, t.y - 20, 'NECESITAS UNA MONEDA', COLORS.blood, 1, 1.3); g.sfx.play('empty'); return; }
+      if (this.run.coins <= 0) { g.addFloat(t.x, t.y - 38, 'NECESITAS UNA MONEDA', COLORS.blood, 1, 1.3); g.sfx.play('empty'); return; }
       this.run.coins--;
       g.buff = { t: BUFF_TIME, max: BUFF_TIME };
       g.sfx.play('can');
-      g.addFloat(t.x, t.y - 20, '¡LATA NEÓN! +VELOCIDAD +CADENCIA', COLORS.player, 1, 1.8);
+      g.addFloat(t.x, t.y - 38, '¡LATA NEÓN! +VELOCIDAD +CADENCIA', COLORS.player, 1, 1.8);
     } else if (t.kind === 'phone') {
       if (this.dialog) { this.dialog = null; return; }
       this.answer();
@@ -309,11 +309,18 @@ export class StreetLife {
       if (txt) label(txt, t.x, t.y - t.h / 2 - 12, t.kind === 'phone' && this.ringing ? COLORS.player : COLORS.text);
     }
     // Burbujas de los vagabundos (cajas enteras con margen de seguridad en los cuatro bordes).
-    for (const n of this.npcs) {
-      if (!n.alive || n.sayT <= 0 || !n.say) continue;
+    // Solo hablan a la vez los 2 más cercanos y las burbujas no se pisan (se apilan hacia arriba).
+    const talkers = this.npcs.filter((n) => n.alive && n.sayT > 0 && n.say)
+      .sort((a, b) => Math.hypot(a.x - g.player.x, a.y - g.player.y) - Math.hypot(b.x - g.player.x, b.y - g.player.y)).slice(0, 2);
+    const boxes = [];
+    for (const n of talkers) {
       const s = cam.worldToScreen(n.x, n.y - 24);
       const tw = measureText(n.say), bp = g.keepOnScreen(s.x, s.y - 3, tw + 8, 13, 6);
-      const bx = Math.round(bp.x - (tw + 8) / 2), by = Math.round(bp.y);
+      const bx = Math.round(bp.x - (tw + 8) / 2);
+      let by = Math.round(bp.y);
+      for (let k = 0; k < 4 && boxes.some((b) => Math.abs(b.y - by) < 15 && bx < b.x + b.w && bx + tw + 8 > b.x); k++) by -= 15;
+      by = Math.max(by, 4 + g.safe.t);
+      boxes.push({ x: bx, y: by, w: tw + 8 });
       ctx.fillStyle = 'rgba(13, 2, 33, 0.92)'; ctx.fillRect(bx, by, tw + 8, 13);
       ctx.fillStyle = n.scared ? COLORS.blood : COLORS.player;
       ctx.fillRect(bx, by, tw + 8, 1); ctx.fillRect(bx, by + 12, tw + 8, 1); ctx.fillRect(bx, by, 1, 13); ctx.fillRect(bx + tw + 7, by, 1, 13);

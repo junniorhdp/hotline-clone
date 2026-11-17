@@ -540,6 +540,8 @@ function withOutskirts(def, index, rng) {
     return true;
   };
   const add = (t, x, y, pw = 1, ph = 1) => { if (!take(x, y, pw, ph)) return false; props.push([t, x, y, pw, ph]); return true; };
+  // Los rincones de arriba quedan bajo el HUD (máscara/arma a la izquierda, puntos a la derecha): ahí no se esconde nada.
+  const hud = (x, y) => y <= 3 && (x <= 7 || x >= W - 9);
   const cell = (tx, ty) => ({ tx, ty, x: tx * TILE + TILE / 2, y: ty * TILE + TILE / 2 });
   // Farolas en las aceras (separación y desfase al azar).
   const lampX = [], lampY = [];
@@ -554,7 +556,7 @@ function withOutskirts(def, index, rng) {
   const yMax = H - 7; // las filas del sur son la calle del propio piso: ahí no se coloca nada
   // Contenedores contra la valla (3 a 5), en horizontal arriba y en vertical a los lados.
   const dSlots = [];
-  for (let x = 2; x < W - 4; x++) dSlots.push(['top', x, 1, 2, 1]);
+  for (let x = 2; x < W - 4; x++) if (!hud(x, 1) && !hud(x + 1, 1)) dSlots.push(['top', x, 1, 2, 1]);
   for (let y = M; y < yMax; y++) { dSlots.push(['left', 1, y, 1, 2]); dSlots.push(['right', W - 2, y, 1, 2]); }
   const dumpsters = [];
   const dWant = 3 + Math.floor(rnd() * 3);
@@ -568,7 +570,7 @@ function withOutskirts(def, index, rng) {
     skin: pick(['#d9a67a', '#b9825a', '#8a5a3a', '#f0c8a0']), hat: pick(['none', 'beanie', 'cap', 'hood']), item: pick(['none', 'bottle', 'blanket', 'none']) });
   const npcs = [], ringTop = (x, y) => y >= 2 && y <= M - 2 && x >= 3 && x <= W - 4, ringSide = (x, y) => y >= M + 2 && y <= yMax - 2 && ((x >= 2 && x <= M - 2) || (x >= W - M + 1 && x <= W - 3));
   const fireSpots = [];
-  for (let y = 2; y <= yMax; y++) for (let x = 2; x <= W - 3; x++) if (ringTop(x, y) || ringSide(x, y)) fireSpots.push([x, y]);
+  for (let y = 2; y <= yMax; y++) for (let x = 2; x <= W - 3; x++) if ((ringTop(x, y) || ringSide(x, y)) && !hud(x, y)) fireSpots.push([x, y]);
   let fire = null;
   for (const [fx, fy] of shuffle(fireSpots).slice(0, 40)) {
     const around = shuffle([[-1, 0], [1, 0], [0, -1], [0, 1], [-1, -1], [1, 1], [-1, 1], [1, -1]]).map(([dx, dy]) => [fx + dx, fy + dy]);
@@ -580,12 +582,15 @@ function withOutskirts(def, index, rng) {
     for (const [x, y] of seats.slice(0, n)) if (take(x, y)) npcs.push({ ...cell(x, y), look: looks(), mode: 'fire', fire: { x: fire.x, y: fire.y } });
     break;
   }
-  for (const d of shuffle(dumpsters.slice()).slice(0, 1 + Math.floor(rnd() * 2))) {
+  const sitWant = 1 + Math.floor(rnd() * 2);
+  let sitPlaced = 0;
+  for (const d of shuffle(dumpsters.slice())) {
+    if (sitPlaced >= sitWant) break;
     const [dx, dy, dw, dh] = d;
     const nb = [];
     for (let i = -1; i <= dw; i++) for (let j = -1; j <= dh; j++) if ((i < 0 || i >= dw) !== (j < 0 || j >= dh)) nb.push([dx + i, dy + j]);
     const seat = shuffle(nb).find(([x, y]) => (ringTop(x, y) || ringSide(x, y) || (x >= 1 && x <= W - 2 && y >= 1 && y <= M - 1)) && !free.has(x + ',' + y));
-    if (seat && take(seat[0], seat[1])) npcs.push({ ...cell(seat[0], seat[1]), look: looks(), mode: 'sit', fire: null });
+    if (seat && take(seat[0], seat[1])) { npcs.push({ ...cell(seat[0], seat[1]), look: looks(), mode: 'sit', fire: null }); sitPlaced++; }
   }
   // Máquina expendedora y cabina: casillas de acera al azar (separadas entre sí).
   const slots = shuffle(sidewalk.slice()).filter(([x, y]) => !free.has(x + ',' + y));
@@ -594,8 +599,10 @@ function withOutskirts(def, index, rng) {
   if (vs) add('vending', vs[0], vs[1]);
   if (ps) add('phone', ps[0], ps[1]);
   // Monedas escondidas en los rincones del perímetro (2).
-  const corners = shuffle([[1, 1], [W - 2, 1], [1, yMax + 1], [W - 2, yMax + 1], [2, 1], [W - 3, 1], [1, 2], [W - 2, 2]]).filter(([x, y]) => !free.has(x + ',' + y));
+  const corners = shuffle([[1, yMax + 1], [W - 2, yMax + 1], [2, yMax], [W - 3, yMax], [1, M + 2], [W - 2, M + 2], [Math.floor(W * 0.3), 1], [Math.floor(W * 0.7), 1],
+    [8 + Math.floor(rnd() * (W - 28)), 1], [1, M + 6 + Math.floor(rnd() * 6)], [W - 2, M + 6 + Math.floor(rnd() * 6)], [1, M + 13 + Math.floor(rnd() * 6)], [W - 2, M + 13 + Math.floor(rnd() * 6)]]).filter(([x, y]) => !free.has(x + ',' + y));
   const coins = corners.slice(0, 2).map(([x, y]) => cell(x, y));
+  for (const c of coins) take(c.tx, c.ty); // reservadas: el desorden de la calle no las tapa
   // Basura y manchas esparcidas por la calle.
   for (let i = 0; i < 26; i++) {
     const side = Math.floor(rnd() * 3);
@@ -609,6 +616,8 @@ function withOutskirts(def, index, rng) {
   for (const [x, y] of sSpots) {
     if (sewers.length >= 3) break;
     if (free.has(x + ',' + y) || sewers.some((q) => Math.abs(q.tx - x) + Math.abs(q.ty - y) < 12)) continue;
+    if (fire && Math.abs(fire.tx - x) + Math.abs(fire.ty - y) < 7) continue;            // lejos de la fogata y su grupo
+    if (dumpsters.some((d) => Math.abs(d[0] - x) + Math.abs(d[1] - y) < 4)) continue;   // y de los contenedores
     if (take(x, y)) { props.push(['sewer', x, y]); sewers.push({ tx: x, ty: y }); }
   }
   const streetInfo = { vending: vs ? cell(vs[0], vs[1]) : null, phone: ps ? cell(ps[0], ps[1]) : null, npcs, fire, coins };
