@@ -6,6 +6,11 @@ const MAX_PARTICLES = 900;
 const MAX_SHELLS = 150;
 const NEON = [COLORS.player, COLORS.wall, COLORS.door, COLORS.neonLight];
 export const GIB_COLORS = [COLORS.flesh, COLORS.gore, COLORS.bone]; // carne · coágulo · hueso
+// Sangre TÓXICA (verde óxido): la de las bajas del tubo oxidado y demás armas con veneno. Misma estructura que la roja.
+export const TOXIC = { blood: '#7fb81e', mid: '#5f8f18', dark: '#3d5c12', wet: '#c6ee55' };
+export const RED = { blood: COLORS.blood, mid: COLORS.bloodMid, dark: COLORS.bloodDark, wet: COLORS.bloodWet };
+export const TOXIC_GIBS = ['#6f9a1a', '#3d5c12', '#b9d77a'];
+const TOXIC_NEON = ['#9be32a', '#c6ee55', '#5f8f18', '#e7ff9a'];
 
 // Partículas efímeras (chispas, polvo, sangre, restos, chispas de neón) + casquillos que se
 // quedan en el suelo. Las gotas y los restos, al caer, se hornean en la capa de sangre.
@@ -55,46 +60,47 @@ export class Particles {
 
   // Rocío de sangre en cono (`wide` = semiapertura en rad). Mezcla niebla fina (muchas gotas
   // rápidas) con gotas gordas (pocas, lentas y más abiertas) para que cada baja salpique distinto.
-  blood(x, y, angle, count = 10, wide = 0.6) {
+  blood(x, y, angle, count = 10, wide = 0.6, tox = false) {
     for (let i = 0; i < count; i++) {
       const heavy = Math.random() < 0.22;
       const a = angle + rand(-wide, wide) * (heavy ? 1.4 : 1);
       const s = heavy ? rand(60, 210) : rand(120, 430);
       const life = heavy ? rand(0.22, 0.5) : rand(0.1, 0.32);
-      this.add({ type: 'blood', x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life, max: life,
+      this.add({ type: 'blood', tox, x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life, max: life,
         size: heavy ? rand(3.2, 4.6) : rand(1.1, 2.6) });
     }
   }
 
   // Restos: trozos que salen despedidos, rebotan en las paredes, van soltando gotas por el
   // camino (rastro) y al pararse quedan pegados al suelo.
-  gibs(x, y, angle, count = 4, wide = 0.9) {
+  gibs(x, y, angle, count = 4, wide = 0.9, tox = false) {
     for (let i = 0; i < count; i++) {
       const a = angle + rand(-wide, wide);
       const s = rand(110, 330);
       const life = rand(0.35, 0.75);
       const kind = Math.random() < 0.2 ? 2 : Math.random() < 0.5 ? 1 : 0; // hueso · coágulo · carne
-      this.add({ type: 'gib', kind, x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life, max: life, size: rand(2, 3.4), trail: 0 });
+      this.add({ type: 'gib', kind, tox, x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life, max: life, size: rand(2, 3.4), trail: 0 });
     }
   }
 
   // Chispas de neón del impacto letal: cian y magenta, aditivas y más largas que las del disparo.
-  neon(x, y, angle, count = 10, wide = 1.1) {
+  neon(x, y, angle, count = 10, wide = 1.1, tox = false) {
     for (let i = 0; i < count; i++) {
       const a = angle + rand(-wide, wide);
       const s = rand(180, 560);
       const life = rand(0.12, 0.34);
-      this.add({ type: 'neon', color: NEON[(Math.random() * NEON.length) | 0], x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life, max: life });
+      const pal = tox ? TOXIC_NEON : NEON;
+      this.add({ type: 'neon', color: pal[(Math.random() * pal.length) | 0], x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life, max: life });
     }
   }
 
   // Todo lo que sale de una baja: sangre hacia donde va el golpe, un poco hacia atrás (la herida
   // de entrada), restos y neón. `power` ≈ 1 (disparo), más en melé y remate; `wide` = apertura.
-  gore(x, y, angle, power = 1, wide = 0.55) {
-    this.blood(x, y, angle, Math.round(20 * power), wide);
-    this.blood(x, y, angle + Math.PI, Math.round(6 * power), 0.9);
-    this.gibs(x, y, angle, Math.round(rand(3, 5) * power), Math.max(wide, 0.8));
-    this.neon(x, y, angle, Math.round(11 * power), Math.max(wide, 1));
+  gore(x, y, angle, power = 1, wide = 0.55, tox = false) {
+    this.blood(x, y, angle, Math.round(20 * power), wide, tox);
+    this.blood(x, y, angle + Math.PI, Math.round(6 * power), 0.9, tox);
+    this.gibs(x, y, angle, Math.round(rand(3, 5) * power), Math.max(wide, 0.8), tox);
+    this.neon(x, y, angle, Math.round(11 * power), Math.max(wide, 1), tox);
   }
 
   // Baja SIN sangre (ajuste "sangre: no"): el mismo impacto, pero solo chispas de neón, chispas
@@ -180,12 +186,12 @@ export class Particles {
       const t = p.life / p.max;
       ctx.globalAlpha = p.type === 'dust' ? t * 0.5 : p.type === 'chip' ? Math.min(1, t * 2) : 1;
       if (p.type === 'gib') {
-        ctx.fillStyle = GIB_COLORS[p.kind];
+        ctx.fillStyle = (p.tox ? TOXIC_GIBS : GIB_COLORS)[p.kind];
         const size = p.size > 2.7 ? 2 : 1;
         pixelRect(ctx, p.x, p.y, size, size);
         continue;
       }
-      ctx.fillStyle = p.type === 'dust' ? COLORS.dust : p.type === 'chip' ? COLORS.door : COLORS.blood;
+      ctx.fillStyle = p.type === 'dust' ? COLORS.dust : p.type === 'chip' ? COLORS.door : p.tox ? TOXIC.blood : COLORS.blood;
       const size = p.size > 3 ? 2 : 1;
       pixelRect(ctx, p.x, p.y, size, size);
     }

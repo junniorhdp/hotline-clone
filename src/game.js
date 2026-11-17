@@ -19,7 +19,7 @@ import { Player, bloodLevelFor, FINISH_RANGE } from './player.js';
 import { Enemy } from './enemy.js';
 import { Door, ENEMY_PUSH_SPEED } from './doors.js';
 import { Pickup, Bullet, ENEMY_WEAPONS, WEAPON_DEFS, segmentPointDistance } from './weapons.js';
-import { Particles, Footprints, GIB_COLORS } from './particles.js';
+import { Particles, Footprints, GIB_COLORS, TOXIC, RED, TOXIC_GIBS } from './particles.js';
 import { Sfx } from './audio.js';
 import { ScreenFx } from './effects.js';
 import { drawSprite, pixelDisc, pixelRect, BLOOD_LEVELS, WORLD_PX } from './sprites.js';
@@ -57,6 +57,7 @@ const HITSTOP = { kill: 0.05, melee: 0.055, execution: 0.07, knock: 0.035, doorK
 // del salpicado (rad; π = en todas direcciones), `shake` = sacudida de cámara, `stop` = hit-stop
 // y `fx` = patada del CRT. Un disparo sale en cono estrecho; la melé abre el arco; el remate
 // revienta en todas direcciones.
+const POISON_TIME = 3.6; // s que agoniza un noqueado por veneno antes de morir
 const KILL_FEEL = {
   bullet: { power: 1, wide: 0.55, shake: 7, stop: HITSTOP.kill, fx: 0.45 },
   melee: { power: 1.35, wide: 0.9, shake: 10, stop: HITSTOP.melee, fx: 0.65 },
@@ -209,6 +210,7 @@ export class Game {
     this.keys.onChange = () => this.settings.save();
     this.ads = new Ads(this); // gestor de pausa para un SDK de anuncios (ads.js); sin SDK no hace nada
     this.stats = this.newStats(); // estadísticas del intento (ver recordAttack / statsSummary)
+    this.bpal = RED;       // paleta de sangre en uso (roja; verde tóxica para las bajas del tubo oxidado)
     this.buff = null;      // lata de la máquina expendedora: { t, max } (+velocidad, +cadencia; solo esta partida)
     this.streetRun = newStreetRun(); // moneda, teléfono y reto del piso (sobrevive a R; se reinicia por piso)
     this.maskDrops = [];   // máscaras caídas de un portador: { x, y, mask, t } (ver dropMask)
@@ -1631,19 +1633,33 @@ export class Game {
   }
 
   // `cause` es el estilo de la baja para la puntuación (ver STYLE en score.js).
-  // Tubo oxidado: no mata, envenena. El enemigo va a un 60 % del ritmo (ver Enemy.update) y cae solo a los 3,6 s (causa 'poison').
+  // Tubo oxidado (y demás armas con `poison`): no mata, NOQUEA e INTOXICA. El enemigo cae al suelo y no se levanta;
+  // agoniza POISON_TIME (3,6 s) y muere solo (causa 'poison', sangre verde) salvo que lo remates antes (ejecución, sangre verde también).
+  // Contra el jefe no se usa (ver Player.attack): pega como un arma normal.
   poisonEnemy(e, angle) {
     if (!e.alive) return;
-    if (e.poison > 0) { e.poison = Math.max(e.poison, 2.6); return; } // otro golpe renueva el veneno
-    e.poison = 3.6;
+    e.toxic = true; // toda su sangre será verde
+    if (e.poison > 0) { e.poison = Math.max(e.poison, POISON_TIME * 0.7); return; }
+    e.poison = POISON_TIME;
     e.poisonAngle = angle;
     e.poisonTick = 0;
-    e.flash = 0.2;
-    this.addFloat(e.x, e.y - 18, 'ENVENENADO', '#7ad03a', 1, 1.2);
-    this.particles.dust(e.x, e.y, 6);
-    this.camera.addShake(3);
-    this.hitstop = Math.max(this.hitstop, 0.04);
-    this.sfx.play('hit', 0.7);
+    const armed = !!(e.weapon || e.meleeWeapon);
+    if (e.standing) { e.knockDown(angle, this.map); this.dropWeapon(e); } // noqueado: suelta el arma y queda en el suelo
+    this.addFloat(e.x, e.y - 18, 'INTOXICADO', '#9be32a', 1, 1.3);
+    if (armed) this.addFloat(e.x, e.y - 30, '¡DESARME!', COLORS.player, 1, 1.0);
+    if (this.goreOn) this.particles.blood(e.x, e.y, angle, 8, 0.8, true);
+    this.particles.dust(e.x, e.y, 5);
+    this.camera.addShake(4);
+    this.fx.kick(0.2);
+    this.hitstop = Math.max(this.hitstop, HITSTOP.knock);
+    this.playAt('knock', e.x, e.y);
+  }
+
+  // ¿Esta baja es "tóxica" (sangre verde)? El enemigo intoxicado, o rematado/golpeado con un arma con veneno en la mano.
+  isToxicKill(e, cause) {
+    if (e.toxic || cause === 'poison') return true;
+    const w = this.player.weapon, def = w && WEAPON_DEFS[w.type];
+    return !!(def && def.poison && (cause === 'execution' || cause === 'melee'));
   }
 
   // Burbujas verdes subiendo sobre los enemigos envenenados.
@@ -1671,7 +1687,7 @@ export class Game {
     this.dropWeapon(e);
     if (e.carrier) this.dropMask(e);
     e.corpse = { x: e.x + Math.cos(angle) * 8, y: e.y + Math.sin(angle) * 8 }; // donde se estampa el cadáver
-    this.bleed(e.x, e.y, angle, feel.power, feel.wide);
+    this.bleed(e.x, e.y, angle, feel.power, feel.wide, this.isToxicKill(e, cause));
     this.stainPlayer(feel.power, angle);
     this.drawCorpse(e.x, e.y, angle, e.corpseSprite || (e.armed ? 'armedCorpse' : 'enemyCorpse'), e.corpseScale || 1);
     this.camera.addShake(feel.shake);
@@ -1719,11 +1735,14 @@ export class Game {
   // Todo el desangrado de una baja: partículas (sangre, restos, chispas de neón), charco y
   // regueros en el suelo y salpicaduras en las paredes de enfrente. Lo permanente se queda hasta
   // que se reinicia el piso.
-  bleed(x, y, angle, power, wide) {
+  // `tox`: sangre verde tóxica (paleta `TOXIC`) en vez de roja, en partículas, charcos y paredes.
+  bleed(x, y, angle, power, wide, tox = false) {
     if (!this.goreOn) { this.particles.cleanKill(x, y, angle, power, wide); return; }
-    this.particles.gore(x, y, angle, power, wide);
+    this.particles.gore(x, y, angle, power, wide, tox);
+    this.bpal = tox ? TOXIC : RED;
     this.splatBlood(x, y, angle, power, wide);
     this.splatWalls(x, y, angle, power, wide);
+    this.bpal = RED;
   }
 
   addScore(cause, e) {
@@ -1864,8 +1883,11 @@ export class Game {
   woundEnemy(e, angle, style) {
     if (e.onWound) e.onWound(style, this);
     if (this.goreOn) {
-      this.particles.blood(e.x, e.y, angle, style === 'burst' ? 6 : 9, 0.8);
+      const tox = this.isToxicKill(e, 'execution');
+      this.particles.blood(e.x, e.y, angle, style === 'burst' ? 6 : 9, 0.8, tox);
+      this.bpal = tox ? TOXIC : RED;
       this.splatBlood(e.x, e.y, angle, 0.4, 0.6);
+      this.bpal = RED;
     } else {
       this.particles.neon(e.x, e.y, angle, 8, 0.9);
     }
@@ -1959,23 +1981,29 @@ export class Game {
   // la que viajaba, así el salpicado tiene dirección), un resto que se para (con su mancha) o
   // una gota del rastro que va dejando un resto en vuelo.
   bake(kind, p) {
+    this.bpal = p.tox ? TOXIC : RED;
+    this.bakeDrop(kind, p);
+    this.bpal = RED;
+  }
+
+  bakeDrop(kind, p) {
     if (!this.goreOn) return; // gotas que ya iban en el aire al apagar la sangre
     const ctx = this.bloodCtx;
     const x = Math.round(p.x / WORLD_PX), y = Math.round(p.y / WORLD_PX);
     if (kind === 'trail') {
-      ctx.fillStyle = Math.random() < 0.5 ? COLORS.bloodDark : COLORS.blood;
+      ctx.fillStyle = Math.random() < 0.5 ? this.bpal.dark : this.bpal.blood;
       ctx.fillRect(x, y, 1, 1);
       return;
     }
     if (kind === 'gib') {
-      ctx.fillStyle = COLORS.bloodDark;
+      ctx.fillStyle = this.bpal.dark;
       ctx.fillRect(x - 1, y - 1, 3, 3);
-      ctx.fillStyle = GIB_COLORS[p.kind];
+      ctx.fillStyle = (p.tox ? TOXIC_GIBS : GIB_COLORS)[p.kind];
       ctx.fillRect(x, y, 2, 2);
       return;
     }
     const heavy = p.size > 2.2;
-    ctx.fillStyle = heavy ? COLORS.blood : COLORS.bloodMid;
+    ctx.fillStyle = heavy ? this.bpal.blood : this.bpal.mid;
     const s = heavy ? 2 : 1;
     ctx.fillRect(x, y, s, s);
     const speed = Math.hypot(p.vx, p.vy);
@@ -1994,23 +2022,23 @@ export class Game {
     const cos = Math.cos(angle), sin = Math.sin(angle);
     this.stains++;
     ctx.save();
-    ctx.fillStyle = COLORS.bloodDark;
+    ctx.fillStyle = this.bpal.dark;
     const poolR = rand(5, 7) * power;
     pixelDisc(ctx, px + cos * 3, py + sin * 3, poolR);
     this.pools.push({ x: x + cos * 6, y: y + sin * 6, r: poolR * WORLD_PX * 0.9 });
     if (this.pools.length > MAX_POOLS) this.pools.shift();
-    ctx.fillStyle = COLORS.blood;
+    ctx.fillStyle = this.bpal.blood;
     pixelDisc(ctx, px + cos * 3 - 1, py + sin * 3 - 1, rand(3.5, 5) * power);
     // Charcos satélite: salpicaduras gordas que han caído más lejos.
     for (let i = 0, n = 2 + Math.floor(power * 2); i < n; i++) {
       const a = angle + rand(-wide, wide), d = rand(8, 20) * power;
-      ctx.fillStyle = Math.random() < 0.5 ? COLORS.bloodDark : COLORS.blood;
+      ctx.fillStyle = Math.random() < 0.5 ? this.bpal.dark : this.bpal.blood;
       pixelDisc(ctx, px + Math.cos(a) * d, py + Math.sin(a) * d, rand(1, 2.2));
     }
     for (let i = 0; i < 34 * power; i++) {
       const d = rand(3, 30) * power;
       const a = angle + rand(-wide, wide);
-      ctx.fillStyle = Math.random() < 0.3 ? COLORS.bloodDark : COLORS.blood;
+      ctx.fillStyle = Math.random() < 0.3 ? this.bpal.dark : this.bpal.blood;
       const s = d < 12 ? 2 : 1;
       ctx.fillRect(Math.round(px + Math.cos(a) * d), Math.round(py + Math.sin(a) * d), s, s);
     }
@@ -2021,12 +2049,12 @@ export class Game {
       const a = angle + rand(-spread, spread);
       const len = rand(12, 32) * power;
       const ca = Math.cos(a), sa = Math.sin(a);
-      ctx.fillStyle = COLORS.blood;
+      ctx.fillStyle = this.bpal.blood;
       for (let d = 0; d < len; d++) {
         const thick = d < len * 0.4 ? 2 : 1;
         ctx.fillRect(Math.round(px + ca * d), Math.round(py + sa * d), thick, thick);
       }
-      ctx.fillStyle = COLORS.bloodDark;
+      ctx.fillStyle = this.bpal.dark;
       ctx.fillRect(Math.round(px + ca * len), Math.round(py + sa * len), 2, 2);
     }
     ctx.restore();
@@ -2040,7 +2068,7 @@ export class Game {
     const cos = Math.cos(angle), sin = Math.sin(angle);
     for (let d = 0; d < len; d++) {
       if (Math.random() < 0.12) continue;
-      ctx.fillStyle = d % 5 < 2 ? COLORS.bloodDark : COLORS.blood;
+      ctx.fillStyle = d % 5 < 2 ? this.bpal.dark : this.bpal.blood;
       const thick = d < len * 0.55 ? 2 : 1;
       ctx.fillRect(Math.round(px + cos * d), Math.round(py + sin * d), thick, thick);
     }
@@ -2083,18 +2111,18 @@ export class Game {
     this.wallBloodDirty = true;
     this.stains++;
     const r = 1.5 + near * 2.5 * Math.min(power, 1.6);
-    disc(px, py, r, COLORS.bloodDark);
-    disc(px, py, r - 1, COLORS.blood);
-    put(px - 1, py - 1, COLORS.bloodWet);
+    disc(px, py, r, this.bpal.dark);
+    disc(px, py, r - 1, this.bpal.blood);
+    put(px - 1, py - 1, this.bpal.wet);
     for (let i = 0, n = Math.round((5 + near * 9) * power); i < n; i++) {
       const a = Math.random() < 0.6 ? angle + rand(-1.2, 1.2) : rand(0, TAU);
       const d = rand(r + 1, r + 8);
-      put(px + Math.cos(a) * d, py + Math.sin(a) * d, Math.random() < 0.3 ? COLORS.bloodDark : COLORS.blood);
+      put(px + Math.cos(a) * d, py + Math.sin(a) * d, Math.random() < 0.3 ? this.bpal.dark : this.bpal.blood);
     }
     for (let i = 0, n = 1 + Math.floor(rand(0, 2.5)); i < n; i++) {
       const a = angle + rand(-0.4, 0.4);
       const len = 2 + near * 6 * rand(0.5, 1.2);
-      for (let d = 0; d < len; d++) put(px + Math.cos(a) * d, py + Math.sin(a) * d, d < len * 0.6 ? COLORS.blood : COLORS.bloodDark);
+      for (let d = 0; d < len; d++) put(px + Math.cos(a) * d, py + Math.sin(a) * d, d < len * 0.6 ? this.bpal.blood : this.bpal.dark);
     }
   }
 

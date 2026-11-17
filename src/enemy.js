@@ -142,16 +142,16 @@ export class Enemy {
   }
 
   update(dt, game) {
-    // Veneno del tubo oxidado: lentitud (el enemigo vive a un 60 % del ritmo) y, al acabarse, muere.
+    // Veneno del tubo oxidado: el enemigo está NOQUEADO (ver Game.poisonEnemy) y muere solo cuando se acaba el veneno.
     if (this.poison > 0) {
       this.poison -= dt;
       this.poisonTick = (this.poisonTick || 0) - dt;
-      if (this.poisonTick <= 0) { this.poisonTick = 0.45; game.particles.dust(this.x, this.y, 2); }
+      if (this.poisonTick <= 0) { this.poisonTick = 0.4; game.particles.blood(this.x, this.y, Math.random() * 6.28, 2, 3, true); } // gotitas verdes
       if (this.poison <= 0) { game.killEnemy(this, this.poisonAngle || 0, 'poison'); return; }
-      dt *= 0.6;
     }
     if (this.state === 'down') {
       if (this.executing) return; // el temblor del golpe que viene: el aturdimiento se congela
+      if (this.poison > 0) return; // intoxicado: no se levanta (agoniza hasta morir o hasta que lo remates)
       this.timer -= dt;
       if (this.timer <= 0) {
         this.state = 'alert';
