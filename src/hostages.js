@@ -1,21 +1,32 @@
 import { findPath, moveAndSlide } from './map.js';
-import { segmentPointDistance } from './weapons.js';
+import { segmentPointDistance, inMeleeArc } from './weapons.js';
+import { ExtractionCar } from './extraction.js';
 import { pixelRect, WORLD_PX } from './sprites.js';
 import { drawText, measureText } from './pixelfont.js';
 import { COLORS } from './utils.js';
 
 // Rehenes atados a sillas en algunas salas del edificio (los coloca loadLevel: ver placeHostages en map.js).
 //   · Se LIBERAN con PATEAR/INTERACTUAR (Espacio / F; en táctil el botón de la bota) estando cerca: +1500 puntos y corren a la entrada del edificio.
-//   · Los DISPAROS del jugador los hieren: la bala se detiene en el rehén y lo mata (−2000 puntos al final del piso, y la culpa del protagonista:
-//     se quita la máscara y vomita, ver Game.guilt). Los golpes cuerpo a cuerpo NO les hacen nada: la forma segura de limpiar una sala con rehenes.
-//     (No hay explosiones en el juego.) Las balas enemigas los atraviesan: solo cuenta lo que dispara el jugador.
-// Estados: tied → freed (corre a la entrada) → safe (a salvo, desaparece) · dead.
+//   · GOLPES cuerpo a cuerpo (clic / ATACAR; no la patada, que es la acción de liberar): el PRIMERO no lo mata: lo tumba en su silla con una sacudida de
+//     cámara y una burbuja de dolor (aviso); un segundo golpe (pasada 0,8 s de gracia) lo MATA. Un DISPARO lo mata siempre. Matar a un rehén = −2000
+//     al final del piso y la culpa del protagonista (se quita la máscara y vomita, ver Game.guilt). Las balas enemigas y las armas lanzadas los atraviesan.
+//   · EXTRACCIÓN: al despejar el piso y salir el jugador a la calle, los rehenes liberados salen del edificio: UNO espera junto a la moto y se sube detrás
+//     del protagonista en la fuga; DOS O MÁS esperan a un AUTO de extracción (extraction.js) que llega junto a la acera, los recoge y se va mientras el
+//     jugador se marcha en su moto. La fuga no arranca hasta que están a bordo (extractionBusy).
+// Estados: tied → freed (corre a la entrada) → waiting (espera en la entrada) → exiting (sale a la calle) → ready (esperando moto/auto) →
+//          boarding → boarded (en el auto) | riding (en la moto) · dead.
 const RESCUE_POINTS = 1500, KILL_PENALTY = 2000;
 const INTERACT_GAP = 22;        // distancia al borde del rehén para liberarlo
-const RUN_SPEED = 120;
+const RUN_SPEED = 120, WALK_SPEED = 95;
+const GRACE = 0.8;              // s tras un golpe en los que otro golpe no cuenta (el aviso se nota)
+const BOARD_TIME = 0.5;
+const STUCK_TIME = 14;          // si tras salir a la calle un rehén no llega en este tiempo, se coloca solo
 
 const TIED = ['¡MMMPH! ¡MMM!', '¡MMM-MMM!', '(SOLLOZOS...)', '¡MMMPH!', '¡MMM! ¡MMM!'];
 const FREED = ['¡GRACIAS!', '¡ME SALVASTE!', '¡CUIDADO, HAY MÁS!', '¡NO ME DEJES AQUÍ!'];
+const RELIEF = ['¡POR FIN LIBRES!', '¡VÁMONOS DE AQUÍ!', '¡GRACIAS POR TODO!'];
+const HIT = '¡MMMPH!!';
+const TARGETABLE = new Set(['tied', 'freed', 'waiting', 'exiting', 'ready']);
 
 class Hostage {
   constructor(d) {
@@ -27,16 +38,31 @@ class Hostage {
     this.say = null; this.sayT = 0; this.sayCd = 0.5 + Math.random();
     this.path = null; this.pathT = 0;
     this.shiver = Math.random() * 6;
+    this.hits = 0;            // golpes cuerpo a cuerpo recibidos (1 = tumbado, 2 = muerto)
+    this.hitCd = 0;           // gracia tras un golpe
+    this.down = false;        // tumbado (con la silla, si sigue atado)
+    this.downT = 0;
+    this.target = null;       // adónde va al salir a la calle
+    this.slot = 0;
+    this.boardT = 0;
+    this.ride = null;
     this.fade = 1;
   }
-  get alive() { return this.state === 'tied' || this.state === 'freed'; }
+  get alive() { return TARGETABLE.has(this.state); }
 }
+
+const lerp = (a, b, t) => a + (b - a) * t;
 
 export class Hostages {
   constructor(game, data = []) {
     this.game = game;
     this.list = data.map((d) => new Hostage(d));
     this.clock = 0;
+    this.planned = false;       // ¿ya se ha decidido cómo salen (moto o auto)?
+    this.mode = null;           // null | 'bike' | 'car'
+    this.group = [];            // los rehenes que salen
+    this.car = null;
+    this.plannedAt = 0;
   }
 
   get total() { return this.list.length; }
@@ -54,36 +80,34 @@ export class Hostages {
   }
 
   update(dt) {
-    const g = this.game, p = g.player, map = g.map;
+    const g = this.game, p = g.player;
     this.clock += dt;
     if (this.list.length === 0) return;
     const hot = g.enemies.some((e) => e.alive && (e.state === 'chase' || e.state === 'alert')); // hay pelea: tiemblan más
     for (const h of this.list) {
       h.sayT = Math.max(0, h.sayT - dt);
       h.sayCd = Math.max(0, h.sayCd - dt);
+      h.hitCd = Math.max(0, h.hitCd - dt);
+      if (h.down && h.state !== 'tied') { h.downT -= dt; if (h.downT <= 0) h.down = false; }  // los que no están atados se levantan
       if (h.state === 'tied') {
         h.shiver += dt * (hot ? 45 : 14);
         // Gimen amordazados cuando el jugador está cerca.
         if (p.alive && h.sayCd <= 0 && h.sayT <= 0 && Math.hypot(p.x - h.x, p.y - h.y) < 150) { h.say = TIED[Math.floor(Math.random() * TIED.length)]; h.sayT = 2.2; h.sayCd = 4 + Math.random() * 3; }
       } else if (h.state === 'freed') {
-        // Corre a la entrada del edificio y allí se pone a salvo.
-        const e = g.entry;
-        if (Math.hypot(e.x - h.x, e.y - h.y) < 26) { h.state = 'safe'; g.addFloat(h.x, h.y - 18, '¡A SALVO!', '#9be32a', 1, 1.4); continue; }
-        h.pathT -= dt;
-        if (!h.path || h.pathT <= 0) { h.path = findPath(map, h.x, h.y, e.x, e.y); h.pathT = 0.6; }
-        const path = h.path;
-        if (path) {
-          while (path.length && Math.hypot(path[0].x - h.x, path[0].y - h.y) < 8) path.shift();
-          if (path.length) {
-            const dx = path[0].x - h.x, dy = path[0].y - h.y, d = Math.hypot(dx, dy) || 1;
-            moveAndSlide(map, h, (dx / d) * RUN_SPEED * dt, (dy / d) * RUN_SPEED * dt);
-            h.facing = Math.atan2(dy, dx);
-          }
-        }
         h.shiver += dt * 30;
+        if (!h.down) this.walk(h, dt, g.entry.x, g.entry.y, RUN_SPEED, 26, () => {
+          h.state = this.planned && this.group.includes(h) ? 'exiting' : 'waiting';
+          if (h.state === 'exiting') this.aim(h);
+          h.say = RELIEF[Math.floor(Math.random() * RELIEF.length)]; h.sayT = 2; h.sayCd = 8;
+        });
+      } else if (h.state === 'exiting') {
+        h.shiver += dt * 10;
+        if (!h.down && h.target) this.walk(h, dt, h.target.x, h.target.y, WALK_SPEED, 12, () => { h.state = 'ready'; h.path = null; });
       }
-      if (h.state === 'safe') h.fade = Math.max(0, h.fade - dt * 2);
     }
+    // Con el piso despejado y el jugador ya en la calle se decide cómo salen los rehenes liberados.
+    if (!this.planned && g.state === 'cleared' && p.alive && p.y > g.entry.y + 70) this.plan();
+    this.stepExtraction(dt);
     // Liberar: PATEAR/INTERACTUAR (Espacio / F; en táctil el botón de la bota) junto a un rehén atado.
     if ((g.state === 'playing' || g.state === 'cleared') && p.alive && !g.panel && !p.exec && !p.vomit && (g.keys.pressed('kick') || g.keys.pressed('execute'))) {
       const t = this.nearTarget();
@@ -91,9 +115,98 @@ export class Hostages {
     }
   }
 
+  // Camina hacia (tx, ty) por el mapa (BFS) y llama a `done` al llegar a `arrive` unidades.
+  walk(h, dt, tx, ty, speed, arrive, done) {
+    const g = this.game, map = g.map;
+    if (Math.hypot(tx - h.x, ty - h.y) < arrive) { done(); return; }
+    h.pathT -= dt;
+    if (!h.path || h.pathT <= 0) { h.path = findPath(map, h.x, h.y, tx, ty); h.pathT = 0.6; }
+    const path = h.path;
+    if (path) {
+      while (path.length && Math.hypot(path[0].x - h.x, path[0].y - h.y) < 8) path.shift();
+      if (path.length) {
+        const dx = path[0].x - h.x, dy = path[0].y - h.y, d = Math.hypot(dx, dy) || 1;
+        moveAndSlide(map, h, (dx / d) * speed * dt, (dy / d) * speed * dt);
+        h.facing = Math.atan2(dy, dx);
+      }
+    }
+  }
+
+  // --- Extracción ---------------------------------------------------------------------------------
+  // Decide cómo salen los rehenes ya liberados: 1 → se sube a la moto; 2 o más → auto de extracción.
+  plan() {
+    const g = this.game;
+    this.planned = true;
+    this.plannedAt = this.clock;
+    this.group = this.list.filter((h) => h.state === 'freed' || h.state === 'waiting' || h.state === 'exiting');
+    this.mode = this.group.length >= 2 ? 'car' : this.group.length === 1 ? 'bike' : null;
+    if (this.mode === 'car') this.car = new ExtractionCar(g);
+    this.group.forEach((h, i) => { h.slot = i; if (h.state === 'waiting' || h.state === 'exiting') { h.state = 'exiting'; this.aim(h); } });
+  }
+
+  // Punto al que sale el rehén: junto a la moto (uno) o a la acera donde para el auto (varios).
+  aim(h) {
+    const g = this.game, b = g.bike;
+    h.path = null;
+    h.target = this.mode === 'car' && this.car ? this.car.slot(h.slot, this.group.length) : { x: b.park.x - 30, y: b.park.y - 44 };
+  }
+
+  allReady() { return this.group.every((h) => h.state === 'ready' || h.state === 'dead' || h.state === 'boarding' || h.state === 'boarded'); }
+  allBoarded() { return this.group.every((h) => h.state === 'boarded' || h.state === 'dead'); }
+
+  startBoarding() {
+    this.group.forEach((h, i) => { if (h.state === 'ready' || h.state === 'exiting') { h.state = 'boarding'; h.boardT = -i * 0.35; h.boardFrom = { x: h.x, y: h.y }; } });
+  }
+
+  // Avanza el auto y la subida de los rehenes (también durante la cinemática de fuga: el auto arranca mientras el jugador se va en la moto).
+  stepExtraction(dt) {
+    const g = this.game;
+    if (this.planned && this.mode) {
+      // Los que se atascan (puerta, ruta) se colocan solos pasado un tiempo.
+      if (this.clock - this.plannedAt > STUCK_TIME) {
+        for (const h of this.group) if (h.state === 'freed' || h.state === 'waiting' || h.state === 'exiting') { this.aim(h); if (h.target) { h.x = h.target.x; h.y = h.target.y; } h.state = 'ready'; }
+      }
+    }
+    if (this.car) this.car.update(dt, g, this);
+    for (const h of this.list) {
+      if (h.state !== 'boarding' || !this.car) continue;
+      h.boardT += dt / BOARD_TIME;
+      if (h.boardT < 0) continue;
+      if (!h.sound) { h.sound = true; g.playAt('carDoor', this.car.x, this.car.y, 0.9); }
+      const k = Math.min(1, h.boardT), e = k * k * (3 - 2 * k);
+      h.x = lerp(h.boardFrom.x, this.car.x, e); h.y = lerp(h.boardFrom.y, this.car.y - 8, e); h.fade = 1 - e;
+      if (k >= 1) h.state = 'boarded';
+    }
+  }
+
+  // ¿Hay que esperar a que los rehenes estén a bordo antes de arrancar la fuga? (moto: que el rehén esté junto a ella; auto: que estén todos subidos)
+  extractionBusy() {
+    if (!this.planned || !this.mode) return false;
+    if (this.mode === 'bike') return !this.group.every((h) => h.state === 'ready' || h.state === 'riding' || h.state === 'dead');
+    return this.car ? this.car.busy : false;
+  }
+
+  // El jugador arranca la fuga: el rehén que espera junto a la moto se sube detrás de él.
+  boardBike() {
+    for (const h of this.group) if (this.mode === 'bike' && h.state === 'ready') { h.state = 'riding'; h.ride = { x0: h.x, y0: h.y }; h.shiver = 0; }
+  }
+
+  // Durante la fuga (updateCine): el que va en la moto se coloca detrás del protagonista (k: 0..1 mientras se sube, 1 después).
+  rideUpdate(k, bike) {
+    const a = bike.angle || 0, z = bike.z || 0;
+    for (const h of this.list) {
+      if (h.state !== 'riding') continue;
+      const rx = bike.x - 18 * Math.cos(a), ry = bike.y - 18 * Math.sin(a) - z;
+      h.x = lerp(h.ride.x0, rx, k); h.y = lerp(h.ride.y0, ry, k);
+      h.facing = a;
+    }
+  }
+
+  // --- Liberar, golpes y balas ----------------------------------------------------------------------
   free(h) {
     const g = this.game;
     h.state = 'freed';
+    h.down = false;
     h.say = FREED[Math.floor(Math.random() * FREED.length)]; h.sayT = 2.4; h.sayCd = 6;
     g.score.addBonus(RESCUE_POINTS);
     g.sfx.play('unlock');
@@ -102,7 +215,32 @@ export class Hostages {
     g.particles.dust(h.x, h.y, 6);
   }
 
-  // Una bala del jugador: la bala se detiene en el rehén y lo mata (−2000 al final del piso y culpa). Devuelve true si le dio a alguien.
+  // Golpe cuerpo a cuerpo del jugador (clic / ATACAR; la patada es la acción de liberar): el primero tumba al rehén en su silla con un micro-temblor de
+  // cámara y una burbuja de dolor (advertencia); el segundo lo mata. Devuelve true si golpeó a alguien.
+  meleeHit(p, def) {
+    let hit = false;
+    for (const h of this.list) {
+      if (!h.alive || !inMeleeArc(p.x, p.y, p.angle, def, h)) continue;
+      hit = true;
+      if (h.hitCd > 0) continue;                       // pasado un instante del primer golpe: el aviso se nota, no se remata en el mismo tirón
+      h.hits++;
+      if (h.hits === 1) this.knock(h, p.angle);
+      else this.kill(h, p.angle);
+    }
+    return hit;
+  }
+
+  knock(h, angle) {
+    const g = this.game;
+    h.down = true; h.downT = 1.4; h.hitCd = GRACE;
+    h.say = HIT; h.sayT = 2; h.sayCd = 3;
+    g.camera.addShake(4);
+    g.sfx.play('hit', 0.7);
+    g.particles.dust(h.x, h.y, 5);
+    if (h.state !== 'tied') h.path = null;
+  }
+
+  // Una bala del jugador: la bala se detiene en el rehén y lo mata (sin aviso previo). Devuelve true si le dio a alguien.
   bulletHit(b) {
     for (const h of this.list) {
       if (!h.alive || segmentPointDistance(b.px, b.py, b.x, b.y, h.x, h.y) >= h.r + b.r) continue;
@@ -115,6 +253,7 @@ export class Hostages {
   kill(h, angle) {
     const g = this.game;
     h.state = 'dead';
+    h.down = true;
     h.say = null; h.sayT = 0;
     g.bleed(h.x, h.y, angle, 1, 0.8);
     if (Math.hypot(g.player.x - h.x, g.player.y - h.y) < 120) g.stainPlayer(0.8, angle);
@@ -126,32 +265,46 @@ export class Hostages {
 
   // Resumen para el final del piso.
   summary() {
-    const saved = this.list.filter((h) => h.state === 'freed' || h.state === 'safe').length;
+    const saved = this.list.filter((h) => h.state !== 'tied' && h.state !== 'dead').length;
     const killed = this.list.filter((h) => h.state === 'dead').length;
     return { total: this.list.length, saved, killed, penalty: killed * KILL_PENALTY };
   }
 
   // --- Dibujo ---------------------------------------------------------------------------------------
-  draw(ctx) {
+  // Mundo (bajo los personajes). Los que van en la moto o en el auto no se dibujan aquí.
+  draw(ctx, time) {
     for (const h of this.list) {
-      if (h.state === 'safe' && h.fade <= 0) continue;
+      if (h.state === 'riding' || h.state === 'boarded') continue;
       this.drawOne(ctx, h);
     }
+  }
+
+  // Encima de las paredes: el auto de extracción (con las aberturas de la valla por donde entra y sale).
+  drawOver(ctx, time) {
+    if (this.car) this.car.draw(ctx, time, this.game);
+  }
+
+  // El rehén que va en la moto, detrás del protagonista (se dibuja tras la moto y antes del jugador).
+  drawRiding(ctx) {
+    for (const h of this.list) if (h.state === 'riding') this.drawOne(ctx, h);
   }
 
   drawOne(ctx, h) {
     const L = h.look, x = Math.round(h.x), y = Math.round(h.y);
     const tied = h.state === 'tied', dead = h.state === 'dead';
-    const sh = (tied || h.state === 'freed') ? Math.round(Math.sin(h.shiver)) : 0;
-    const a = h.state === 'safe' ? h.fade : 1;
+    const moving = h.state === 'freed' || h.state === 'exiting' || h.state === 'riding';
+    const sh = (tied || moving || h.state === 'waiting') ? Math.round(Math.sin(h.shiver) * (h.state === 'waiting' ? 0.6 : 1)) : 0;
     ctx.save();
-    ctx.globalAlpha = a;
+    ctx.globalAlpha = h.state === 'boarding' ? Math.max(0, h.fade) : 1;
     const px = (ox, oy, w, hh, col) => { ctx.fillStyle = col; pixelRect(ctx, x + (ox + sh) * WORLD_PX, y + oy * WORLD_PX, w, hh); };
-    if (dead) {                                   // tumbado junto a la silla caída
+    if (dead || h.down) {                           // tumbado (muerto, oscuro; o aturdido por un golpe, con su silla volcada si sigue atado)
       px(-8, 3, 16, 5, 'rgba(5,0,15,0.5)');
-      px(-9, -2, 5, 9, '#14100a'); px(-8, -1, 3, 7, '#5b4a2a');            // silla caída
-      px(-4, -3, 12, 7, '#14100a'); px(-3, -2, 10, 5, L.shirt); px(-3, -2, 10, 5, 'rgba(0,0,0,0.4)');
-      px(8, -2, 4, 5, '#14100a'); px(8, -1, 3, 3, L.skin); px(8, -1, 3, 3, 'rgba(0,0,0,0.4)');
+      if (tied || dead) { px(-10, -4, 4, 11, '#14100a'); px(-9, -3, 2, 9, '#5b4a2a'); }  // silla volcada
+      px(-4, -3, 12, 7, '#14100a'); px(-3, -2, 10, 5, L.shirt);
+      px(8, -2, 4, 5, '#14100a'); px(8, -1, 3, 3, L.skin);
+      if (L.gender === 'f') px(7, 1, 4, 2, L.hair);
+      if (dead) { px(-3, -2, 10, 5, 'rgba(0,0,0,0.4)'); px(8, -1, 3, 3, 'rgba(0,0,0,0.4)'); }
+      else if (tied) { px(-3, -1, 10, 1, '#b8864a'); px(9, -1, 2, 1, '#e8e4f0'); }       // cuerdas y mordaza
       ctx.restore();
       return;
     }
@@ -165,7 +318,7 @@ export class Hostages {
       ctx.fillStyle = '#3a2f1a'; pixelRect(ctx, -12, -8, 14, 16);
       ctx.restore();
     }
-    // cuerpo (camisa), cabeza con pelo y la cara con una mordaza
+    // cuerpo (camisa), cabeza con pelo y la cara (con mordaza si sigue atado)
     px(-6, -5, 12, 10, '#14100a'); px(-5, -4, 10, 8, L.shirt); px(-5, -4, 10, 2, 'rgba(255,255,255,0.18)');
     px(-3, -8, 7, 6, '#14100a'); px(-2, -7, 5, 4, L.hair);
     if (L.gender === 'f') { px(-4, -7, 1, 7, L.hair); px(4, -7, 1, 7, L.hair); }
@@ -176,16 +329,18 @@ export class Hostages {
       px(-6, -3, 12, 1, '#b8864a'); px(-6, 1, 12, 1, '#b8864a');           // cuerdas
       px(-7, -1, 2, 3, L.skin);                                              // manos atadas a la espalda
       px(0, -12, 1, 3, '#ffbe0b'); px(0, -8, 1, 1, '#ffbe0b');              // «!» de socorro
+    } else {
+      px(-8, -2, 2, 4, L.skin); px(6, -2, 2, 4, L.skin);                    // brazos sueltos
     }
     ctx.restore();
   }
 
-  // Pantalla: aviso de liberar y burbujas (frases amordazadas / de gratitud).
+  // Pantalla: aviso de liberar y burbujas (frases amordazadas / de dolor / de gratitud).
   drawHud(ctx, w, h) {
     const g = this.game;
-    if (this.list.length === 0 || (g.state !== 'playing' && g.state !== 'cleared')) return;
+    if (this.list.length === 0 || (g.state !== 'playing' && g.state !== 'cleared' && g.state !== 'leaving')) return;
     const cam = g.camera;
-    const t = g.player.alive && !g.panel ? this.nearTarget() : null;
+    const t = g.state !== 'leaving' && g.player.alive && !g.panel ? this.nearTarget() : null;
     if (t) {
       const txt = `${g.hint(g.keys.label('kick'), 'BOTA')} · LIBERAR`;
       const s = cam.worldToScreen(t.x, t.y + 20);
@@ -193,13 +348,13 @@ export class Hostages {
       drawText(ctx, txt, p.x, p.y, { color: '#9be32a', align: 'center', shadow: COLORS.background });
     }
     for (const hs of this.list) {
-      if (!hs.alive || hs.sayT <= 0 || !hs.say) continue;
+      if (hs.state === 'dead' || hs.state === 'boarded' || hs.sayT <= 0 || !hs.say) continue;
       const s = cam.worldToScreen(hs.x, hs.y - 26);
       if (s.x < -4 || s.x > w + 4 || s.y < -4 || s.y > h + 4) continue;
       const tw = measureText(hs.say), bp = g.keepOnScreen(s.x, s.y - 3, tw + 8, 13, 6);
       const bx = Math.round(bp.x - (tw + 8) / 2), by = Math.round(bp.y);
       ctx.fillStyle = 'rgba(13, 2, 33, 0.92)'; ctx.fillRect(bx, by, tw + 8, 13);
-      ctx.fillStyle = hs.state === 'freed' ? '#9be32a' : '#ffbe0b';
+      ctx.fillStyle = hs.say === HIT ? COLORS.blood : hs.state === 'tied' ? '#ffbe0b' : '#9be32a';
       ctx.fillRect(bx, by, tw + 8, 1); ctx.fillRect(bx, by + 12, tw + 8, 1); ctx.fillRect(bx, by, 1, 13); ctx.fillRect(bx + tw + 7, by, 1, 13);
       drawText(ctx, hs.say, bx + 4, by + 3, { color: COLORS.text, shadow: null });
     }

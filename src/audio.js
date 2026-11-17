@@ -126,6 +126,19 @@ const SOUNDS = {
     s.tone({ type: 'sine', from: 540, to: 400, dur: 0.16, gain: 0.12 * v });
     s.tone({ type: 'sine', from: 520, to: 380, dur: 0.18, gain: 0.1 * v, delay: 0.22 });
   },
+  // Auto de extracción: pasa y frena (carPass), puerta (carDoor) y arranque (carAway).
+  carPass(s, v) {
+    s.noise({ dur: 1.5, gain: 0.3 * v, filter: 'bandpass', freq: 420, freqTo: 160, q: 2 });
+    s.tone({ type: 'sawtooth', from: 110, to: 60, dur: 1.4, gain: 0.12 * v });
+  },
+  carDoor(s, v) {
+    s.noise({ dur: 0.08, gain: 0.4 * v, filter: 'lowpass', freq: 900 });
+    s.tone({ type: 'square', from: 190, to: 90, dur: 0.1, gain: 0.2 * v });
+  },
+  carAway(s, v) {
+    s.noise({ dur: 1.4, gain: 0.35 * v, filter: 'bandpass', freq: 220, freqTo: 1200, q: 2 });
+    s.tone({ type: 'sawtooth', from: 80, to: 230, dur: 1.3, gain: 0.14 * v });
+  },
   // ¡CLAC! del cocodrilo: mandíbulas que se cierran de golpe.
   crocSnap(s, v) {
     s.noise({ dur: 0.09, gain: 0.5 * v, filter: 'highpass', freq: 2200 });

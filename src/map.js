@@ -557,7 +557,20 @@ function placeHostages(map, enemies, rnd, doors, mainDoorTy, entry, occupied, in
   const zoneAt = (tx, ty) => map.zone[ty * map.w + tx];
   const want = index === 0 ? 1 : 1 + (rnd() < 0.5 ? 1 : 0);
   const guards = enemies.filter((e) => e.kind !== 'boss');
-  const collect = (allowFloor) => {
+  // Distancia de un punto a un segmento (para separar al rehén de las rutas de patrulla).
+  const segDist = (px, py, ax, ay, bx, by) => {
+    const vx = bx - ax, vy = by - ay, l2 = vx * vx + vy * vy;
+    const t = l2 ? Math.max(0, Math.min(1, ((px - ax) * vx + (py - ay) * vy) / l2)) : 0;
+    return Math.hypot(ax + vx * t - px, ay + vy * t - py);
+  };
+  // ¿El punto queda a >= minD de cada enemigo, de sus puntos de ruta y de su recorrido (así no se solapan las hitboxes ni nadie pasa pegado al rehén)?
+  const clearOf = (cx, cy, minD) => enemies.every((e) => {
+    if (Math.hypot(e.x - cx, e.y - cy) < minD) return false;
+    const pt = e.patrol || [];
+    for (const q of pt) if (Math.hypot(q.x - cx, q.y - cy) < minD) return false;
+    return pt.length < 2 || segDist(cx, cy, pt[0].x, pt[0].y, pt[pt.length - 1].x, pt[pt.length - 1].y) >= minD;
+  });
+  const collect = (allowFloor, minD) => {
     const out = [];
     for (let ty = 1; ty < mainDoorTy - 3; ty++) for (let tx = 1; tx < map.w - 1; tx++) {
       if (isWallTile(map, tx, ty) || occupied.has(ty * map.w + tx)) continue;
@@ -568,13 +581,15 @@ function placeHostages(map, enemies, rnd, doors, mainDoorTy, entry, occupied, in
       for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) if (!isWallTile(map, tx + dx, ty + dy)) free++;
       if (free < 3) continue;                                          // no encajonado contra una esquina
       if (Math.hypot(tx * T + T / 2 - entry.x, ty * T + T / 2 - entry.y) < 6 * T) continue;
+      if (!clearOf(tx * T + T / 2, ty * T + T / 2, minD)) continue;
       if (!guards.some((e) => zoneAt(Math.floor(e.x / T), Math.floor(e.y / T)) === z && Math.hypot(e.x - tx * T - T / 2, e.y - ty * T - T / 2) <= 7 * T)) continue;
       out.push([tx, ty]);
     }
     return out;
   };
-  let cands = collect(false);
-  if (!cands.length) cands = collect(true);
+  // Separación mínima de 3 casillas con los enemigos (sentados, fumando, vigilando o en su ruta); si no cabe en ninguna sala, se relaja a 2,5 y luego a 2.
+  let cands = [];
+  for (const [allowFloor, minT] of [[false, 3], [false, 2.5], [true, 3], [true, 2.5], [true, 2]]) { cands = collect(allowFloor, minT * T); if (cands.length) break; }
   for (let i = cands.length - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); [cands[i], cands[j]] = [cands[j], cands[i]]; }
   const pick = (a) => a[Math.floor(rnd() * a.length)];
   const out = [];

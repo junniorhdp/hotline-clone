@@ -1187,15 +1187,18 @@ export class Game {
         this.finishLeaving();
         return;
       }
+      this.hostages.stepExtraction(dt); // el auto de extracción arranca mientras el jugador se va en su moto
       if (c.t < LEAVE_BOARD) {
         const k = c.t / LEAVE_BOARD, e = k * k * (3 - 2 * k);
         p.x = lerp(c.from.x, b.park.x - 4, e);
         p.y = lerp(c.from.y, b.park.y, e);
         p.angle = c.from.angle + angleDiff(0, c.from.angle) * e;
+        this.hostages.rideUpdate(e, b);
       } else {
         const t2 = c.t - LEAVE_BOARD, ex = this.exit;
         b.riding = true;
         ex.place(t2, b, this);                       // trayectoria, giro y salto de la salida elegida
+        this.hostages.rideUpdate(1, b);              // el rehén (si hay uno) va detrás del protagonista
         const ca = Math.cos(b.angle), sa = Math.sin(b.angle);
         p.x = b.x - 4 * ca;
         p.y = b.y - 4 * sa - b.z;
@@ -1516,6 +1519,12 @@ export class Game {
     // Culpa pendiente (o vomitando): el piso no se cierra hasta que el jugador haya vomitado. Si se intenta subir a la moto con la culpa en cuenta
     // atrás, el vómito empieza ya y la fuga arranca cuando termina (el jugador sigue junto a la moto).
     if (this.guilt || this.player.vomit) { if (this.guilt) this.guilt.t = 0; return; }
+    // Extracción de rehenes: la fuga espera a que el rehén esté junto a la moto o a que los rehenes estén en el auto (ver Hostages.extractionBusy).
+    if (this.hostages.extractionBusy()) {
+      if (performance.now() - (this.waitHintAt || 0) > 1500) { this.waitHintAt = performance.now(); this.addFloat(this.player.x, this.player.y - 22, '¡ESPERA A LOS REHENES!', '#9be32a', 1, 1.4); }
+      return;
+    }
+    this.hostages.boardBike(); // un solo rehén liberado: se sube a la moto detrás del protagonista
     const p = this.player;
     this.state = 'leaving';
     // Salida al azar (33 % cada una): portón en la valla sur, carril lateral o salto sobre una rampa (ver exits.js). La cámara amplía sus límites
@@ -2316,11 +2325,13 @@ export class Game {
     ctx.globalAlpha = 1;
     ctx.drawImage(this.wallLayer, 0, 0, pixelW, pixelH);
     if (this.wallBloodDirty && this.goreOn) ctx.drawImage(this.wallBloodLayer, 0, 0, pixelW, pixelH);
+    this.hostages.drawOver(ctx, performance.now() / 1000); // auto de extracción (con las aberturas de la valla por donde entra y sale)
     if (over) {
       // Encima de la valla: el portón que se abre (o la abertura del carril), y después la moto con el jugador.
       if (this.state === 'leaving' && this.exit) this.exit.drawOver(ctx);
       else if (this.state === 'arriving') BikeExit.drawArrivalGap(ctx, this);
       this.drawBike(ctx);
+      this.hostages.drawRiding(ctx); // el rehén que se sube a la moto va detrás del protagonista
       if (this.player.alive) this.player.draw(ctx);
     }
 

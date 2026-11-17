@@ -208,13 +208,16 @@ export class BikeExit {
     }
   }
 
-  // La entrada de la moto (llegada): la valla del extremo oeste de la calle se abre un momento para que pase.
-  static drawArrivalGap(ctx, game) {
+  // Abertura de la valla en un extremo de la calle (oeste: entrada de la moto y del auto; este: salida del auto), solo en las filas de calle.
+  static drawGap(ctx, game, side) {
     const m = game.map, b = game.bike;
     const rowT = Math.floor(b.park.y / TILE), rowE = m.h - 2, y0 = rowT * TILE, h = (rowE + 1 - rowT) * TILE;
-    R(ctx, ASPHALT, 0, y0, TILE, h);
-    R(ctx, '#a89420', 8, y0 + h / 2 - 2, 24, 4);
-    R(ctx, BAR, 0, y0 - 6, TILE, 6); R(ctx, BAR, 0, y0 + h, TILE, 6);
+    const x0 = side === 'east' ? m.pixelW - TILE : 0;
+    R(ctx, ASPHALT, x0, y0, TILE, h);
+    R(ctx, '#a89420', x0 + 8, y0 + h / 2 - 2, 24, 4);
+    R(ctx, BAR, x0, y0 - 6, TILE, 6); R(ctx, BAR, x0, y0 + h, TILE, 6);
   }
-}
 
+  // La entrada de la moto (llegada): la valla del extremo oeste de la calle se abre un momento para que pase.
+  static drawArrivalGap(ctx, game) { BikeExit.drawGap(ctx, game, 'west'); }
+}
