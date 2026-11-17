@@ -355,6 +355,15 @@ const DECO_ART = {
     for (let i = x + 2; i < x + w - 2; i += 2) { rect(ctx, '#c9a07a', i, y, 1, 1); rect(ctx, '#c9a07a', i, y + h - 1, 1, 1); }
     dots(ctx, '#1a0a16', x + 3, y + 3, w - 6, h - 6, Math.floor((w * h) / 60), rnd); // agujeros
   },
+  // Consola del detonador (piso 10): caja oscura con pantalla, franja de peligro y un botón rojo grande bajo una tapa.
+  detonator(ctx, x, y, w, h) {
+    rect(ctx, '#0a0812', x + 1, y + 2, w - 2, h - 3);
+    rect(ctx, '#2c2c42', x + 2, y + 3, w - 4, h - 5);
+    rect(ctx, '#ffbe0b', x + 2, y + 3, w - 4, 2); for (let i = 3; i < w - 2; i += 3) rect(ctx, '#14101c', x + i, y + 3, 1, 2); // franja de peligro
+    rect(ctx, '#05d9e8', x + 3, y + 6, 5, 3); rect(ctx, '#067a85', x + 3, y + 8, 5, 1); // pantalla
+    rect(ctx, '#14101c', x + 9, y + 6, 5, 6); rect(ctx, '#ff2a4a', x + 10, y + 7, 3, 4); rect(ctx, '#ff8a9a', x + 10, y + 7, 1, 1); // botón rojo
+    rect(ctx, '#14101c', x + 3, y + 10, 5, 3); rect(ctx, '#7d6f98', x + 4, y + 11, 3, 1);
+  },
   // Trampilla de servicio (piso 10): placa de acero con remaches y un tirador. Parece decoración; ver Game.drawHatch para cuando se abre.
   hatch(ctx, x, y, w, h) {
     rect(ctx, '#15121f', x, y, w, h);

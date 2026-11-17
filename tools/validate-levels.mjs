@@ -160,6 +160,21 @@ for (let i = 0; i < LEVELS.length; i++) {
       else console.log('  trampilla: suelo libre, alcanzable y lejos de puertas');
     }
   }
+  // 5i) final del piso 10: el detonador está en el despacho (suelo libre y alcanzable) y el punto de encuentro junto a la moto es suelo libre, alcanzable desde el despacho y desde la calle
+  if (L.trap) {
+    const T = L.trap, free = (p) => !isWallTile(map, Math.floor(p.x / TILE), Math.floor(p.y / TILE));
+    if (!T.detonator) fail('el piso con trampa no tiene detonador');
+    else {
+      const R = T.room, d = T.detonator;
+      if (!(d.tx >= R.x0 && d.tx <= R.x1 && d.ty >= R.y0 && d.ty <= R.y1)) fail('el detonador no está dentro del despacho');
+      if (!free(d) || !findPath(map, L.entry.x, L.entry.y, d.x, d.y)) fail('el detonador está tapado o es inalcanzable');
+    }
+    const M = T.meet;
+    if (!free(M) || !free({ x: M.x - 14, y: M.y }) || !free({ x: M.x + 14, y: M.y })) fail('el punto de encuentro (beso) está ocupado');
+    else if (!findPath(map, T.center.x, T.center.y, M.x - 14, M.y)) fail('el punto de encuentro es inalcanzable desde el despacho');
+    else if (!findPath(map, T.ext.x, T.ext.y, M.x + 14, M.y)) fail('el punto de encuentro es inalcanzable desde la calle');
+    else console.log('  final: detonador y punto de encuentro alcanzables');
+  }
   // 6) cada enemigo puede llegar al jugador y a la salida (pathfinding)
   const pEntry = L.entry;
   const noPath = L.enemies.filter((e) => !findPath(map, e.x, e.y, pEntry.x, pEntry.y));

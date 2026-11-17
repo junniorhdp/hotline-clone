@@ -25,6 +25,8 @@ const GAS_TIME = 60;        // s hasta que el gas mata al agente atrapado en el 
 const VENT_TIME = 1.5;       // s que hay que mantener PATEAR/INTERACTUAR junto a la ventilación para romperla
 // Emboscada de la trampilla (fase final, LIMPIEZA): si al elegir el rol quedan menos de AMBUSH_MIN enemigos vivos, la trampilla se abre y salen estos refuerzos (siempre ≥ 3).
 const AMBUSH_MIN = 3;
+const DETONATE_TIME = 1.5;   // s que hay que mantener PATEAR/INTERACTUAR junto al detonador (LIMPIEZA)
+const ENDING_BLASTS = 16;    // explosiones de la secuencia final
 const AMBUSH = [{ kind: 'grunt', weapon: 'smg' }, { kind: 'grunt', weapon: 'gun' }, { kind: 'runner' }, { kind: 'heavy', weapon: 'shotgun' }];
 const FINAL_KEEP = 6;        // enemigos que quedan al reintentar la fase final con R (los 6 más lejos del despacho)
 // Oleadas del perímetro (piso 10): cada enemigo aparece por un extremo de la calle ('w' oeste, 'e' este) y va a por el jugador.
@@ -1054,6 +1056,8 @@ export class Game {
     this.trap = level.trap ? { ...level.trap, state: 'idle', t: GAS_TIME, hold: 0, cough: 1.2, victim: null, fade: 0 } : null;
     this.asphyx = null;
     this.endAskAt = 0;
+    this.ending = null; this.rider = null; this.endingRide = false; this.endingDone = false; // final: detonación, huida, beso y salida en moto
+    this.destroyed = 0; this.sunset = 0; this.blasts = []; this.hearts = []; this.flashT = 0; this.detHold = 0; this.detNear = false;
     this.hatch = level.trap && level.trap.hatch ? { ...level.trap.hatch, state: 'closed', open: 0, used: false } : null; // trampilla de la emboscada
     this.ambush = null;
     this.final = null; this.reunion = null; // fase final (reencuentro y rol): ver beginFinal
@@ -1127,13 +1131,14 @@ export class Game {
     }
 
     if (this.state === 'ambush') { this.updateAmbush(dt); return; }
+    if (this.state === 'ending') { this.updateEnding(dt, input.down('Enter')); return; }
     if (this.state === 'radio') { this.updateRadio(dt, confirm || input.mousePressed.left); return; }
     if (this.state === 'reunion') { this.updateReunion(dt); return; }
     if (this.state === 'role') { this.updateRoleSelect(); return; }
     if (this.state === 'scuffle') { this.updateScuffle(dt); return; }
 
     if (this.state === 'arriving' || this.state === 'leaving') {
-      this.updateCine(dt, confirm || input.mousePressed.left);
+      this.updateCine(dt, (confirm || input.mousePressed.left) && !this.endingRide); // la salida del final no se salta con Espacio
       return;
     }
 
@@ -1204,7 +1209,8 @@ export class Game {
     // Junto a la moto con el piso despejado: si no quedan rehenes atados, la fuga arranca sola; si quedan, solo se AVISA (el rescate es opcional) y el jugador decide:
     // ESPACIO / F (BOTA en táctil) para irse igualmente, o volver a por ellos.
     this.leaveAsk = 0;
-    if (this.state === 'cleared' && this.player.alive && this.touchingBike()) {
+    if (this.trap && this.state === 'cleared') this.updateEndingTrigger(dt); // piso 10: la salida es el FINAL (detonar y huir en pareja), no volver a la moto sin más
+    if (!this.trap && this.state === 'cleared' && this.player.alive && this.touchingBike()) {
       const miss = this.hostages.pending();
       if (miss === 0) this.startLeaving();
       else {
@@ -1260,6 +1266,7 @@ export class Game {
   updateCine(dt, skip) {
     const c = this.cine, b = this.bike, p = this.player;
     c.t += dt;
+    if (this.callout && (this.callout.t -= dt) <= 0) this.callout = null; // los carteles (p. ej. FIN) también caducan durante las cinemáticas
     if (c.kind === 'arrive') {
       const end = ARRIVE_RIDE + ARRIVE_DISMOUNT;
       if (skip && c.t < end) {
@@ -1302,11 +1309,13 @@ export class Game {
         p.y = lerp(c.from.y, b.park.y, e);
         p.angle = c.from.angle + angleDiff(0, c.from.angle) * e;
         this.hostages.rideUpdate(e, b);
+        this.rideRider(e);
       } else {
         const t2 = c.t - LEAVE_BOARD, ex = this.exit;
         b.riding = true;
         ex.place(t2, b, this);                       // trayectoria, giro y salto de la salida elegida
         this.hostages.rideUpdate(1, b);              // el rehén (si hay uno) va detrás del protagonista
+        this.rideRider(1);                           // y, en el final, el otro agente
         const ca = Math.cos(b.angle), sa = Math.sin(b.angle);
         p.x = b.x - 4 * ca;
         p.y = b.y - 4 * sa - b.z;
@@ -1615,7 +1624,8 @@ export class Game {
         return { id: 'mount', label: 'MOTO', ready: true };
       }
     }
-    if (this.ventNear()) return { id: 'interact', label: 'ROMPER', ready: true }; // piso 10: romper la ventilación (toques repetidos)
+    if (this.ventNear()) return { id: 'interact', label: 'ROMPER', ready: true };
+    if (this.detNear && this.state === 'cleared') return { id: 'interact', label: 'DETONAR', ready: true }; // piso 10: activar el detonador // piso 10: romper la ventilación (toques repetidos)
     const door = this.doors.some((d) => d.inKickRange(p.x, p.y, p.angle));
     if (door) return { id: 'kick', label: 'PATEAR', ready: true };
     // Algo de la calle con lo que interactuar (contenedor, máquina, cabina, vagabundo con moneda): enciende el botón superior (ver StreetLife.nearTarget).
@@ -1624,7 +1634,8 @@ export class Game {
   }
 
   // Edificio despejado y de vuelta en la moto: se sube y se va; al salir de la pantalla, los resultados.
-  startLeaving() {
+  startLeaving(force = false) {
+    if (this.trap && !force) return; // en el piso 10 solo se sale por el final (ver startEnding)
     // Culpa pendiente (o vomitando): el piso no se cierra hasta que el jugador haya vomitado. Si se intenta subir a la moto con la culpa en cuenta
     // atrás, el vómito empieza ya y la fuga arranca cuando termina (el jugador sigue junto a la moto).
     if (this.guilt || this.player.vomit) { if (this.guilt) this.guilt.t = 0; return; }
@@ -1639,7 +1650,8 @@ export class Game {
     this.state = 'leaving';
     // Salida al azar (33 % cada una): portón en la valla sur, carril lateral o salto sobre una rampa (ver exits.js). La cámara amplía sus límites
     // en esa dirección para seguir a la moto fuera del mapa.
-    this.exit = BikeExit.random(this);
+    this.exit = force ? new BikeExit('gate', this) : BikeExit.random(this); // el final sale por el portón
+    if (!this.exit.ok) this.exit = new BikeExit('lane', this);
     const m = this.map;
     this.camera.setBounds(m.pixelW + (this.exit.kind === 'lane' ? EXIT_EXTRA : 0), m.pixelH + (this.exit.kind === 'lane' ? 0 : EXIT_EXTRA));
     this.cine = { kind: 'leave', t: 0, from: { x: p.x, y: p.y, angle: p.angle } };
@@ -2349,6 +2361,201 @@ export class Game {
     });
     this.sfx.play('pickup');
     this.addFloat(pl.x, pl.y - 26, '¡SUMINISTROS!', COLORS.enemy, 1, 1.6);
+  }
+
+  // --- El final del piso 10 (tanda E): detonación, huida en pareja, beso y salida en moto ------------------------------------------------------------------
+  // Con la fase final ganada (`final.done`): en LIMPIEZA el jugador activa el DETONADOR del despacho (mantener PATEAR/INTERACTUAR 1,5 s); en PERÍMETRO lo hace solo el agente
+  // interior (IA) a los 3,2 s. Entonces: el edificio estalla (16 explosiones escalonadas, la destrucción crece sobre su huella), el agente interior CORRE hasta la moto mientras el
+  // otro le espera, se encuentran (beso con zoom ×2, corazones y el edificio ardiendo detrás, la música se calma), el atardecer tiñe la pantalla y se van juntos en la moto (el
+  // otro agente va detrás) por el portón: `FIN`. Solo cinemática: no se puede perder. Mantener ENTER 1,2 s salta a la salida (Espacio no).
+  updateEndingTrigger(dt) {
+    const F = this.final, T = this.trap;
+    if (!F || !F.done || this.ending || this.endingDone) return;
+    if (F.role === 'perimetro') { F.autoT = (F.autoT ?? 3.2) - dt; if (F.autoT <= 0) this.startEnding(); return; }
+    const d = T.detonator, p = this.player;
+    this.detNear = !!(d && p.alive && Math.hypot(p.x - d.x, p.y - d.y) < 34);
+    const held = this.keys.down('kick') || this.keys.down('execute'), tap = this.keys.pressed('kick') || this.keys.pressed('execute');
+    if (this.detNear && held) this.detHold += dt;
+    else if (this.detNear && tap) this.detHold += 0.45;
+    else this.detHold = Math.max(0, this.detHold - dt * 0.8);
+    if (this.detHold >= DETONATE_TIME) this.startEnding();
+  }
+
+  startEnding() {
+    const F = this.final, T = this.trap, inter = F.role === 'limpieza';
+    const runner = inter ? this.player : this.partner, waiter = inter ? this.partner : this.player, M = T.meet;
+    this.endingDone = true; this.detNear = false; this.detHold = 0;
+    this.state = 'ending';
+    this.callout = null; this.leaveAsk = 0;
+    const path = findPath(this.map, runner.x, runner.y, M.x - 14, M.y) || [{ x: M.x - 14, y: M.y }];
+    const times = [];
+    for (let i = 0; i < ENDING_BLASTS; i++) times.push(0.9 + i * 0.42 + Math.random() * 0.25);
+    this.ending = { t: 0, phase: 'run', runner, waiter, path, blastT: times, nextBlast: 0, kissT: 0, skipHold: 0, heartT: 0 };
+    this.showCallout('¡DETONACIÓN ARMADA!', COLORS.blood, 1.8, 'CORRED HACIA LA MOTO');
+    this.sfx.play('lockdown');
+    this.sfx.setMusic('action');
+    this.camera.addShake(8);
+    this.touch.haptic([60, 40, 60]);
+  }
+
+  walkPath(a, path, speed, dt) {
+    while (path.length && Math.hypot(path[0].x - a.x, path[0].y - a.y) < 8) path.shift();
+    if (!path.length) return true;
+    const dx = path[0].x - a.x, dy = path[0].y - a.y, d = Math.hypot(dx, dy) || 1;
+    moveAndSlide(this.map, a, (dx / d) * speed * dt, (dy / d) * speed * dt);
+    a.angle = Math.atan2(dy, dx);
+    return false;
+  }
+
+  updateEnding(dt, skipKey) {
+    const E = this.ending, T = this.trap, M = T.meet, z = this.entry.zone;
+    E.t += dt;
+    E.skipHold = skipKey ? E.skipHold + dt : 0;
+    if (E.skipHold > 1.2) { this.skipEnding(); return; }
+    if (this.callout && (this.callout.t -= dt) <= 0) this.callout = null;
+    for (const f of this.floatingTexts) f.t -= dt;
+    this.floatingTexts = this.floatingTexts.filter((f) => f.t > 0);
+    this.particles.update(dt, this.map, (kind, p) => this.bake(kind, p));
+    this.flashT = Math.max(0, this.flashT - dt);
+    for (const b of this.blasts) b.t += dt;
+    this.blasts = this.blasts.filter((b) => b.t < b.max);
+    for (const h of this.hearts) { h.t += dt; h.y -= 22 * dt; }
+    this.hearts = this.hearts.filter((h) => h.t < 1.8);
+    // Explosiones escalonadas por toda la huella del edificio (las últimas, más grandes)
+    while (E.nextBlast < E.blastT.length && E.t >= E.blastT[E.nextBlast]) {
+      const size = 0.8 + (E.nextBlast / E.blastT.length) * 0.9;
+      // 6 de cada 10 estallan cerca del corredor (para que se vean y se sientan), el resto por toda la huella del edificio
+      const bx0 = z.x0 + 40, bx1 = z.x1 - 40, by0 = z.y0 + 40, by1 = this.mainDoor.cy - 24;
+      let bx, by;
+      if (E.phase === 'run' && Math.random() < 0.6) { bx = clamp(E.runner.x + rand(-130, 130), bx0, bx1); by = clamp(E.runner.y + rand(-120, 30), by0, by1); }
+      else { bx = bx0 + Math.random() * (bx1 - bx0); by = by0 + Math.random() * (by1 - by0); }
+      this.blast(bx, by, size);
+      E.nextBlast++;
+    }
+    this.destroyed = clamp((E.t - 1.6) / 9, 0, 1); // el edificio se va viniendo abajo
+    this.sunset = clamp((E.t - 2.5) / 8, 0, 1);    // y el cielo se tiñe de atardecer
+    let fx, fy;
+    if (E.phase === 'run') {
+      const arrived = this.walkPath(E.runner, E.path, 260, dt);
+      if (!E.runner.exec && Math.random() < 0.5) this.particles.dust(E.runner.x, E.runner.y, 1);
+      // el otro agente sale a su encuentro hasta el punto de la moto
+      const wx = M.x + 14, wy = M.y;
+      if (Math.hypot(wx - E.waiter.x, wy - E.waiter.y) > 4) { const a = Math.atan2(wy - E.waiter.y, wx - E.waiter.x); moveAndSlide(this.map, E.waiter, Math.cos(a) * 130 * dt, Math.sin(a) * 130 * dt); E.waiter.angle = a; }
+      fx = arrived ? (E.runner.x + E.waiter.x) / 2 : E.runner.x; fy = arrived ? (E.runner.y + E.waiter.y) / 2 : E.runner.y;
+      if (arrived && Math.hypot(wx - E.waiter.x, wy - E.waiter.y) < 6) { // se encuentran: el beso
+        E.phase = 'kiss'; E.kissT = 0;
+        E.runner.x = M.x - 12; E.runner.y = M.y; E.waiter.x = M.x + 12; E.waiter.y = M.y;
+        E.runner.angle = 0; E.waiter.angle = Math.PI;
+        this.camera.mulTarget = 2; // zoom ×2 (múltiplo exacto: el pixel art sigue nítido)
+        this.sfx.setMusic('menu');
+        this.callout = null;
+      }
+    } else {
+      E.kissT += dt; E.heartT -= dt;
+      fx = (E.runner.x + E.waiter.x) / 2; fy = (E.runner.y + E.waiter.y) / 2;
+      if (E.heartT <= 0) { E.heartT = 0.32; this.hearts.push({ x: fx + (Math.random() - 0.5) * 20, y: fy - 12, t: 0 }); }
+      if (E.kissT >= 3.2) { this.camera.mulTarget = 1; this.beginEndingRide(); return; }
+    }
+    this.camera.update(dt, fx, fy);
+  }
+
+  blast(x, y, size) {
+    this.blasts.push({ x, y, t: 0, max: 0.7 + size * 0.5, r: 16 + size * 18 });
+    for (let i = 0; i < 10; i++) this.particles.fire(x + rand(-12, 12), y + rand(-12, 12));
+    this.particles.sparks(x, y, Math.random() * TAU, 12, 3.14);
+    this.particles.dust(x, y, 8);
+    this.camera.addShake(5 + size * 5);
+    this.playAt('blast', x, y, 1);
+    if (size > 1.4 && this.settings.get('strobeEnabled')) this.flashT = 0.08; // el destello respeta la opción de luces estroboscópicas
+  }
+
+  skipEnding() {
+    const E = this.ending, M = this.trap.meet;
+    this.destroyed = 1; this.sunset = 1; this.blasts = []; this.hearts = [];
+    E.runner.x = M.x - 12; E.runner.y = M.y; E.waiter.x = M.x + 12; E.waiter.y = M.y;
+    this.camera.mulTarget = 1;
+    this.beginEndingRide();
+  }
+
+  // De la escena del beso a la salida: el agente que controlas conduce y el otro va detrás (rider); mismo recorrido de la fuga normal por el portón.
+  beginEndingRide() {
+    const E = this.ending;
+    this.rider = this.player === E.runner ? E.waiter : E.runner;
+    this.rider.rideFrom = { x: this.rider.x, y: this.rider.y };
+    this.ending = null;
+    this.endingRide = true;
+    this.sfx.setMusic('menu');
+    this.startLeaving(true);
+    this.showCallout('FIN', COLORS.player, 3.2, 'NEON RUSH');
+  }
+
+  rideRider(k) {
+    const r = this.rider;
+    if (!r) return;
+    const b = this.bike, a = b.angle || 0, z = b.z || 0;
+    const rx = b.x - 18 * Math.cos(a), ry = b.y - 18 * Math.sin(a) - z;
+    r.x = lerp(r.rideFrom.x, rx, k); r.y = lerp(r.rideFrom.y, ry, k);
+    r.angle = a;
+  }
+
+  // Destrucción del edificio (tinte de humo y brasas sobre su huella), bolas de fuego y corazones (en el mundo, tras las paredes).
+  drawEnding(ctx) {
+    if (!(this.destroyed > 0 || this.blasts.length || this.hearts.length)) return;
+    ctx.save();
+    if (this.destroyed > 0) {
+      const z = this.entry.zone, x0 = z.x0, y0 = z.y0, w = z.x1 - z.x0, h = this.mainDoor.cy + TILE / 2 - z.y0, k = this.destroyed, t = performance.now() / 1000;
+      ctx.fillStyle = `rgba(28,10,6,${0.55 * k})`; ctx.fillRect(x0, y0, w, h);
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.fillStyle = `rgba(255,90,20,${0.1 * k})`; ctx.fillRect(x0, y0, w, h);
+      for (let i = 0; i < 26; i++) { // brasas: posiciones fijas que parpadean
+        const hx = Math.sin(i * 91.7) * 0.5 + 0.5, hy = Math.sin(i * 47.3 + 2) * 0.5 + 0.5;
+        if (Math.sin(t * (3 + (i % 5)) + i) > 0.1 - k * 0.4) { ctx.fillStyle = i % 3 ? '#ff7a1a' : '#ffd166'; ctx.globalAlpha = 0.35 + 0.4 * k; pixelRect(ctx, x0 + hx * w, y0 + hy * h, 2, 2); }
+      }
+      ctx.globalAlpha = 1;
+    }
+    ctx.globalCompositeOperation = 'lighter';
+    for (const b of this.blasts) { // bolas de fuego que se expanden y se apagan
+      const k = b.t / b.max, r = (b.r * (0.35 + 0.9 * Math.sqrt(k))) / WORLD_PX;
+      ctx.globalAlpha = 0.34 * (1 - k); ctx.fillStyle = '#ff7a1a'; pixelDisc(ctx, b.x, b.y, r, WORLD_PX);
+      ctx.globalAlpha = 0.5 * (1 - k); ctx.fillStyle = '#ffd166'; pixelDisc(ctx, b.x, b.y, r * 0.55, WORLD_PX);
+      ctx.globalAlpha = 0.5 * (1 - k) * (1 - k); ctx.fillStyle = '#ffffff'; pixelDisc(ctx, b.x, b.y, r * 0.25, WORLD_PX);
+    }
+    ctx.globalCompositeOperation = 'source-over';
+    const HEART = ['.##.##.', '#######', '#######', '.#####.', '..###..', '...#...'];
+    for (const h of this.hearts) { // corazones que suben
+      ctx.globalAlpha = Math.max(0, 1 - h.t / 1.8);
+      HEART.forEach((row, j) => { for (let i = 0; i < 7; i++) if (row[i] === '#') { ctx.fillStyle = j < 2 && i < 3 ? '#ff8ab8' : '#ff2a85'; pixelRect(ctx, h.x + (i - 3) * WORLD_PX, h.y + j * WORLD_PX, 1, 1); } });
+    }
+    ctx.restore();
+  }
+
+  // Atardecer: bandas cálidas sobre toda la pantalla (naranja arriba, magenta abajo) y el destello corto de las explosiones grandes (solo con las luces estroboscópicas activadas).
+  drawSunset(ctx, w, h) {
+    if (this.sunset > 0) {
+      const bands = 8, bh = Math.ceil(h / bands);
+      for (let i = 0; i < bands; i++) {
+        const f = i / (bands - 1);
+        ctx.fillStyle = `rgba(${255},${Math.round(140 - 98 * f)},${Math.round(60 + 73 * f)},${(0.2 - 0.08 * f) * this.sunset})`;
+        ctx.fillRect(0, i * bh, w, bh);
+      }
+    }
+    if (this.flashT > 0) { ctx.fillStyle = `rgba(255,255,255,${0.2 * (this.flashT / 0.08)})`; ctx.fillRect(0, 0, w, h); }
+    // Pista para saltar la cinemática (mantener ENTER) con su barra
+    const E = this.ending;
+    if (E && this.state === 'ending') {
+      const txt = this.hint('MANTÉN ENTER: SALTAR', 'ESPERA...'), cx = Math.round(w / 2), y = h - CINE_BAR + 4;
+      drawText(ctx, txt, cx, y, { color: '#9d8fb8', align: 'center' });
+      if (E.skipHold > 0) { ctx.fillStyle = '#05000f'; ctx.fillRect(cx - 41, y + 10, 82, 4); ctx.fillStyle = COLORS.player; ctx.fillRect(cx - 40, y + 11, Math.round(80 * Math.min(1, E.skipHold / 1.2)), 2); }
+    }
+  }
+
+  // Aviso junto al detonador (LIMPIEZA): qué mantener y una barra de progreso.
+  drawDetonatorHud(ctx, w, h) {
+    if (!this.trap || this.state !== 'cleared' || !this.detNear || this.ending) return;
+    const d = this.trap.detonator, s = this.camera.worldToScreen(d.x, d.y + 22);
+    const msg = this.hint(`MANTÉN ${this.keys.label('kick')} · DETONAR EL EDIFICIO`, 'BOTA (TOCA VARIAS VECES) · DETONAR'), p = this.keepOnScreen(s.x, s.y, measureText(msg), 8);
+    drawText(ctx, msg, p.x, p.y, { color: COLORS.blood, align: 'center', shadow: COLORS.background });
+    if (this.detHold > 0) { const bw = 40, bx = Math.round(p.x - bw / 2), by = Math.round(p.y + 11); ctx.fillStyle = '#05000f'; ctx.fillRect(bx - 1, by - 1, bw + 2, 5); ctx.fillStyle = COLORS.blood; ctx.fillRect(bx, by, Math.round(bw * Math.min(1, this.detHold / DETONATE_TIME)), 3); }
   }
 
   // Cinemática de la emboscada (no se puede saltar; dura ~3,7 s y no usa destellos): la cámara va a la trampilla, que tiembla y suelta polvo; se abre de golpe y salen los refuerzos de uno en uno.
@@ -3242,6 +3449,7 @@ export class Game {
     if (this.wallBloodDirty && this.goreOn) ctx.drawImage(this.wallBloodLayer, 0, 0, pixelW, pixelH);
     this.cams.drawBodies(ctx); // cámaras montadas en las paredes
     this.drawVent(ctx); // ventilación del despacho (piso 10)
+    this.drawEnding(ctx); // destrucción del edificio, bolas de fuego y corazones (final)
     this.hostages.drawOver(ctx, performance.now() / 1000); // auto de extracción (con las aberturas de la valla por donde entra y sale)
     if (over) {
       // Encima de la valla: el portón que se abre (o la abertura del carril), y después la moto con el jugador.
@@ -3249,6 +3457,7 @@ export class Game {
       else if (this.state === 'arriving') BikeExit.drawArrivalGap(ctx, this);
       this.drawBike(ctx);
       this.hostages.drawRiding(ctx); // el rehén que se sube a la moto va detrás del protagonista
+      if (this.rider && this.rider.alive) this.rider.draw(ctx); // el otro agente, en el final
       if (this.player.alive) this.player.draw(ctx);
     }
 
@@ -3268,7 +3477,7 @@ export class Game {
   // El compañero inactivo: se dibuja con su máscara y su ropa, con una marca sobre la cabeza (nombre de su máscara) para distinguirlo.
   drawPartner(ctx) {
     const t = this.partner;
-    if (!t || !t.alive || t.away || !['playing', 'cleared', 'scuffle', 'dead', 'reunion', 'radio', 'ambush'].includes(this.state)) return;
+    if (!t || !t.alive || t.away || !['playing', 'cleared', 'scuffle', 'dead', 'reunion', 'radio', 'ambush', 'ending'].includes(this.state)) return;
     const T = this.trap, gassed = T && T.state === 'gas' && T.victim === t, k = gassed ? 1 - T.t / GAS_TIME : 0;
     const ox = t.x;
     if (gassed) t.x += Math.sin(performance.now() / 70) * (0.5 + k * 2.5); // tambaleo del agente atrapado en el gas
@@ -3276,7 +3485,7 @@ export class Game {
     t.x = ox;
     const time = performance.now() / 1000;
     const name = this.partnerMask ? this.partnerMask.name : '';
-    drawText(ctx, name, t.x, t.y - t.r - 14, { color: '#9d8fb8', scale: WORLD_PX, align: 'center' });
+    if (this.state !== 'ending') drawText(ctx, name, t.x, t.y - t.r - 14, { color: '#9d8fb8', scale: WORLD_PX, align: 'center' });
     ctx.fillStyle = COLORS.player;
     const b = Math.round(Math.sin(time * 6)) * WORLD_PX;
     pixelRect(ctx, t.x - 1, t.y - t.r - 8 + b, 3, 1); pixelRect(ctx, t.x, t.y - t.r - 6 + b, 1, 1); // flecha ▼ sobre el compañero
@@ -3323,6 +3532,9 @@ export class Game {
     if (this.state === 'playing' && !this.inside) {
       const d = this.mainDoor;
       r = { x: d.cx - TILE / 2, y: d.cy - TILE / 2, w: TILE, h: TILE, label: 'ENTRADA', below: true };
+    } else if (this.state === 'cleared' && this.trap) {
+      const d = this.trap.detonator;
+      if (d && this.final && this.final.role === 'limpieza' && !this.endingDone) r = { x: d.x - TILE / 2, y: d.y - TILE / 2, w: TILE, h: TILE, label: 'DETONADOR', below: true };
     } else if (this.state === 'cleared') {
       const b = this.bike;
       r = { x: b.park.x - b.w / 2, y: b.park.y - b.h / 2, w: b.w, h: b.h, label: 'MOTO', below: false };
@@ -3821,7 +4033,8 @@ export class Game {
   // flecha parpadeante y borde que late). Solo sale cuando el cartel grande ya se ha ido.
   drawGoalPanel(ctx, w, h) {
     if (this.state !== 'cleared' || this.callout) return;
-    const text = 'REGRESA A LA MOTO';
+    const text = this.trap ? (this.final && this.final.role === 'limpieza' ? 'ACTIVA EL DETONADOR · DESPACHO' : null) : 'REGRESA A LA MOTO'; // piso 10: el objetivo es detonar
+    if (!text) return;
     const e = 1 - Math.pow(1 - clamp(this.goalAge / 0.3, 0, 1), 3);
     const scale = this.fitScale(text, w - 60, 2);
     const tw = measureText(text) * scale, th = CELL_H * scale;
@@ -3935,7 +4148,9 @@ export class Game {
     this.hostages.drawLeaveAsk(ctx, w, h);
     this.drawTrapHud(ctx, w, h);
     this.drawFinalHud(ctx, w, h);
-    if (this.state === 'reunion' || this.state === 'radio' || this.state === 'ambush') { ctx.fillStyle = '#05000f'; ctx.fillRect(0, 0, w, CINE_BAR); ctx.fillRect(0, h - CINE_BAR, w, CINE_BAR); } // barras de cine durante el reencuentro y la radio
+    this.drawDetonatorHud(ctx, w, h);
+    this.drawSunset(ctx, w, h);
+    if (this.state === 'reunion' || this.state === 'radio' || this.state === 'ambush' || this.state === 'ending') { ctx.fillStyle = '#05000f'; ctx.fillRect(0, 0, w, CINE_BAR); ctx.fillRect(0, h - CINE_BAR, w, CINE_BAR); } // barras de cine durante el reencuentro y la radio
     this.drawRadioBox(ctx, w, h);
     this.drawExecutePrompt(ctx);
     const boss = this.enemies.find((e) => e.kind === 'boss' && e.alive && e.awake);
@@ -4016,7 +4231,7 @@ export class Game {
       ctx.fillStyle = '#05000f';
       ctx.fillRect(0, 0, w, CINE_BAR);
       ctx.fillRect(0, h - CINE_BAR, w, CINE_BAR);
-      drawText(ctx, this.hint('ESPACIO · CLIC: SALTAR', 'TOCA: SALTAR'), cx, h - CINE_BAR + 4, { color: '#9d8fb8', align: 'center' });
+      if (!this.endingRide) drawText(ctx, this.hint('ESPACIO · CLIC: SALTAR', 'TOCA: SALTAR'), cx, h - CINE_BAR + 4, { color: '#9d8fb8', align: 'center' }); // la salida del final no se salta
     }
     if (this.state === 'dead') this.drawRunover(ctx, w, h);
     if (this.state === 'dead' && !(this.asphyx && this.asphyx.t < 2.6)) { // (con la cinemática de asfixia, la franja sale al final)

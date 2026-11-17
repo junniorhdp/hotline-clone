@@ -126,6 +126,13 @@ const SOUNDS = {
     s.tone({ type: 'sine', from: 540, to: 400, dur: 0.16, gain: 0.12 * v });
     s.tone({ type: 'sine', from: 520, to: 380, dur: 0.18, gain: 0.1 * v, delay: 0.22 });
   },
+  // Explosión del edificio (final del piso 10): estruendo grave con cola de ruido y un golpe seco.
+  blast(s, v) {
+    s.noise({ dur: 1.1, gain: 0.5 * v, filter: 'lowpass', freq: 1100, freqTo: 70, q: 1 });
+    s.tone({ type: 'sawtooth', from: 95, to: 28, dur: 0.8, gain: 0.32 * v });
+    s.noise({ dur: 0.22, gain: 0.35 * v, filter: 'highpass', freq: 1600 });
+    s.tone({ type: 'sine', from: 60, to: 30, dur: 0.5, gain: 0.5 * v });
+  },
   // Auto de extracción: pasa y frena (carPass), puerta (carDoor) y arranque (carAway).
   carPass(s, v) {
     s.noise({ dur: 1.5, gain: 0.3 * v, filter: 'bandpass', freq: 420, freqTo: 160, q: 2 });

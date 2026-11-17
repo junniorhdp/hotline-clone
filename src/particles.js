@@ -58,6 +58,12 @@ export class Particles {
     this.add({ type: 'dust', x, y, vx: rand(-8, 8), vy: -rand(10, 24), life, max: life, size: rand(2, 3) });
   }
 
+  // Llamarada de una explosión (final del piso 10): bocanada naranja que sube y se apaga rápido.
+  fire(x, y) {
+    const life = rand(0.5, 1.2), cols = ['#ffd166', '#ff9a1a', '#ff5a1a', '#c1272d'];
+    this.add({ type: 'dust', color: cols[Math.floor(Math.random() * cols.length)], x, y, vx: rand(-46, 46), vy: -rand(14, 60), life, max: life, size: rand(2.8, 4.2) });
+  }
+
   // Gas tóxico (piso 10): nube verde que sube y se expande despacio.
   gas(x, y) {
     const life = rand(1.4, 2.4);
