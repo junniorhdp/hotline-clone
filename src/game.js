@@ -2265,7 +2265,7 @@ export class Game {
   }
 
   roleLayout() {
-    const w = this.scene.width, h = this.scene.height, sf = this.safe, gap = 8, cw = Math.floor((w - 24 - gap) / 2), top = 30, ch = Math.max(90, h - top - 24 - sf.b);
+    const w = this.scene.width, h = this.scene.height, sf = this.safe, gap = 8, cw = Math.floor((w - 24 - gap) / 2), top = 36, ch = Math.max(90, h - top - 22 - sf.b);
     return [0, 1].map((i) => ({ x: 12 + i * (cw + gap), y: top, w: cw, h: ch }));
   }
 
@@ -2436,6 +2436,8 @@ export class Game {
     this.sunset = clamp((E.t - 2.5) / 8, 0, 1);    // y el cielo se tiñe de atardecer
     let fx, fy;
     if (E.phase === 'run') {
+      // Salvaguarda: si la carrera se alarga (atascado contra algo, ruta imposible), se coloca a los dos en el punto de encuentro para que la secuencia siga.
+      if (E.t > 14 && E.path.length) { E.path.length = 0; E.runner.x = M.x - 14; E.runner.y = M.y; E.waiter.x = M.x + 14; E.waiter.y = M.y; }
       const arrived = this.walkPath(E.runner, E.path, 260, dt);
       if (!E.runner.exec && Math.random() < 0.5) this.particles.dust(E.runner.x, E.runner.y, 1);
       // el otro agente sale a su encuentro hasta el punto de la moto
@@ -2706,8 +2708,8 @@ export class Game {
     ctx.fillStyle = 'rgba(13, 2, 33, 0.88)';
     ctx.fillRect(0, 0, w, h);
     const cx = Math.round(w / 2), title = 'ELIGE TU ROL FINAL';
-    drawText(ctx, title, cx, 6, { color: COLORS.wall, scale: this.fitScale(title, w - 12), align: 'center' });
-    drawText(ctx, 'EL OTRO AGENTE LO LLEVA LA IA (INMORTAL)', cx, 21, { color: '#9d8fb8', align: 'center' });
+    drawText(ctx, title, cx, 5, { color: COLORS.wall, scale: this.fitScale(title, w - 12, 2), align: 'center' });
+    drawText(ctx, 'EL OTRO AGENTE LO LLEVA LA IA (INMORTAL)', cx, 24, { color: '#9d8fb8', align: 'center' });
     const A = this.agentMasks(), cards = this.roleLayout(), now = performance.now();
     const name = (p) => (AGENTS[p.gender] || AGENTS.male).name;
     const info = [
@@ -3534,7 +3536,7 @@ export class Game {
       r = { x: d.cx - TILE / 2, y: d.cy - TILE / 2, w: TILE, h: TILE, label: 'ENTRADA', below: true };
     } else if (this.state === 'cleared' && this.trap) {
       const d = this.trap.detonator;
-      if (d && this.final && this.final.role === 'limpieza' && !this.endingDone) r = { x: d.x - TILE / 2, y: d.y - TILE / 2, w: TILE, h: TILE, label: 'DETONADOR', below: true };
+      if (d && this.final && this.final.role === 'limpieza' && !this.endingDone && !this.detNear) r = { x: d.x - TILE / 2, y: d.y - TILE / 2, w: TILE, h: TILE, label: 'DETONADOR', below: true };
     } else if (this.state === 'cleared') {
       const b = this.bike;
       r = { x: b.park.x - b.w / 2, y: b.park.y - b.h / 2, w: b.w, h: b.h, label: 'MOTO', below: false };
@@ -4036,10 +4038,11 @@ export class Game {
     const text = this.trap ? (this.final && this.final.role === 'limpieza' ? 'ACTIVA EL DETONADOR · DESPACHO' : null) : 'REGRESA A LA MOTO'; // piso 10: el objetivo es detonar
     if (!text) return;
     const e = 1 - Math.pow(1 - clamp(this.goalAge / 0.3, 0, 1), 3);
-    const scale = this.fitScale(text, w - 60, 2);
+    const colX = this.input.touchMode ? this.touch.rightColumn().x : w; // en táctil, el panel se queda a la izquierda de la columna de botones
+    const scale = this.fitScale(text, colX - 60, 2);
     const tw = measureText(text) * scale, th = CELL_H * scale;
     const pw = tw + 34, ph = th + 12;
-    const x = Math.round(w / 2 - pw / 2);
+    const x = Math.round(colX / 2 - pw / 2);
     // En escritorio, por encima de la línea de controles de abajo (dos filas de texto).
     const bottom = this.input.touchMode ? 10 : 10 + 2 * (CELL_H + 2);
     const y = Math.round(h - this.safe.b - bottom - ph + (1 - e) * (ph + 14 + bottom));
