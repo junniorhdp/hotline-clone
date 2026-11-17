@@ -1496,7 +1496,10 @@ export class Game {
       }
     }
     const door = this.doors.some((d) => d.inKickRange(p.x, p.y, p.angle));
-    return door ? { id: 'kick', label: 'PATEAR', ready: true } : { id: 'attack', label: 'ATACAR', ready: false };
+    if (door) return { id: 'kick', label: 'PATEAR', ready: true };
+    // Algo de la calle con lo que interactuar (contenedor, máquina, cabina, vagabundo con moneda): enciende el botón superior (ver StreetLife.nearTarget).
+    if (this.street && (this.state === 'playing' || this.state === 'cleared') && this.street.nearTarget()) return { id: 'interact', label: 'INTERACTUAR', ready: true };
+    return { id: 'attack', label: 'ATACAR', ready: false };
   }
 
   // Edificio despejado y de vuelta en la moto: se sube y se va; al salir de la pantalla, los resultados.
@@ -1955,10 +1958,19 @@ export class Game {
   // y respetando las zonas seguras. Sirve a textos flotantes, popups de puntos, avisos y burbujas (nunca salen cortados).
   keepOnScreen(x, y, tw, th, margin = 4) {
     const w = this.scene.width, h = this.scene.height, sf = this.safe;
-    return {
-      x: clamp(x, sf.l + margin + tw / 2, Math.max(sf.l + margin + tw / 2, w - sf.r - margin - tw / 2)),
-      y: clamp(y, sf.t + margin, Math.max(sf.t + margin, h - sf.b - margin - th)),
-    };
+    const touch = this.input.touchMode && this.touch;
+    // En táctil, los textos que caen a la altura de la columna de botones de la derecha (ATACAR / LANZAR / acción) se quedan a su izquierda.
+    let right = w - sf.r - margin;
+    if (touch) { const col = this.touch.rightColumn(); if (y + th > col.y - 2) right = Math.min(right, col.x - 4); }
+    const cx = clamp(x, sf.l + margin + tw / 2, Math.max(sf.l + margin + tw / 2, right - tw / 2));
+    let cy = clamp(y, sf.t + margin, Math.max(sf.t + margin, h - sf.b - margin - th));
+    // Y esquivan el HUD de las esquinas de arriba (izquierda: arma, máscara y, en táctil, REINICIAR/PAUSA; derecha: puntos y piso): se bajan por debajo.
+    const rz = { x: w - sf.r - 134, b: 66 + sf.t }, lz = { x: sf.l + (touch ? 78 : 118), b: (touch ? 114 : 52) + sf.t };
+    for (let k = 0; k < 2; k++) {
+      if (cx + tw / 2 > rz.x && cy < rz.b) cy = rz.b;
+      if (cx - tw / 2 < lz.x && cy < lz.b) cy = lz.b;
+    }
+    return { x: cx, y: Math.min(cy, Math.max(sf.t + margin, h - sf.b - margin - th)) };
   }
 
   drawFloatingTexts(ctx) {
@@ -2066,6 +2078,7 @@ export class Game {
 
   makeNoise(x, y, radius) {
     if (this.sewer) this.sewer.heard(x, y, radius);
+    if (this.street) this.street.noise(x, y, radius); // los civiles de la calle oyen lo que pasa dentro (alerta indirecta)
     for (const e of this.enemies) {
       if (e.alive && Math.hypot(e.x - x, e.y - y) < radius) e.hear(x, y);
     }
@@ -2556,8 +2569,9 @@ export class Game {
     if (r.stats) {
       if (w >= 400) this.drawStatsPanel(ctx, Math.max(6, cx - 215) + this.safe.l, top + 14, r.stats);
       else {
-        drawText(ctx, `BAJAS ${r.stats.kills} · PRECISIÓN ${r.stats.accuracy} · MÁS USADA: ${r.stats.favorite}`, cx, y, { color: '#9d8fb8', align: 'center' });
-        y += 12;
+        const l1 = `BAJAS ${r.stats.kills} · PRECISIÓN ${r.stats.accuracy}`, l2 = `MÁS USADA: ${r.stats.favorite}`;
+        if (measureText(`${l1} · ${l2}`) <= w - 12) { drawText(ctx, `${l1} · ${l2}`, cx, y, { color: '#9d8fb8', align: 'center' }); y += 12; }
+        else { drawText(ctx, l1, cx, y, { color: '#9d8fb8', align: 'center' }); drawText(ctx, l2, cx, y + 10, { color: '#9d8fb8', align: 'center' }); y += 22; } // pantalla estrecha: dos líneas
       }
     }
     if (Math.floor(performance.now() / 400) % 2 === 0) {
@@ -3023,7 +3037,7 @@ export class Game {
       drawText(ctx, 'HAS MUERTO', cx, Math.round(h / 2) - 22, { color: COLORS.blood, scale: this.fitScale('HAS MUERTO', w - 12, 3), align: 'center' });
       if (!touch) drawText(ctx, 'R REINTENTAR PISO · ENTER TERMINAR PARTIDA · T RÉCORDS', cx, Math.round(h / 2) + 10, { color: COLORS.text, align: 'center' });
       if (this.showRecords) this.drawRecordsOverlay(ctx, w, h);
-      else { const ss = this.statsSummary(); this.drawStatsPanel(ctx, Math.round(cx - this.statsPanelWidth(ss) / 2), Math.round(h / 2) - 26 + bandH + 6, ss); }
+      else { const ss = this.statsSummary(); this.drawStatsPanel(ctx, Math.round(cx - this.statsPanelWidth(ss) / 2), Math.min(Math.round(h / 2) - 26 + bandH + 6, h - this.safe.b - 6 - 53), ss); } // sin pasar de la zona segura inferior
       this.touch.drawScreenButtons(ctx);
     }
     this.touch.draw(ctx);

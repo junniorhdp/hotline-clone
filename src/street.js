@@ -80,6 +80,7 @@ export class StreetLife {
     // Los vagabundos no pueden entrar al edificio (zona vetada: su huella hasta la puerta principal).
     const z = game.entry.zone;
     const ban = { x0: z.x0, x1: z.x1, y0: z.y0, y1: game.entry.y + 2 * TILE };
+    this.ban = ban;
     this.npcs = (st.npcs || []).map((d) => new Vagrant(d, ban, this));
     this.fires = st.fire ? [{ x: st.fire.x, y: st.fire.y }] : [];
     this.coins = (st.coins || []).map((c, i) => ({ id: i, x: c.x, y: c.y })).filter((c) => !run.taken.includes(c.id));
@@ -148,6 +149,14 @@ export class StreetLife {
       const t = this.nearTarget();
       if (t) this.interact(t);
     }
+  }
+
+  // Ruido (disparo, golpe, patada) en (x, y): si viene del interior del edificio, los civiles de la calle que no ven al jugador lo oyen y sueltan una
+  // línea de alerta indirecta (ver Vagrant.hearNoise).
+  noise(x, y, radius) {
+    const b = this.ban;
+    if (!b || !(x > b.x0 && x < b.x1 && y > b.y0 && y < b.y1)) return;
+    for (const n of this.npcs) n.hearNoise(x, y, radius);
   }
 
   // Una moneda suelta cerca de (x, y) (la deja el cocodrilo al morder).
@@ -344,7 +353,7 @@ export class StreetLife {
       const p = g.keepOnScreen(s.x, s.y, measureText(text), 8);
       drawText(ctx, text, p.x, p.y, { color, align: 'center', shadow: COLORS.background });
     };
-    const key = g.hint(g.keys.label('kick'), 'PATEAR');
+    const key = g.hint(g.keys.label('kick'), 'BOTA'); // en táctil: el botón superior (la bota) se enciende cuando hay algo con lo que interactuar
     const t = g.player.alive && !g.panel ? this.nearTarget() : null;
     if (t) {
       let txt;
@@ -385,7 +394,7 @@ export class StreetLife {
     // Contador de monedas: aparece (y se ilumina) solo cuando sube la cantidad y se desvanece solo a los pocos segundos.
     if (this.coinFlash > 0) {
       const age = COIN_SHOW - this.coinFlash, fade = clamp(this.coinFlash / 0.8, 0, 1);
-      const cx0 = 6 + g.safe.l, cy0 = 54 + g.safe.t;
+      const cx0 = 6 + g.safe.l + (g.input.touchMode ? 72 : 0), cy0 = 54 + g.safe.t; // en táctil, a la derecha del botón REINICIAR (que ocupa ese sitio)
       ctx.save();
       if (age < 0.6) { ctx.globalAlpha = fade * 0.45 * (1 - age / 0.6); ctx.fillStyle = '#ffbe0b'; ctx.fillRect(cx0 - 3, cy0 - 3, 44, 17); }
       ctx.globalAlpha = fade;
@@ -398,14 +407,18 @@ export class StreetLife {
     }
     // Cuadro del teléfono (abajo, centrado, sobre la línea de controles).
     if (this.dialog) {
+      // En táctil el cuadro va debajo del HUD y entre los botones de REINICIAR/PAUSA (izquierda) y la columna de botones de la derecha; en escritorio, abajo.
+      const tm = g.input.touchMode && g.touch;
+      const colL = tm ? g.safe.l + 80 : 8, colR = tm ? g.touch.rightColumn().x - 6 : w - 8;
+      const aw = Math.max(120, colR - colL);
       const lines = [];
-      this.dialog.lines.forEach((l, i) => wrap(l, Math.max(18, Math.floor((w - 40) / 6))).forEach((ln) => lines.push({ ln, head: i === 0 && this.dialog.lines.length > 1 })));
-      const bw = Math.min(w - 16, Math.max(...lines.map((l) => measureText(l.ln))) + 16), bh = lines.length * 10 + 10;
-      const bx = Math.round(w / 2 - bw / 2), by = Math.round(h - bh - 44);
+      this.dialog.lines.forEach((l, i) => wrap(l, Math.max(14, Math.floor((aw - 16) / 6))).forEach((ln) => lines.push({ ln, head: i === 0 && this.dialog.lines.length > 1 })));
+      const bw = Math.min(aw, Math.max(...lines.map((l) => measureText(l.ln))) + 16), bh = lines.length * 10 + 10;
+      const bx = tm ? Math.round(colL + (aw - bw) / 2) : Math.round(w / 2 - bw / 2), by = tm ? Math.round(68 + g.safe.t) : Math.round(h - bh - 44);
       ctx.fillStyle = 'rgba(13, 2, 33, 0.94)'; ctx.fillRect(bx, by, bw, bh);
       ctx.fillStyle = COLORS.player; ctx.fillRect(bx, by, bw, 1); ctx.fillRect(bx, by + bh - 1, bw, 1);
       ctx.fillStyle = COLORS.wall; ctx.fillRect(bx, by, 1, bh); ctx.fillRect(bx + bw - 1, by, 1, bh);
-      lines.forEach((l, i) => drawText(ctx, l.ln, Math.round(w / 2), by + 6 + i * 10, { color: l.head ? COLORS.player : COLORS.text, align: 'center' }));
+      lines.forEach((l, i) => drawText(ctx, l.ln, Math.round(bx + bw / 2), by + 6 + i * 10, { color: l.head ? COLORS.player : COLORS.text, align: 'center' }));
     }
   }
 }

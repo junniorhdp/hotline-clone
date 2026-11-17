@@ -207,6 +207,12 @@ export class TouchControls {
     };
   }
 
+  // Esquina superior izquierda de la columna de botones de la derecha (ATACAR / LANZAR / acción): los textos de la escena no deben taparla.
+  rightColumn() {
+    const L = this.layout(), col = L.buttons.slice(0, 3);
+    return { x: Math.min(...col.map((b) => b.x)), y: Math.min(...col.map((b) => b.y)) };
+  }
+
   // Tamaño estándar de un botón táctil de pantalla (en píxeles internos) para `label`.
   buttonSize(label) {
     const h = Math.max(16, Math.round(this.px(BUTTON_CSS_HEIGHT * 0.85 * this.config.buttonScale)));
@@ -477,6 +483,7 @@ export class TouchControls {
         // Botón superior: REMATAR parpadea rojo/blanco, MOTO en cian, PATEAR enciende el rosa si hay puerta.
         b.iconColor = act.id === 'mount' ? COLORS.player : ICON_COLOR;
         b.accent = act.id === 'execute' ? (blink ? '#ffffff' : ICON_COLOR) : act.id === 'mount' ? COLORS.player
+          : act.id === 'interact' ? COLORS.enemy // contenedor, máquina, cabina o vagabundo a tiro: ámbar
           : act.ready ? COLORS.wall : undefined;
         alpha = act.ready ? 0.9 : 0.4;
       }

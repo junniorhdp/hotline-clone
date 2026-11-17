@@ -1,4 +1,4 @@
-import { moveAndSlide } from './map.js';
+import { moveAndSlide, lineOfSight } from './map.js';
 import { pixelRect, WORLD_PX } from './sprites.js';
 
 // Vagabundos de la calle (civiles). Cada uno tiene su aspecto (`look`: género, abrigo, pelo, piel, gorro, objeto) y un modo:
@@ -20,6 +20,8 @@ const LINES = {
   blood: ['¡ESO ES SANGRE!', '¡ESTÁS CUBIERTO DE SANGRE!', '¡NO ME HAGAS DAÑO!'],
   hurt: ['¡AAAH!', '¡AUXILIO!', '¡NO, POR FAVOR!', '¡SOCORRO!'],
   mourn: ['¡NO, NO, NO...!', 'SNIF... SNIF...', '¿POR QUÉ LO HICISTE?', 'ESTABA VIVO... ESTABA VIVO...', 'DIOS MÍO...'],
+  // Ruido que viene del edificio sin ver al jugador (disparos, golpes): alerta indirecta.
+  alert: ['¿ESCUCHASTE ESO?', 'VIENE DE ADENTRO...', '¿DISPAROS?', 'ALGO PASA AHÍ DENTRO...', 'MEJOR NO ASOMARSE...'],
   happy: ['¡GRACIAS, GRACIAS!', '¡DIOS TE BENDIGA!', '¡QUÉ BUENA PERSONA!', 'ESTO ME SALVA LA NOCHE.'],
 };
 
@@ -41,6 +43,8 @@ export class Vagrant {
     this.fleeT = 0;
     this.poison = 0; this.agonyAngle = 0; this.tickT = 0;
     this.happyT = 0;
+    this.seesPlayer = true;         // ¿ve ahora mismo al jugador? (en la calle sí; dentro del edificio solo con línea de visión)
+    this.alertT = 0;                // s con el «?» de alerta indirecta
     this.mournAt = null;            // dónde está el cuerpo del que ha visto morir
     this.say = null; this.sayT = 0; this.sayCd = 1 + Math.random() * 2;
     this.shiver = Math.random() * 6;
@@ -82,6 +86,9 @@ export class Vagrant {
     const p = game.player, d = Math.hypot(p.x - this.x, p.y - this.y);
     this.sayT = Math.max(0, this.sayT - dt);
     this.sayCd = Math.max(0, this.sayCd - dt);
+    this.alertT = Math.max(0, this.alertT - dt);
+    // Visión: el jugador dentro del edificio (huella entre muros) solo se ve con línea de visión directa (puertas abiertas; las paredes y las puertas cerradas la cortan).
+    this.seesPlayer = !this.inBan(p.x, p.y) || (d < 280 && lineOfSight(game.map, p.x, p.y, this.x, this.y));
     if (this.state === 'agony') {            // envenenado: agoniza en el suelo y suelta gotas verdes
       this.poison -= dt;
       this.shiver += dt * 30;
@@ -108,7 +115,8 @@ export class Vagrant {
       return;
     }
     const armed = !!p.weapon, bloody = p.bloodLevel >= 2;
-    const scaredNow = (d < SCARE_DIST && (armed || bloody)) || (this.state === 'cower' && d < 200);
+    const sees = this.seesPlayer;   // sin verlo no reaccionan a su arma ni a su sangre, ni le hablan
+    const scaredNow = sees && ((d < SCARE_DIST && (armed || bloody)) || (this.state === 'cower' && d < 200));
     if (scaredNow && this.state === 'idle') this.sayOne(bloody && !this.hurtOnce ? LINES.blood : LINES.armed, 2.4);
     this.state = scaredNow ? (this.hurtOnce ? 'cower' : 'scared') : 'idle';
     let tx = this.home.x, ty = this.home.y, speed = 30;
@@ -123,7 +131,7 @@ export class Vagrant {
       this.fx = p.x >= this.x ? 1 : -1; this.fy = 0;
     } else {
       if (this.mode === 'sit') { this.fx = p.x >= this.x ? 1 : -1; this.fy = 0; }
-      if (d < TALK_DIST && this.sayCd <= 0 && this.sayT <= 0) this.sayOne(LINES[this.mode], 2.6);
+      if (sees && d < TALK_DIST && this.sayCd <= 0 && this.sayT <= 0) this.sayOne(LINES[this.mode], 2.6);
     }
     const dx = tx - this.x, dy = ty - this.y, len = Math.hypot(dx, dy);
     if (len > 2) { const st = Math.min(len, speed * dt); this.moveBy(game, (dx / len) * st, (dy / len) * st); }
@@ -141,6 +149,17 @@ export class Vagrant {
       this.sayOne(LINES.mourn, 2.8);
       game.playAt('sob', this.x, this.y, 0.7);
     }
+  }
+
+  // Ruido dentro del edificio (disparo, golpe fuerte) que le llega al civil de la calle SIN ver al jugador: no sabe qué pasa, solo que
+  // viene de adentro. Mira hacia el edificio, se pone en alerta (aparece un «?») y suelta una frase de alerta indirecta.
+  hearNoise(nx, ny, radius) {
+    if (!this.alive || this.seesPlayer || this.sayCd > 0 || this.sayT > 0) return;
+    if (this.state !== 'idle' && this.state !== 'scared' && this.state !== 'cower' && this.state !== 'happy') return;
+    if (Math.hypot(this.x - nx, this.y - ny) > Math.max(radius * 1.2, 320)) return;
+    this.sayOne(LINES.alert, 2.6);
+    this.alertT = 3;
+    this.fx = nx >= this.x ? 1 : -1; this.fy = 0;
   }
 
   // Daño al civil. Devuelve { killed, first } (first = primera vez que se le daña: para contar al civil herido una sola vez).
@@ -244,6 +263,7 @@ export class Vagrant {
       if (!fem && L.item !== 'blanket' && L.hat !== 'hood') px(faceX, faceY + 2, this.fy ? 3 : 2, 1, 'rgba(20,10,8,0.7)'); // barba
       if (st === 'happy') px(faceX, faceY + 1, this.fy ? 3 : 2, 1, '#8a2a2a'); // sonrisa
     }
+    if (this.alertT > 0 && st === 'idle') { px(-1, -14, 3, 1, '#ffbe0b'); px(1, -13, 1, 2, '#ffbe0b'); px(0, -11, 2, 1, '#ffbe0b'); px(0, -9, 1, 1, '#ffbe0b'); } // «?» de alerta
     if (st === 'mourn') {            // lágrimas que caen
       for (let k = 0; k < 2; k++) { const ph = (clock * 2.2 + k * 0.5) % 1; px(faceX + (k ? 1 : 0), faceY + 2 + Math.round(ph * 7), 1, 1, ph < 0.7 ? '#7ad7ff' : '#3a7aa8'); }
     } else if (st === 'scared' || st === 'flee' || st === 'cower') { px(0, -13, 1, 3, '#05d9e8'); px(0, -9, 1, 1, '#05d9e8'); } // «!»
