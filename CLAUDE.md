@@ -477,6 +477,16 @@ siguiente piso (`goToLevel`) … tras el último → `gameover` → `menu` o par
 - **Voz** (`sfx.voice`: 1 hombre, 1,22 mujer; `setGender`): escala los tonos de los sonidos del jugador `death`, `scuffleIn` y `scuffleWin` y el nuevo gruñido de esfuerzo `grunt` (sierra con formantes
   que baja de tono + soplo de ruido; se oye al empezar el forcejeo, al contraatacar y al morir). Más grave en `male`, algo más agudo en `female`.
 
+### Compañero y relevo (tanda A del piso 10; `docs/prompt-nivel-10-climax.md`)
+Base para el piso 10: un **segundo agente** controlable. Sin ningún piso `duo` todavía (el piso 10 llegará en las tandas B y C), así que de momento solo se ve con la tecla de debug.
+- **Estado** (`game.js`): `player` = agente activo y `partner` = el otro (`Player`, `agentId 'main' | 'support'`, género opuesto al del primero: `setGender` lo mantiene), con **su propia máscara** (`partnerMask`, `partnerMaskIndex`) y **su propia sangre** (`partnerBlood`: `gore`, `goreGreen`, `maskBits`, `accG`, `accT`). `swapBundles()` intercambia máscara y sangre con el relevo, así el HUD, los resultados y las manchas siguen al activo sin tocar el resto del código. Un piso con `duo: true` en `LEVELS` (devuelto por `loadLevel`) crea al compañero en `reset()` (`makePartner`).
+- **Relevo** (`swapControl()`; solo en `playing`/`cleared`, sin ejecución, vómito ni panel): intercambia `player`/`partner`, máscara y sangre, `snap` de cámara, voz del agente, cartel `RELEVO: <MÁSCARA>`, 0,25 s sin atacar. El inactivo **se queda quieto, visible y vulnerable** (`Player.idleUpdate`: solo anima la cola) y se dibuja con una flecha y el nombre de su máscara (`drawPartner`).
+- **Vulnerable**: `Enemy.update` elige el **objetivo** (`this.focus`): el jugador, o el compañero si es al único que ve (`canSee`); persecución, cobertura, pánico y disparos usan `focus`. Las balas enemigas lo alcanzan (`updateBullets`) y el golpe cuerpo a cuerpo lo mata sin forcejeo (`partnerStrike`). Si cae: `killPartner` → Game Over con el mensaje `TU COMPAÑERO HA CAÍDO` (`deathMsg`). Si muere el activo, Game Over normal.
+- **R**: `reset()` deshace el relevo (`swapped`): vuelve a mandar el primer agente con su máscara y su sangre, y el compañero **reaparece donde estaba** (`partnerPos`, se actualiza cada fotograma; se borra al empezar partida o piso).
+- **Selección**: en pisos `duo`, `confirmMask` abre una segunda fase (`maskPhase 'support'`, título `MÁSCARA DE APOYO`, preselecciona la primera desbloqueada distinta); se deniega repetir la misma máscara si hay otra desbloqueada; Esc vuelve a elegir la tuya. (El visor de agente de esa pantalla sigue mostrando al primero.)
+- **HUD**: mini retrato del compañero con `APOYO` y el nombre de su máscara bajo el retrato principal (en táctil, a su derecha: abajo va REINICIAR); `CAÍDO` si ha muerto.
+- **Debug** (con F1 activo): **P** = aparece/desaparece el compañero (máscara desbloqueada siguiente) · **L** = relevo.
+
 ### Máscaras bloqueadas y enemigos portadores
 - **Estado** (`unlockedMasks` dentro de `neonrush.settings.v1`, `Settings.isMaskUnlocked/unlockMask`; lectura defensiva: solo ids válidos): **NEON y BRUTE** vienen desbloqueadas; **STRIKE, BLADE y GHOST** llevan `lockFloor` 2, 3 y 4 en `masks.js`.
   Nunca se pierden (ni con RESTAURAR).

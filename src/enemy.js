@@ -72,6 +72,7 @@ export class Enemy {
     this.fleeRepath = 0;
     this.refreshMelee();
     this.pressure = false;  // (blindado) avanza despacio mientras apunta
+    this.focus = null;      // a quién persigue: el jugador o el compañero del relevo (ver update)
     this.radioT = 0;        // (operador) s que le quedan de aviso por el walkie-talkie
     this.sprite = kind === 'shield' ? 'enemyShield' : kind === 'operator' ? 'enemyOperator' : kind === 'runner' ? 'enemyRunner' : kind === 'heavy' ? 'enemyHeavy' : (weapon ? 'enemyArmed' : 'enemy');
     this.corpseSprite = kind === 'shield' ? 'shieldCorpse' : kind === 'runner' ? 'runnerCorpse' : kind === 'heavy' ? 'heavyCorpse' : (weapon ? 'armedCorpse' : 'enemyCorpse');
@@ -245,8 +246,12 @@ export class Enemy {
       return;
     }
 
-    const p = game.player;
+    // Objetivo: el jugador, o el compañero del relevo si es al único que ve (el inactivo es un objetivo válido y vulnerable).
+    let p = game.player;
     this.sees = p.alive && this.canSee(p, game.map);
+    const pt = game.partner;
+    if (!this.sees && pt && pt.alive && this.canSee(pt, game.map)) { p = pt; this.sees = true; }
+    this.focus = p;
     if (this.state !== 'patrol') { this.seated = false; this.smoking = false; } // se levanta / tira el cigarrillo en cuanto pasa algo
     if (this.sees) {
       this.target = { x: p.x, y: p.y };
@@ -256,7 +261,7 @@ export class Enemy {
         this.timer = this.alarmed ? REACTION_TIME * 0.4 : REACTION_TIME + relaxed; // en estado de combate (alarma) reacciona al instante
         game.playAt('alert', this.x, this.y);
         game.raiseAlarm(this, p.x, p.y); // da la voz a las salas contiguas
-        if (!this.spotted) { this.spotted = true; game.bark(this, spotLine(game.gender, game.mask && game.mask.id, game.lastBark)); }
+        if (!this.spotted) { this.spotted = true; game.bark(this, spotLine(game.player.gender, game.mask && game.mask.id, game.lastBark)); }
       }
     }
     this.attackCd = Math.max(0, this.attackCd - dt);
@@ -362,7 +367,7 @@ export class Enemy {
   }
 
   updateChase(dt, game) {
-    const p = game.player;
+    const p = this.focus || game.player;
     // Sin jugador vivo o sin última posición conocida (no debería ocurrir): a buscar.
     if (!p.alive || !this.target) { this.startSearch(); return; }
     this.hurry = false;
@@ -421,7 +426,8 @@ export class Enemy {
           this.windup = 0;
           this.attackCd = ATTACK_COOLDOWN;
           this.swingT = 0.15;
-          game.enemyStrike(this, angleToPlayer); // frontal = forcejeo; por la espalda mata
+          if (p === game.partner) game.partnerStrike(this); // el compañero inactivo no forcejea: cae de un golpe
+      else game.enemyStrike(this, angleToPlayer); // frontal = forcejeo; por la espalda mata
         }
       }
       return;
@@ -436,7 +442,7 @@ export class Enemy {
   // visión, dispara su arma y vuelve a cubrirse. Tras COVER_CYCLES ciclos, o si te pegas a él (< 80 u), deja la cobertura y se lanza al ataque.
   // Devuelve true si ha gestionado el fotograma (y el resto de la persecución no debe correr).
   updateCover(dt, game) {
-    const p = game.player, def = this.gunDef, map = game.map;
+    const p = this.focus || game.player, def = this.gunDef, map = game.map;
     this.coverCool = Math.max(0, this.coverCool - dt);
     if (this.cmode === 'peek' && this.burstLeft > 0) this.fired = true;
     const d = Math.hypot(p.x - this.x, p.y - this.y);
@@ -481,7 +487,7 @@ export class Enemy {
   // La mejor cobertura cercana: casilla libre pegada a una pared o mueble (≤ COVER_RADIUS casillas), oculta del jugador, con una casilla contigua desde la
   // que se le ve a tiro, alcanzable en línea recta y no ocupada por otro enemigo. Gana la más cercana al enemigo.
   findCover(game) {
-    const map = game.map, p = game.player, def = this.gunDef;
+    const map = game.map, p = this.focus || game.player, def = this.gunDef;
     const ex = Math.floor(this.x / TILE), ey = Math.floor(this.y / TILE);
     const N4 = [[1, 0], [-1, 0], [0, 1], [0, -1]];
     let best = null, bestD = Infinity;
@@ -517,7 +523,7 @@ export class Enemy {
   // 16 rumbos elige el punto que más lo aleja de ti, mejor si queda fuera de tu línea de visión. 3) Si lo
   // acorralas (< 42 u durante 1 s) se rinde a pelear con los puños (`noPanic` 4 s). Si te quedas sin arma, vuelve a atacar.
   updatePanic(dt, game) {
-    const p = game.player;
+    const p = this.focus || game.player;
     if (!p.alive || !p.weapon || !this.isUnarmed) { this.state = 'chase'; this.target = { x: p.x, y: p.y }; this.attackCd = 0.3; return; }
     this.panicT += dt;
     const d = Math.hypot(p.x - this.x, p.y - this.y);
@@ -540,7 +546,7 @@ export class Enemy {
   // El arma suelta más cercana que merece la pena: cuerpo a cuerpo o de fuego con balas, a ≤ 360 u, alcanzable
   // en línea recta o por ruta, y no pegada al jugador.
   nearestWeapon(game) {
-    const p = game.player;
+    const p = this.focus || game.player;
     let best = null, bestD = 360;
     for (const k of game.pickups) {
       if (!k.alive || k.flying) continue;
@@ -567,7 +573,7 @@ export class Enemy {
   }
 
   pickFlee(game) {
-    const p = game.player, map = game.map;
+    const p = this.focus || game.player, map = game.map;
     const away = Math.atan2(this.y - p.y, this.x - p.x);
     let best = null, bestScore = -Infinity;
     for (let i = 0; i < 16; i++) {

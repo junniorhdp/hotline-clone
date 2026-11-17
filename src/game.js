@@ -372,6 +372,7 @@ export class Game {
 
   openMaskSelect() {
     this.state = 'masks';
+    this.maskPhase = 'main'; // 'main' | 'support' (pisos con compañero: primero la tuya y luego la de apoyo)
     this.maskIndex = MASKS.indexOf(this.mask);
     // Posición inicial del ratón: solo un movimiento real cambia la selección.
     this.maskMouse = this.mouseInternal();
@@ -379,6 +380,22 @@ export class Game {
 
   confirmMask() {
     if (!this.isMaskUnlocked(MASKS[this.maskIndex])) this.maskIndex = MASKS.findIndex((m) => this.isMaskUnlocked(m));
+    // Piso con compañero (`duo`): tras elegir la tuya se elige la MÁSCARA DE APOYO (distinta, si hay más de una desbloqueada).
+    if (LEVELS[this.levelIndex].duo) {
+      const free = MASKS.filter((m) => this.isMaskUnlocked(m)).length;
+      if (this.maskPhase !== 'support') {
+        this.mainMaskIndex = this.maskIndex;
+        this.maskPhase = 'support';
+        this.maskIndex = MASKS.findIndex((m, i) => i !== this.mainMaskIndex && this.isMaskUnlocked(m));
+        if (this.maskIndex < 0) this.maskIndex = this.mainMaskIndex;
+        this.sfx.play('pickup');
+        return;
+      }
+      if (this.maskIndex === this.mainMaskIndex && free > 1) { this.deniedMask(); return; }
+      this.partnerMaskIndex = this.maskIndex;
+      this.maskIndex = this.mainMaskIndex;
+      this.maskPhase = 'main';
+    }
     this.mask = MASKS[this.maskIndex];
     this.reset({ arrival: true });
     this.beginArrival();
@@ -569,8 +586,9 @@ export class Game {
   }
 
   setGender(v) {
-    this.sfx.voice = v === 'female' ? 1.22 : 1;
-    if (this.player) this.player.gender = v === 'female' ? 'female' : 'male';
+    const g = v === 'female' ? 'female' : 'male';
+    for (const pl of [this.player, this.partner]) if (pl) pl.gender = pl.agentId === 'main' ? g : (g === 'female' ? 'male' : 'female'); // el compañero es el otro agente
+    this.sfx.voice = this.player && this.player.gender === 'female' ? 1.22 : 1;
   }
 
   // --- Menús modales (options-menu.js): OPCIONES y PAUSA -------------------------------------
@@ -914,6 +932,7 @@ export class Game {
   //    la que cruzó el umbral y la puerta ya bloqueada. R no repite la llegada: tiene que ser instantáneo.
   //  - Reintento sin haber entrado todavía: otra vez en la acera, sin cinemática.
   reset({ arrival = false } = {}) {
+    if (this.swapped) { this.swapBundles(); this.swapped = false; } // R: vuelve a controlar al primer agente con su máscara y su sangre
     // Armas aleatorias con semilla por partida y piso: al reintentar (R) todo sigue en su sitio;
     // en una partida nueva cambian.
     this.sfx.stopMoto(0.05); // R, piso nuevo...: si la moto sonaba, se corta limpia
@@ -928,9 +947,15 @@ export class Game {
     const start = retryInside ? level.entry : level.player;
     this.player = new Player(start.x, start.y, maskEffects(this.mask), this.mask.id, retryInside);
     this.player.gender = this.gender;
+    this.player.agentId = 'main';
+    this.sfx.voice = this.gender === 'female' ? 1.22 : 1;
     this.player.angle = -Math.PI / 2; // mira al edificio
     if (retryInside) this.player.weapon = this.entryWeapon ? { ...this.entryWeapon } : null;
     this.player.bloodLevel = this.goreOn ? bloodLevelFor(this.gore) : 0;
+    // Compañero del relevo (pisos `duo`, o con la tecla de debug P): el otro agente, quieto y vulnerable hasta que se le pasa el control.
+    this.partner = null;
+    this.duoOn = !!level.duo || !!this.debugDuo;
+    if (this.duoOn) this.makePartner(retryInside ? level.entry : level.player);
     this.spawn = { x: level.player.x, y: level.player.y }; // la acera, junto a la moto
     this.entry = level.entry;
     this.bike = { park: { x: level.bike.x, y: level.bike.y }, w: level.bike.w, h: level.bike.h, x: level.bike.x, y: level.bike.y, riding: false };
@@ -959,6 +984,7 @@ export class Game {
     this.guilt = null;
     this.street = new StreetLife(this); // contenedores, moneda, máquina, cabina y vagabundo de la calle
     this.runover = null; // atropello en curso (ver runOver)
+    this.deathMsg = null; // mensaje propio de la pantalla de muerte (compañero caído)
     this.leaveAsk = 0;   // rehenes sin rescatar de los que se avisa junto a la moto (0 = nada que avisar)
     this.cams = new SecurityCams(this, level.cameras || []); // cámaras de seguridad y operador (piso 8)
     this.hostages = new Hostages(this, level.hostages || []); // rehenes atados a sillas dentro del edificio (ver hostages.js)
@@ -1017,6 +1043,9 @@ export class Game {
     if (this.needsRotate) return;
     // Estas teclas funcionan siempre, incluso durante el hit-stop o muerto.
     if (input.wasPressed('F1') && this.state !== 'initials') this.debug = !this.debug;
+    // Debug (con F1 activo): P = aparece / desaparece el compañero · L = relevo de control.
+    if (this.debug && input.wasPressed('KeyP')) this.toggleDebugPartner();
+    if (this.debug && input.wasPressed('KeyL')) this.swapControl();
     const typing = this.state === 'initials'; // escribiendo la firma: M, V y F1 son letras
     if (input.wasPressed('KeyM') && !typing) this.sfx.toggleMute();
     // V: completos ↔ desactivados (si estaban en modo ligero automático, vuelve a completos).
@@ -1040,7 +1069,8 @@ export class Game {
     if ((this.state === 'masks' || this.state === 'dead') && input.wasPressed('KeyT')) this.showRecords = !this.showRecords;
     if (this.showRecords && back) { this.showRecords = false; return; }
     if (this.state === 'masks') {
-      if (back) this.transition(() => this.openMenu());
+      if (back && this.maskPhase === 'support') { this.maskPhase = 'main'; this.maskIndex = this.mainMaskIndex; this.sfx.play('empty'); } // vuelve a elegir la tuya
+      else if (back) this.transition(() => this.openMenu());
       else if (!this.showRecords) this.updateMaskSelect();
       return;
     }
@@ -1079,6 +1109,7 @@ export class Game {
     for (const f of this.floatingTexts) f.t -= dt;
     this.floatingTexts = this.floatingTexts.filter((f) => f.t > 0);
     if (this.player.alive) this.player.update(dt, this);
+    if (this.partner && this.partner.alive) { this.partner.idleUpdate(dt); (this.partnerPos ||= {}).x = this.partner.x; this.partnerPos.y = this.partner.y; } // el inactivo queda donde está (también al reintentar con R)
     this.barkCd = Math.max(0, (this.barkCd || 0) - dt);
     if (this.map.reveal > 0) this.map.reveal -= dt;
     resetAiBudget(this.input.touchMode); // tope de rutas y búsquedas de cobertura por fotograma (reparte el coste de las alarmas)
@@ -1479,7 +1510,7 @@ export class Game {
     const vdef = villainDef(sc.e.kind);
     frame(px, COLORS.player); frame(ex, vdef.frame);
     // Tú: el retrato de tu máscara con la sangre que llevas (nivel 0 si la sangre está desactivada).
-    ctx.drawImage(bloodyMaskPortrait(this.mask, this.goreOn ? this.player.bloodLevel : 0, this.gender, this.maskBits), px, topY, 56, 56);
+    ctx.drawImage(bloodyMaskPortrait(this.mask, this.goreOn ? this.player.bloodLevel : 0, this.player.gender, this.maskBits), px, topY, 56, 56);
     // Él: un rostro en penumbra por tipo de enemigo; los ojos parpadean de vez en cuando.
     ctx.drawImage(villainPortrait(sc.e.kind), ex + 4, topY + 4, 48, 48);
     ctx.fillStyle = 'rgba(5, 0, 15, 0.22)';
@@ -1668,6 +1699,10 @@ export class Game {
         this.killPlayer(Math.atan2(b.vy, b.vx));
         b.alive = false;
         b.hitWall = false;
+      } else if (this.partner && this.partner.alive && segmentPointDistance(b.px, b.py, b.x, b.y, this.partner.x, this.partner.y) < this.partner.r + b.r) {
+        this.killPartner(Math.atan2(b.vy, b.vx)); // las balas enemigas también alcanzan al compañero inactivo
+        b.alive = false;
+        b.hitWall = false;
       }
 
       if (b.hitWall) {
@@ -1817,6 +1852,7 @@ export class Game {
   refreshGore() {
     if (!this.player) return;
     this.player.bloodLevel = this.goreOn ? bloodLevelFor(this.gore) : 0;
+    if (this.partner) this.partner.bloodLevel = this.goreOn ? bloodLevelFor(this.partnerBlood.gore) : 0;
     if (!this.goreOn) { this.prints.clear(); this.player.soles = 0; }
   }
 
@@ -1827,6 +1863,8 @@ export class Game {
     this.maskBits = [];  // por cada gota de la máscara del HUD: 1 verde, 0 roja (ver bloodyMaskPortrait)
     this.accG = 0; this.accT = 0; // lo acumulado desde el último nivel (decide el color de las manchas nuevas)
     this.soakAt = 0;
+    this.partnerBlood = { gore: 0, goreGreen: 0, maskBits: [], accG: 0, accT: 0 }; // la sangre del agente que NO se controla (se intercambia con la anterior en el relevo)
+    this.partnerPos = null; this.partnerMaskIndex = this.partnerMaskIndex ?? null;
   }
 
   // `tox`: la sangre que te mancha es verde tóxica. Las manchas nuevas de la máscara toman el color de lo que las ha causado, así que
@@ -2076,6 +2114,79 @@ export class Game {
     this.playAt('knock', e.x, e.y);
   }
 
+  // --- Compañero y relevo (pisos `duo`; ver docs/prompt-nivel-10-climax.md, tanda A) -------------------------------------------------------------------------
+  // `player` es el agente activo y `partner` el otro: queda quieto, visible y vulnerable (los enemigos lo ven y lo atacan). `swapControl` los intercambia (también
+  // su máscara y su sangre). R vuelve a empezar con el primer agente al mando y el compañero donde estaba.
+  defaultPartnerMask() {
+    const cur = MASKS.indexOf(this.mask);
+    const i = MASKS.findIndex((m, k) => k !== cur && this.isMaskUnlocked(m));
+    return i >= 0 ? i : cur;
+  }
+
+  makePartner(start) {
+    if (this.partnerMaskIndex == null) this.partnerMaskIndex = this.defaultPartnerMask();
+    this.partnerMask = MASKS[this.partnerMaskIndex];
+    const pos = this.partnerPos || { x: start.x + 26, y: start.y };
+    const t = new Player(pos.x, pos.y, maskEffects(this.partnerMask), this.partnerMask.id, true);
+    t.agentId = 'support';
+    t.gender = this.gender === 'female' ? 'male' : 'female';
+    t.angle = -Math.PI / 2;
+    t.bloodLevel = this.goreOn ? bloodLevelFor(this.partnerBlood.gore) : 0;
+    this.partner = t;
+  }
+
+  toggleDebugPartner() {
+    if (this.state !== 'playing' && this.state !== 'cleared') return;
+    if (this.partner) { this.partner = null; this.debugDuo = false; this.duoOn = false; this.addFloat(this.player.x, this.player.y - 24, 'SIN COMPAÑERO', COLORS.text, 1, 1); return; }
+    if (this.swapped) return;
+    this.debugDuo = true; this.duoOn = true; this.partnerPos = null; this.partnerMaskIndex = null;
+    this.makePartner({ x: this.player.x, y: this.player.y });
+    this.addFloat(this.partner.x, this.partner.y - 24, 'COMPAÑERO', COLORS.player, 1, 1.2);
+  }
+
+  // Intercambia la máscara y la sangre acumulada del agente activo y del compañero (el HUD y el dibujo siguen a `this.mask`/`this.gore`).
+  swapBundles() {
+    for (const k of ['gore', 'goreGreen', 'maskBits', 'accG', 'accT']) { const t = this[k]; this[k] = this.partnerBlood[k]; this.partnerBlood[k] = t; }
+    [this.mask, this.partnerMask] = [this.partnerMask, this.mask];
+  }
+
+  // Relevo: el control pasa al otro agente en un fotograma (cámara al instante, 0,25 s sin atacar para que la pulsación no se vuelva un golpe).
+  swapControl() {
+    const a = this.player, b = this.partner;
+    if (!b || !b.alive || !a.alive || (this.state !== 'playing' && this.state !== 'cleared') || a.exec || a.vomit || this.panel) return false;
+    this.player = b; this.partner = a;
+    this.swapBundles();
+    this.swapped = !this.swapped;
+    b.cooldown = Math.max(b.cooldown, 0.25);
+    this.sfx.voice = b.gender === 'female' ? 1.22 : 1;
+    this.camera.snap(b.x, b.y);
+    this.addFloat(b.x, b.y - 26, `RELEVO: ${this.mask.name}`, COLORS.player, 1, 1.4);
+    this.sfx.play('pickup');
+    this.fx.kick(0.3);
+    this.touch.haptic(20);
+    return true;
+  }
+
+  // El compañero inactivo cae de un golpe (bala o cuerpo a cuerpo): Game Over con su propio mensaje.
+  killPartner(angle) {
+    const t = this.partner;
+    if (!t || !t.alive || this.state !== 'playing') return;
+    t.alive = false;
+    this.state = 'dead';
+    this.deathMsg = 'TU COMPAÑERO HA CAÍDO';
+    this.bleed(t.x, t.y, angle, 1.3, 0.7);
+    this.drawCorpse(t.x, t.y, angle, 'playerCorpse');
+    this.camera.addShake(10);
+    this.fx.kick(1);
+    this.hitstop = HITSTOP.playerDeath;
+    this.sfx.play('death');
+  }
+
+  partnerStrike(e) {
+    const t = this.partner;
+    if (t) this.killPartner(Math.atan2(t.y - e.y, t.x - e.x));
+  }
+
   killPlayer(angle) {
     if (this.state !== 'playing' || !this.player.alive) return;
     const p = this.player;
@@ -2145,7 +2256,7 @@ export class Game {
       ctx.translate(px, py);
       ctx.rotate(ro.a0 + ro.spin * ro.t);
       ctx.scale(sc / WORLD_PX, sc / WORLD_PX);
-      drawSprite(ctx, playerBody(this.mask.id, this.goreOn ? this.player.bloodLevel : 0, this.gender), 0, 0);
+      drawSprite(ctx, playerBody(this.mask.id, this.goreOn ? this.player.bloodLevel : 0, this.player.gender), 0, 0);
       drawMaskHead(ctx, this.mask.id, this.goreOn ? this.player.bloodLevel : 0);
       ctx.restore();
       return;
@@ -2160,7 +2271,7 @@ export class Game {
     ctx.rotate(ro.a0 + ro.spin * RUNOVER_FLIGHT);
     const sc = 1 + (Math.max(w, h) / 22);
     ctx.scale(sc / WORLD_PX, sc / WORLD_PX);
-    drawSprite(ctx, playerBody(this.mask.id, 0, this.gender), 0, 0);
+    drawSprite(ctx, playerBody(this.mask.id, 0, this.player.gender), 0, 0);
     drawMaskHead(ctx, this.mask.id, 0);
     ctx.restore();
     // sangre: salpicadura radial + regueros
@@ -2485,7 +2596,8 @@ export class Game {
     for (const b of this.bullets) b.draw(ctx);
     for (const e of this.enemies) if (e.standing) e.draw(ctx, this.time, this);
     this.drawPoison(ctx);
-    if (this.darkLayer) ctx.drawImage(this.darkLayer, 0, 0, pixelW, pixelH); // penumbra: atenúa enemigos y objetos; el jugador se dibuja encima (siempre se ve)
+    if (this.darkLayer) ctx.drawImage(this.darkLayer, 0, 0, pixelW, pixelH);
+    this.drawPartner(ctx); // penumbra: atenúa enemigos y objetos; el jugador se dibuja encima (siempre se ve)
     if (this.player.alive) {
       if (this.state === 'playing' || this.state === 'cleared') this.player.drawAim(ctx, this);
       if (!over) this.player.draw(ctx);
@@ -2521,6 +2633,19 @@ export class Game {
     this.drawFade(ctx);
 
     this.fx.compose(this.ctx, this.scene, this.frameDt);
+  }
+
+  // El compañero inactivo: se dibuja con su máscara y su ropa, con una marca sobre la cabeza (nombre de su máscara) para distinguirlo.
+  drawPartner(ctx) {
+    const t = this.partner;
+    if (!t || !t.alive || !['playing', 'cleared', 'scuffle', 'dead'].includes(this.state)) return;
+    t.draw(ctx);
+    const time = performance.now() / 1000;
+    const name = this.partnerMask ? this.partnerMask.name : '';
+    drawText(ctx, name, t.x, t.y - t.r - 14, { color: '#9d8fb8', scale: WORLD_PX, align: 'center' });
+    ctx.fillStyle = COLORS.player;
+    const b = Math.round(Math.sin(time * 6)) * WORLD_PX;
+    pixelRect(ctx, t.x - 1, t.y - t.r - 8 + b, 3, 1); pixelRect(ctx, t.x, t.y - t.r - 6 + b, 1, 1); // flecha ▼ sobre el compañero
   }
 
   // Casilla de salida parpadeante + flecha alrededor del jugador apuntando hacia ella.
@@ -2888,7 +3013,7 @@ export class Game {
     ctx.fillStyle = 'rgba(13, 2, 33, 0.82)';
     ctx.fillRect(0, 0, w, h);
     const cx = Math.round(w / 2);
-    const title = 'ELIGE TU MÁSCARA';
+    const title = this.maskPhase === 'support' ? 'MÁSCARA DE APOYO' : 'ELIGE TU MÁSCARA';
     drawText(ctx, title, cx, 6, { color: COLORS.wall, scale: this.fitScale(title, w - 12), align: 'center' });
     drawText(ctx, `PRÓXIMO: ${this.levelName}`, cx, 25, { color: '#9d8fb8', align: 'center' });
     // Atajos de la esquina (en táctil son los botones VOLVER y RÉCORDS)
@@ -3183,6 +3308,16 @@ export class Game {
       ctx.fillRect(L + 28 + i * 6, 34 + T, 4, 3);
     }
     if (p.noAmmoFlash > 0) drawText(ctx, 'SIN MUNICIÓN', L + 28, 37 + T, { color: COLORS.blood });
+    // Compañero del relevo: mini retrato (apagado: el activo es el grande) y el nombre de su máscara. Debajo del retrato (PC) o a su derecha (táctil: ahí va REINICIAR).
+    if (this.partner) {
+      const tl = this.input.touchMode, px = tl ? L + 66 : L, py = tl ? 24 + T : 52 + T;
+      ctx.fillStyle = this.partner.alive ? '#140a24' : '#3a0a14'; ctx.fillRect(px - 1, py - 1, 16, 16);
+      ctx.globalAlpha = this.partner.alive ? 0.9 : 0.35;
+      ctx.drawImage(bloodyMaskPortrait(this.partnerMask, this.goreOn ? this.partner.bloodLevel : 0, 'male', this.partnerBlood.maskBits), px, py, 14, 14);
+      ctx.globalAlpha = 1;
+      drawText(ctx, this.partner.alive ? 'APOYO' : 'CAÍDO', px + (tl ? 0 : 18), py + (tl ? 17 : 1), { color: this.partner.alive ? '#7d6f98' : COLORS.blood });
+      if (!tl) drawText(ctx, this.partnerMask.name, px + 18, py + 9, { color: '#5b4f78' });
+    }
 
     const alive = this.enemies.filter((e) => e.alive).length;
     drawText(ctx, `ENEMIGOS ${alive}/${this.enemies.length}`, R, 4 + T, { color: COLORS.enemy, align: 'right' });
@@ -3237,7 +3372,7 @@ export class Game {
       const bandH = touch ? 26 + 8 + this.touch.buttonSize('X').h + 8 : 52;
       ctx.fillStyle = 'rgba(13, 2, 33, 0.6)';
       ctx.fillRect(0, Math.round(h / 2) - 26, w, bandH);
-      const title = this.runover ? this.runover.msg : 'HAS MUERTO'; // atropellado por el auto de extracción: burla en vez de HAS MUERTO
+      const title = this.runover ? this.runover.msg : (this.deathMsg || 'HAS MUERTO'); // atropellado por el auto de extracción: burla en vez de HAS MUERTO
       drawText(ctx, title, cx, Math.round(h / 2) - 22, { color: COLORS.blood, scale: this.fitScale(title, w - 12, 3), align: 'center' });
       if (!touch) drawText(ctx, 'R REINTENTAR PISO · ENTER TERMINAR PARTIDA · T RÉCORDS', cx, Math.round(h / 2) + 10, { color: COLORS.text, align: 'center' });
       if (this.showRecords) this.drawRecordsOverlay(ctx, w, h);

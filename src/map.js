@@ -1067,7 +1067,7 @@ export function loadLevel(index = 0, rng = Math.random) {
   const actRnd = seededRandom(((Math.floor(rng() * 4294967296) ^ 0x51ed1234) >>> 0) || 1);
   placeActivities(map, enemies, actRnd, occupied, doors);
   const hostages = placeHostages(map, enemies, actRnd, doors, mainDoor.ty, entry, occupied, index);
-  return { name: def.name, par: def.par, cameras: map.cameras, dark: !!def.dark, strobe: !!def.strobe, boss: !!def.boss, map, player, bike, mainDoor, entry, enemies, weapons, doors, hostages };
+  return { name: def.name, par: def.par, duo: !!def.duo, cameras: map.cameras, dark: !!def.dark, strobe: !!def.strobe, boss: !!def.boss, map, player, bike, mainDoor, entry, enemies, weapons, doors, hostages };
 }
 
 // Patrulla de ida y vuelta: en el eje más despejado, o en el vertical si se fuerza.
