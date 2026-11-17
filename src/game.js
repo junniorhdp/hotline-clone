@@ -57,6 +57,28 @@ const HITSTOP = { kill: 0.05, melee: 0.055, execution: 0.07, knock: 0.035, doorK
 // del salpicado (rad; π = en todas direcciones), `shake` = sacudida de cámara, `stop` = hit-stop
 // y `fx` = patada del CRT. Un disparo sale en cono estrecho; la melé abre el arco; el remate
 // revienta en todas direcciones.
+// Arcoíris del estado de adrenalina (máscara del HUD): colores algo oscuros y saturados para no confundirse con la sangre verde.
+const RAINBOW = ['#c4163a', '#d9611a', '#d9b81a', '#2fa82f', '#1a8ad9', '#4a2ad9', '#a02ad9'];
+const RAINBOW_SIZE = 40; // lado del patrón (cubre el marco al girar)
+let rainbowCache = null;
+// Patrón cónico de bandas de píxeles (2 vueltas del espectro), hecho una sola vez; se dibuja girado cada fotograma.
+function rainbowPattern() {
+  if (rainbowCache) return rainbowCache;
+  const c = document.createElement('canvas');
+  c.width = c.height = RAINBOW_SIZE;
+  const cx = c.getContext('2d');
+  const sectors = RAINBOW.length * 2, h = RAINBOW_SIZE / 2;
+  for (let py = 0; py < RAINBOW_SIZE; py++) {
+    for (let px = 0; px < RAINBOW_SIZE; px++) {
+      const a = Math.atan2(py + 0.5 - h, px + 0.5 - h) + Math.PI;
+      cx.fillStyle = RAINBOW[Math.floor((a / (Math.PI * 2)) * sectors) % RAINBOW.length];
+      cx.fillRect(px, py, 1, 1);
+    }
+  }
+  rainbowCache = c;
+  return c;
+}
+
 const POISON_TIME = 3.6; // s que agoniza un noqueado por veneno antes de morir
 const KILL_FEEL = {
   bullet: { power: 1, wide: 0.55, shake: 7, stop: HITSTOP.kill, fx: 0.45 },
@@ -2433,6 +2455,18 @@ export class Game {
     const img = bloodyMaskPortrait(this.mask, lv, 'male', this.maskBits);
     if (!(lv >= BLOOD_LEVELS && this.state === 'playing' && p.alive)) { ctx.drawImage(img, x - PORTRAIT_PAD, y - PORTRAIT_PAD); return; }
     const t = performance.now() / 1000;
+    const anim = this.settings.get('strobeEnabled'); // con las luces estroboscópicas apagadas el arcoíris queda quieto (sin cambio de color)
+    // Fondo de ADRENALINA: arcoíris en bandas de píxeles que giran en sentido contrario a la máscara, solo dentro del marco (26×26).
+    ctx.save();
+    ctx.beginPath(); ctx.rect(x - 1, y - 1, 26, 26); ctx.clip();
+    ctx.translate(x + 12, y + 12);
+    ctx.rotate(anim ? -t * 3.2 : 0);
+    ctx.drawImage(rainbowPattern(), -RAINBOW_SIZE / 2, -RAINBOW_SIZE / 2);
+    ctx.restore();
+    // Marco que cambia de color por el espectro y velo oscuro para que las manchas rojas y verdes de la máscara sigan leyéndose.
+    ctx.fillStyle = 'rgba(13, 2, 33, 0.38)'; ctx.fillRect(x, y, 24, 24);
+    ctx.fillStyle = RAINBOW[anim ? Math.floor(t * 7) % RAINBOW.length : 0];
+    ctx.fillRect(x - 1, y - 1, 26, 1); ctx.fillRect(x - 1, y + 24, 26, 1); ctx.fillRect(x - 1, y, 1, 24); ctx.fillRect(x + 24, y, 1, 24);
     ctx.save();
     ctx.translate(x + 12, y + 12);
     ctx.rotate(t * 9 + Math.sin(t * 23) * 0.7);
