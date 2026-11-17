@@ -766,6 +766,8 @@ export const LEVELS = [
       ['trash', 18, 27, 1, 1], ['stain', 24, 26, 1, 1], ['debris', 30, 27, 1, 1],
       ['barrel', 36, 28, 1, 1], ['crates', 40, 28, 1, 1], ['crates', 41, 28, 1, 1],
       ['crates', 41, 27, 1, 1], ['trash', 44, 25, 1, 1], ['papers', 28, 28, 1, 1],
+      // Barricadas en la calle (cobertura para quien se queda en el PERÍMETRO: la fase final se defiende aquí fuera)
+      ['crates', 20, 26, 2, 1], ['crates', 28, 26, 2, 1], ['barrel', 22, 27, 1, 1], ['barrel', 26, 27, 1, 1], ['crates', 32, 27, 2, 1], ['crates', 15, 26, 2, 1], ['barrel', 11, 27, 1, 1],
       ['bike', 7, 25, 2, 1],
     ],
   },

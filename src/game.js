@@ -521,7 +521,7 @@ export class Game {
       return [back, { ...records, x: w - 6 - s.r - records.w, y: 6 + s.t }];
     }
     if (this.state === 'dead') {
-      return row([['retry', 'REINTENTAR', 'KeyR', COLORS.player], ['end', 'TERMINAR', 'Enter', COLORS.blood],
+      return row([['retry', 'REINTENTAR', 'KeyR', COLORS.player], ['end', this.endAskActive() ? '¿SEGURO?' : 'TERMINAR', 'Escape', COLORS.blood],
         ['records', 'RÉCORDS', 'KeyT']], Math.round(h / 2) + 8);
     }
     if (this.state === 'gameover') {
@@ -622,6 +622,8 @@ export class Game {
   }
 
   // Reintenta el piso actual (R): los puntos vuelven a los que había al entrar.
+  endAskActive() { return performance.now() - (this.endAskAt || 0) < 3000; }
+
   restartLevel() {
     const retry = () => { this.score.restartLevel(); this.reset(); };
     // PUNTO DE ANUNCIO: tras X muertes (ads.js). Sin SDK conectado es instantáneo; con SDK el anuncio sale antes del reintento.
@@ -855,6 +857,7 @@ export class Game {
   // Al pisar la salida (con la pantalla ya en negro): resultados, Top 5 y estadísticas del piso.
   finishFloor() {
     this.state = 'results';
+    this.resultsAge = 0;
     const challenge = this.street.settle(); // reto de la cabina telefónica (suma su bonus antes del rango)
     // Penalización por civiles dañados o muertos en la calle (nunca más de los puntos del piso): también cuenta para el rango.
     const civ = this.street.civilianPenalty();
@@ -1047,6 +1050,7 @@ export class Game {
     // vuelve a la fase 2: primer agente atrapado y gas a 45 s, control en el compañero a la entrada.
     this.trap = level.trap ? { ...level.trap, state: 'idle', t: GAS_TIME, hold: 0, cough: 1.2, victim: null, fade: 0 } : null;
     this.asphyx = null;
+    this.endAskAt = 0;
     this.final = null; this.reunion = null; // fase final (reencuentro y rol): ver beginFinal
     this.civilianRecord = { ...(this.civilianBase || { hurt: 0, killed: 0, gifts: 0 }) }; // los civiles vuelven a empezar con R: el registro, al de la entrada al piso
     if (this.trap) {
@@ -1103,10 +1107,17 @@ export class Game {
     if ((this.state === 'playing' || this.state === 'cleared') && back) { this.openPause(); return; }
     // R es instantáneo a propósito (sin fundido): reintentar debe ser inmediato.
     if (input.wasPressed('KeyR')) { this.restartLevel(); return; }
-    if (this.state === 'dead' && confirm) { this.transition(() => this.endRun(false)); return; }
+    // Terminar la partida tras morir: ESC (lejos de Espacio y Enter, que se pulsan sin querer) y hay que pulsarlo DOS veces en 3 s: así no se pierde el progreso del piso por error. R reintenta.
+    if (this.state === 'dead' && back) {
+      if (this.endAskActive()) { this.endAskAt = 0; this.transition(() => this.endRun(false)); }
+      else { this.endAskAt = performance.now(); this.sfx.play('empty'); }
+      return;
+    }
 
     if (this.state === 'results') {
-      if (confirm) this.transition(() => this.advance());
+      this.resultsAge += dt;
+      // Solo ENTER continúa (no Espacio, que se aprieta sin querer) y no antes de 0,8 s; en táctil, tocar inyecta Enter.
+      if ((input.wasPressed('Enter') || input.wasPressed('NumpadEnter')) && this.resultsAge > 0.8) this.transition(() => this.advance());
       return;
     }
 
@@ -2284,6 +2295,7 @@ export class Game {
     const ally = this.partner;
     ally.immortal = true; ally.weapon = { type: 'smg', ammo: 9999 }; ally.fireCd = 0; ally.path = null; ally.pathT = 0;
     this.final = { role, wave: 0, stage: 'wait', timer: 3.5, done: false, montage: null };
+    if (role === 'perimetro') this.supplyDrop(true); // quien defiende la calle empieza armado y con armas a mano
     this.camera.snap(this.player.x, this.player.y);
     this.showCallout(role === 'limpieza' ? 'LIMPIEZA' : 'PERÍMETRO', COLORS.player, 2.4, role === 'limpieza' ? 'DESPEJA EL EDIFICIO' : 'DEFIENDE LA CALLE: 2 OLEADAS');
   }
@@ -2297,7 +2309,7 @@ export class Game {
     const waveAlive = this.enemies.some((e) => e.alive && e.wave === F.wave);
     if (F.stage === 'wait') { F.timer -= dt; if (F.timer <= 0) this.spawnWave(1); }
     else if (F.stage === 'fight' && !waveAlive) {
-      if (F.wave < WAVES.length) { F.stage = 'gap'; F.timer = 4; this.addFloat(this.player.x, this.player.y - 26, `OLEADA ${F.wave}/${WAVES.length} DERROTADA`, COLORS.player, 1, 1.6); }
+      if (F.wave < WAVES.length) { F.stage = 'gap'; F.timer = 5; this.supplyDrop(false); this.addFloat(this.player.x, this.player.y - 26, `OLEADA ${F.wave}/${WAVES.length} DERROTADA`, COLORS.player, 1, 1.6); }
       else { F.stage = 'secure'; F.montage = { t: 0 }; this.showCallout('PERÍMETRO ASEGURADO', COLORS.player, 2.6, 'TU COMPAÑERO TERMINA LA LIMPIEZA'); this.sfx.play('unlock'); }
     } else if (F.stage === 'gap') { F.timer -= dt; if (F.timer <= 0) this.spawnWave(F.wave + 1); }
     else if (F.stage === 'secure') {
@@ -2307,6 +2319,24 @@ export class Game {
         if (left) { F.montage.t = 0.3; this.killEnemy(left, Math.random() * 6.28, 'bullet'); } else F.done = true;
       }
     }
+  }
+
+  // Suministros en la calle junto a quien defiende el perímetro: al empezar un subfusil en la mano y escopeta, pistola, bate y subfusil por el suelo; entre oleadas, más escopeta y subfusil.
+  supplyDrop(initial) {
+    const pl = this.player;
+    if (initial && !pl.weapon) pl.weapon = { type: 'smg', ammo: 30 };
+    const types = initial ? ['shotgun', 'smg', 'gun', 'bat'] : ['shotgun', 'smg', 'smg'];
+    types.forEach((type, i) => {
+      let at = { x: pl.x, y: pl.y };
+      for (let k = 0; k < 14; k++) {
+        const a = (i / types.length) * TAU + k * 0.6, r = 42 + (k >> 2) * 14, x = pl.x + Math.cos(a) * r, y = pl.y + Math.sin(a) * r;
+        if (!isSolidAt(this.map, x, y) && !isSolidAt(this.map, x + 9, y) && !isSolidAt(this.map, x - 9, y) && !isSolidAt(this.map, x, y + 9) && !isSolidAt(this.map, x, y - 9)) { at = { x, y }; break; }
+      }
+      this.pickups.push(new Pickup(type, at.x, at.y));
+      this.particles.neon(at.x, at.y, Math.random() * TAU, 5, 3);
+    });
+    this.sfx.play('pickup');
+    this.addFloat(pl.x, pl.y - 26, '¡SUMINISTROS!', COLORS.enemy, 1, 1.6);
   }
 
   spawnWave(n) {
@@ -3423,8 +3453,8 @@ export class Game {
     }
     if (Math.floor(performance.now() / 400) % 2 === 0) {
       const prompt = r.last
-        ? this.hint('FIN DEL EDIFICIO · ESPACIO / ENTER: VER RÉCORDS', 'FIN DEL EDIFICIO · TOCA PARA VER LOS RÉCORDS')
-        : this.hint('ESPACIO / ENTER → SIGUIENTE PISO · R REPETIR', 'TOCA PARA CONTINUAR');
+        ? this.hint('FIN DEL EDIFICIO · ENTER: VER RÉCORDS', 'FIN DEL EDIFICIO · TOCA PARA VER LOS RÉCORDS')
+        : this.hint('ENTER → SIGUIENTE PISO · R REPETIR', 'TOCA PARA CONTINUAR');
       drawText(ctx, prompt, cx, y, { color: COLORS.player, align: 'center' });
     }
   }
@@ -3912,7 +3942,10 @@ export class Game {
       ctx.fillRect(0, Math.round(h / 2) - 26, w, bandH);
       const title = this.runover ? this.runover.msg : (this.deathMsg || 'HAS MUERTO'); // atropellado por el auto de extracción: burla en vez de HAS MUERTO
       drawText(ctx, title, cx, Math.round(h / 2) - 22, { color: COLORS.blood, scale: this.fitScale(title, w - 12, 3), align: 'center' });
-      if (!touch) drawText(ctx, 'R REINTENTAR PISO · ENTER TERMINAR PARTIDA · T RÉCORDS', cx, Math.round(h / 2) + 10, { color: COLORS.text, align: 'center' });
+      if (!touch) {
+        if (this.endAskActive()) drawText(ctx, 'ESC DE NUEVO: TERMINAR Y PERDER EL PROGRESO · R: REINTENTAR', cx, Math.round(h / 2) + 10, { color: Math.floor(performance.now() / 250) % 2 ? COLORS.blood : COLORS.text, align: 'center' });
+        else drawText(ctx, 'R REINTENTAR PISO · ESC TERMINAR PARTIDA · T RÉCORDS', cx, Math.round(h / 2) + 10, { color: COLORS.text, align: 'center' });
+      }
       if (this.showRecords) this.drawRecordsOverlay(ctx, w, h);
       else { const ss = this.statsSummary(); this.drawStatsPanel(ctx, Math.round(cx - this.statsPanelWidth(ss) / 2), Math.min(Math.round(h / 2) - 26 + bandH + 6, h - this.safe.b - 6 - 53), ss); } // sin pasar de la zona segura inferior
       this.touch.drawScreenButtons(ctx);
