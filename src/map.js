@@ -474,6 +474,79 @@ export const LEVELS = [
       ['bike', 7, 25, 2, 1],
     ],
   },
+  {
+    name: 'PISO 7 · APAGÓN',
+    floor: 'concrete',
+    dark: true,
+    loot: ['pipe', 'bat', 'knife', 'gun', 'smg'],
+    guaranteed: ['shotgun', 'smg', 'pipe', 'bat'],
+    smgChance: 0.4,
+    par: 190,
+    rows: [
+      '################################################',
+      '#........#.........#.........#.........#.......#',
+      '#........#.?.......#..R......#.........#....H..#',
+      '#........#.........#.........#....A....#.......#',
+      '#..E.....#.........D.........#.........D.......#',
+      '#........#....A....#..E......#.........#.......#',
+      '#........#.........#.........#.......?.#.......#',
+      '#........#.........#.........#.........#.......#',
+      '#####D########D#########D#########D########D####',
+      '#.........E....................................#',
+      '#..............................A...............#',
+      '####D###########D###########D############D######',
+      '#...........#...........#...........#..........#',
+      '#...........#.?.........#...........#........?.#',
+      '#...........#.....R.....#...........#..........#',
+      '#....E......#...........D...........#..........#',
+      '#...........D...........#.....A.....D..........#',
+      '#...........#...........#...........#....E.....#',
+      '#...........#...........#...........#..........#',
+      '#...........#...........#...........#..........#',
+      '######D###########D###########D###########D#####',
+      '#..............................................#',
+      '#..................B...........................#',
+      '########################N#######################',
+      '.......P........................................',
+      '................................................',
+      '................................................',
+      '................................................',
+      '................................................',
+      '################################################',
+    ],
+    // Penumbra: casillas a oscuras (los enemigos solo te ven a la mitad de distancia si estás en ellas) salvo los charcos de neón (`lights`: x, y, color, radio en casillas).
+    dark: [[1, 9, 46, 10], [10, 1, 18, 7], [30, 1, 38, 7], [13, 12, 23, 19], [37, 12, 46, 19]],
+    lights: [[14, 3, '#ff2a85', 3.2], [34, 3, '#05d9e8', 3.2], [21, 17, '#9b5cff', 3.2], [43, 15, '#ff2a85', 3.2], [24, 9, '#05d9e8', 2.6], [6, 10, '#ff2a85', 2.4]],
+    zones: [
+      ['carpet', 1, 1, 8, 7], ['carpet', 10, 1, 18, 7], ['carpet', 20, 1, 28, 7], ['carpet', 30, 1, 38, 7], ['carpet', 40, 1, 46, 7],
+      ['metal', 1, 9, 46, 10], ['wood', 1, 12, 11, 19], ['brokenTiles', 13, 12, 23, 19], ['wood', 25, 12, 35, 19], ['brokenTiles', 37, 12, 46, 19],
+      // Exterior: vestíbulo, calle (asfalto, rayas del carril) y plaza de la moto.
+      ['wood', 1, 21, 46, 22], ['asphalt', 0, 25, 47, 28], ['asphaltLine', 0, 27, 1, 27],
+      ['asphaltLine', 4, 27, 5, 27], ['asphaltLine', 8, 27, 9, 27], ['asphaltLine', 12, 27, 13, 27],
+      ['asphaltLine', 16, 27, 17, 27], ['asphaltLine', 20, 27, 21, 27],
+      ['asphaltLine', 24, 27, 25, 27], ['asphaltLine', 28, 27, 29, 27],
+      ['asphaltLine', 32, 27, 33, 27], ['asphaltLine', 36, 27, 37, 27],
+      ['asphaltLine', 40, 27, 41, 27], ['asphaltLine', 44, 27, 45, 27], ['asphaltBay', 6, 25, 9, 25],
+    ],
+    props: [
+      ['desk', 2, 1, 3, 1], ['cabinet', 8, 1, 1, 1], ['tv', 14, 1, 1, 1], ['desk', 11, 6, 3, 1], ['sofa', 16, 6, 2, 1],
+      ['sofa', 21, 1, 3, 1], ['cardTable', 25, 3, 2, 2], ['cabinet', 28, 1, 1, 1], ['tv', 34, 1, 1, 1], ['desk', 31, 6, 3, 1],
+      ['crates', 37, 2, 1, 1], ['cabinet', 40, 1, 1, 1], ['desk', 42, 6, 3, 1], ['barrel', 46, 1, 1, 1], ['cabinet', 1, 6, 1, 1],
+      ['counter', 14, 12, 1, 1], ['crates', 22, 12, 1, 1], ['tv', 20, 19, 1, 1], ['sofa', 15, 19, 3, 1], ['desk', 2, 18, 3, 1], ['cabinet', 10, 12, 1, 1],
+      ['cardTable', 27, 13, 2, 2], ['sofa', 31, 19, 3, 1], ['cabinet', 25, 19, 1, 1], ['tv', 44, 12, 1, 1], ['crates', 38, 13, 1, 1], ['sofa', 38, 19, 3, 1],
+      ['debris', 20, 9, 1, 1], ['stain', 33, 10, 1, 1], ['trash', 3, 10, 1, 1], ['rug', 21, 2, 4, 2],
+      // Exterior: vestíbulo, calle y la moto (aparcada en la plaza, 2×1 casillas).
+      ['counter', 12, 21, 4, 1], ['sofa', 27, 22, 3, 1], ['cabinet', 32, 21, 1, 1],
+      ['cabinet', 33, 21, 1, 1], ['barrel', 1, 21, 1, 1], ['crates', 1, 22, 1, 1],
+      ['shelf', 46, 21, 1, 2], ['rug', 16, 21, 4, 2], ['papers', 14, 22, 1, 1],
+      ['trash', 37, 22, 1, 1], ['tv', 44, 21, 1, 1], ['stain', 40, 22, 1, 1],
+      ['crates', 4, 28, 1, 1], ['crates', 5, 28, 1, 1], ['barrel', 13, 28, 1, 1],
+      ['trash', 18, 27, 1, 1], ['stain', 24, 26, 1, 1], ['debris', 30, 27, 1, 1],
+      ['barrel', 36, 28, 1, 1], ['crates', 40, 28, 1, 1], ['crates', 41, 28, 1, 1],
+      ['crates', 41, 27, 1, 1], ['trash', 44, 25, 1, 1], ['papers', 28, 28, 1, 1],
+      ['bike', 7, 25, 2, 1],
+    ],
+  },
 ];
 
 // Muebles sólidos: bloquean movimiento, balas y visión como una pared (sirven de cobertura) y la
@@ -502,7 +575,7 @@ const ENEMY_CHARS = {
 // grunt lleve pistola. Sorteado con el `rng` del piso: R no lo cambia.
 const ENEMY_MIX = [
   { melee: 0.5, arm: 0.1 }, { melee: 0.6, arm: 0.15 }, { melee: 0.65, arm: 0.2 },
-  { melee: 0.8, arm: 0.1 }, { melee: 0.55, arm: 0.3 }, { melee: 0.6, arm: 0.15 },
+  { melee: 0.8, arm: 0.1 }, { melee: 0.55, arm: 0.3 }, { melee: 0.6, arm: 0.15 }, { melee: 0.55, arm: 0.35 },
 ];
 const MELEE_TYPES = ['bat', 'pipe', 'knife'];
 
@@ -730,6 +803,19 @@ export function loadLevel(index = 0, rng = Math.random) {
   const grid = new Uint8Array(w * h);
   // `doors` lo rellena el juego con objetos Door: bloquean visión y balas (ver lineOfSight).
   const map = { w, h, grid, pixelW: w * TILE, pixelH: h * TILE, doors: [] };
+  // Penumbra (`dark` y `lights` del piso, en coordenadas de LEVELS: se desplazan con el anillo de calle). `map.dark[casilla]` = 1 si está a oscuras (fuera de
+  // los charcos de luz): ahí los enemigos solo te ven a la mitad de distancia (Enemy.canSee) salvo que acabes de hacer ruido (`map.reveal`). `map.lights` = luces (mundo).
+  map.dark = null; map.lights = []; map.reveal = 0;
+  if (def.dark) {
+    map.dark = new Uint8Array(w * h);
+    for (const [x0, y0, x1, y1] of def.dark) for (let ty = y0; ty <= y1; ty++) for (let tx = x0; tx <= x1; tx++) map.dark[(ty + OUTSKIRT) * w + tx + OUTSKIRT] = 1;
+    for (const [lx, ly, color, r] of def.lights || []) {
+      map.lights.push({ x: (lx + OUTSKIRT) * TILE + TILE / 2, y: (ly + OUTSKIRT) * TILE + TILE / 2, color, r });
+      for (let ty = 0; ty < h; ty++) for (let tx = 0; tx < w; tx++) {
+        if (Math.hypot(tx - (lx + OUTSKIRT), ty - (ly + OUTSKIRT)) <= r) map.dark[ty * w + tx] = 0;
+      }
+    }
+  }
   let player = null;
   const enemies = [];
   const weapons = [];
@@ -830,7 +916,7 @@ export function loadLevel(index = 0, rng = Math.random) {
   const actRnd = seededRandom(((Math.floor(rng() * 4294967296) ^ 0x51ed1234) >>> 0) || 1);
   placeActivities(map, enemies, actRnd, occupied, doors);
   const hostages = placeHostages(map, enemies, actRnd, doors, mainDoor.ty, entry, occupied, index);
-  return { name: def.name, par: def.par, strobe: !!def.strobe, boss: !!def.boss, map, player, bike, mainDoor, entry, enemies, weapons, doors, hostages };
+  return { name: def.name, par: def.par, dark: !!def.dark, strobe: !!def.strobe, boss: !!def.boss, map, player, bike, mainDoor, entry, enemies, weapons, doors, hostages };
 }
 
 // Patrulla de ida y vuelta: en el eje más despejado, o en el vertical si se fuerza.

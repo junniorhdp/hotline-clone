@@ -1,6 +1,6 @@
 import { Input } from './input.js';
 import { LEVELS, TILE, loadLevel, isSolidAt, isStructuralWall, isWallTile, lineOfSight, castRay, doorHitT } from './map.js';
-import { renderFloor, renderWalls, renderProps } from './decor.js';
+import { renderFloor, renderWalls, renderProps, renderDark } from './decor.js';
 import { Score, COMBO_WINDOW } from './score.js';
 import { MASKS, maskEffects, maskIcon } from './masks.js';
 import { ScoreHistory, FloorStats, MAX_ENTRIES, INITIALS_MAX, newRunId, formatDate } from './scores-history.js';
@@ -917,6 +917,7 @@ export class Game {
     this.sfx.stopMoto(0.05); // R, piso nuevo...: si la moto sonaba, se corta limpia
     const level = loadLevel(this.levelIndex, seededRandom(hashString(`${this.runId}:${this.levelIndex}`)));
     this.levelName = level.name;
+    this.dark = level.dark;       // piso en penumbra (ver map.dark y renderDark)
     this.strobe = level.strobe;   // el club: luces estroboscópicas (opción `strobeEnabled`)
     this.hasBoss = level.boss;
     this.par = level.par;
@@ -978,6 +979,7 @@ export class Game {
       this.wallLayer = walls;
       this.glowLayer = glow;
       this.propsLayer = renderProps(this.map); // muebles sólidos
+      this.darkLayer = this.map.dark ? renderDark(this.map) : null; // penumbra y charcos de neón (piso 7)
       // Sangre a media resolución: 1 píxel de la capa = 1 píxel interno en pantalla.
       this.bloodLayer = document.createElement('canvas');
       this.bloodLayer.width = this.map.pixelW / WORLD_PX;
@@ -1074,6 +1076,7 @@ export class Game {
     this.floatingTexts = this.floatingTexts.filter((f) => f.t > 0);
     if (this.player.alive) this.player.update(dt, this);
     this.barkCd = Math.max(0, (this.barkCd || 0) - dt);
+    if (this.map.reveal > 0) this.map.reveal -= dt;
     resetAiBudget(this.input.touchMode); // tope de rutas y búsquedas de cobertura por fotograma (reparte el coste de las alarmas)
     for (const e of this.enemies) if (e.alive) e.update(dt, this);
 
@@ -2200,6 +2203,8 @@ export class Game {
   }
 
   makeNoise(x, y, radius) {
+    // Un ruido hecho por el jugador (disparo, golpe, patada) delata su posición 0,8 s aunque esté en la sombra (ver Enemy.canSee).
+    if (this.map.dark && Math.hypot(x - this.player.x, y - this.player.y) < 6) this.map.reveal = 0.8;
     if (this.sewer) this.sewer.heard(x, y, radius);
     if (this.street) this.street.noise(x, y, radius); // los civiles de la calle oyen lo que pasa dentro (alerta indirecta)
     // Los enemigos investigan el origen del ruido; tras una pared o una puerta cerrada se oye más apagado (radio ×0,6).
@@ -2453,6 +2458,7 @@ export class Game {
     for (const b of this.bullets) b.draw(ctx);
     for (const e of this.enemies) if (e.standing) e.draw(ctx, this.time, this);
     this.drawPoison(ctx);
+    if (this.darkLayer) ctx.drawImage(this.darkLayer, 0, 0, pixelW, pixelH); // penumbra: atenúa enemigos y objetos; el jugador se dibuja encima (siempre se ve)
     if (this.player.alive) {
       if (this.state === 'playing' || this.state === 'cleared') this.player.drawAim(ctx, this);
       if (!over) this.player.draw(ctx);

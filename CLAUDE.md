@@ -88,7 +88,7 @@ HTML5 Canvas, JavaScript Vanilla (ES Modules) y Vite. Sin frameworks ni librerí
   sangre, sin recargar la página. Audio, efectos y `Score` persisten entre reinicios.
 
 ## Niveles y flujo
-- **Campaña de 6 pisos** (`LEVELS`): 1 Recepción · 2 Oficinas · 3 Ático · **4 El Club** · **5 Almacén** · **6 Penthouse (jefe)**. Los
+- **Campaña de 7 pisos** (`LEVELS`; pisos 8 y 9 previstos, ver `docs/`): 1 Recepción · 2 Oficinas · 3 Ático · **4 El Club** · **5 Almacén** · **6 Penthouse (jefe)** · **7 Apagón (penumbra)**. Los
   tres últimos se generaron con una herramienta que compone salas y puertas, comparten el exterior del piso 3 (vestíbulo, puerta
   principal, calle y moto) y pasan `npm run check:levels`:
   - **Piso 4 · EL CLUB** (`strobe: true`): salas VIP estrechas (7×6) a los lados, pasillos de 2 casillas y una pista de baile de 24×19 con
@@ -100,6 +100,11 @@ HTML5 Canvas, JavaScript Vanilla (ES Modules) y Vite. Sin frameworks ni librerí
   - **Piso 6 · PENTHOUSE** (`boss: true`): salón de recepción largo (3 guardias), dos alas de dos salas (4 enemigos) y la **arena del jefe**
     (20×13, cuatro columnas 2×2, mesa central y escritorio al fondo) con puertas al salón y a ambos flancos. Garantizados escopeta,
     bate, subfusil y tubo. Ver "El jefe".
+  - **Piso 7 · APAGÓN** (`dark`, `lights`; prompt en `docs/prompt-nivel-7-zona-oscura.md`): pasillo central de 2 casillas con 5 salas arriba y 4 abajo (puertas entre salas para flanquear), 12 enemigos (2 corredores, 1 pesado, armados). **Penumbra**: el pasillo y 4 salas están a oscuras, con **6 charcos de luz neón**.
+    - `def.dark` (rectángulos de casillas) y `def.lights` (`[x, y, color, radio]`) se desplazan con el anillo de calle; `loadLevel` construye `map.dark` (`Uint8Array`, 1 = a oscuras: dentro del radio de una luz es 0), `map.lights` (mundo) y `map.reveal`.
+    - **Visión reducida**: con el jugador en una casilla a oscuras, `Enemy.canSee` limita la distancia a **la mitad de `VIEW_DIST`** (170 u; `CLOSE_SENSE` no cambia). Un **ruido del jugador** (`makeNoise` desde su posición: disparo, golpe, patada) pone `map.reveal` = 0,8 s y lo delata aunque esté en sombra. Medido: en sombra lo ven a 160 u pero no a 192; con luz a 288; tras un ruido, a 192.
+    - **Dibujo** (`renderDark` en `decor.js`, `game.darkLayer`, se regenera con las demás capas): capa estática a media resolución que oscurece casillas (alfa 0,6; más suave en el borde de cada charco) y suma el resplandor de las luces (anillos de píxeles con `lighter`). Se dibuja tras enemigos, balas y objetos y **antes del jugador**, así que él siempre se ve y los demás se difuminan. Un `drawImage` por fotograma, sin coste apreciable.
+    - `check:levels` valida los pisos oscuros: luces dentro del mapa y fuera de paredes, entrada / jugador / moto sin oscuridad y al menos 3 enemigos en sombra y 3 a la luz.
 - Los pisos nuevos usan `loadLevel` normal; `loadLevel` devuelve además `strobe` y `boss`. El selector de pisos muestra una **ventana
   deslizante** de tarjetas cuando no caben todas (`floorsLayout`: `first`/`perPage`, flechas `<` `>` y toque en los bordes).
 - Los pisos están en `LEVELS` (`src/map.js`): `{ name, floor, par, rows, zones, props, loot, … }`.

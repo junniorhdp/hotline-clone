@@ -530,3 +530,36 @@ export function renderWalls(map) {
   for (let pass = 0; pass < 2; pass++) for (const [x, y, w, h] of edges) g.fillRect(x, y, w, h);
   return { walls, glow };
 }
+
+// --- Penumbra (piso 7) ---------------------------------------------------------------------------------------------------------------------------
+// Capa estática a media resolución (1 px = 2 unidades): oscurece las casillas de `map.dark` (más suave alrededor de las luces) y suma el resplandor
+// neón de cada luz. Se dibuja sobre enemigos y objetos y bajo el jugador, así que el jugador siempre se ve y los demás se difuminan en la sombra.
+export function renderDark(map) {
+  const S = TILE / 2; // píxeles de la capa por casilla
+  const c = document.createElement('canvas');
+  c.width = map.pixelW / 2; c.height = map.pixelH / 2;
+  const ctx = c.getContext('2d');
+  ctx.imageSmoothingEnabled = false;
+  for (let ty = 0; ty < map.h; ty++) {
+    for (let tx = 0; tx < map.w; tx++) {
+      if (!map.dark[ty * map.w + tx]) continue;
+      // más claro cerca de las luces (borde del charco)
+      let near = 99;
+      for (const l of map.lights) near = Math.min(near, Math.hypot(tx - Math.floor(l.x / TILE), ty - Math.floor(l.y / TILE)) - l.r);
+      const a = near < 1.6 ? 0.34 + 0.26 * Math.max(0, near / 1.6) : 0.6;
+      ctx.fillStyle = `rgba(3,0,12,${a})`;
+      ctx.fillRect(tx * S, ty * S, S, S);
+    }
+  }
+  ctx.globalCompositeOperation = 'lighter';
+  for (const l of map.lights) {
+    ctx.fillStyle = l.color;
+    const R = Math.round((l.r * TILE) / 2);
+    for (let k = 4; k >= 1; k--) { // anillos concéntricos de píxeles: resplandor escalonado
+      ctx.globalAlpha = 0.035;
+      const rr = Math.round((R * k) / 4);
+      for (let y = -rr; y <= rr; y += 2) { const half = Math.floor(Math.sqrt(rr * rr - y * y)); ctx.fillRect(Math.round(l.x / 2) - half, Math.round(l.y / 2) + y, half * 2, 2); }
+    }
+  }
+  return c;
+}

@@ -62,6 +62,17 @@ for (let i = 0; i < LEVELS.length; i++) {
   }
   for (const e of L.enemies) if ((e.activity === 'sit' || e.activity === 'smoke' || e.activity === 'watch') && !reach(e.x, e.y)) fail(`enemigo ${e.activity} en (${e.tx},${e.ty}) inalcanzable`);
   console.log(`  actividades: ${['patrol', 'watch', 'smoke', 'sit'].map((k) => k + ' ' + L.enemies.filter((e) => (e.activity || 'patrol') === k).length).join(' · ')} · rehenes ${L.hostages.length}`);
+  // 5c) penumbra (pisos oscuros): máscara y luces coherentes, entrada/jugador/moto sin oscuridad y mezcla de enemigos en sombra y en luz
+  if (map.dark) {
+    const inDark = (x, y) => map.dark[Math.floor(y / TILE) * map.w + Math.floor(x / TILE)] === 1;
+    if (!map.lights.length) fail('piso oscuro sin luces');
+    for (const l of map.lights) if (isWallTile(map, Math.floor(l.x / TILE), Math.floor(l.y / TILE))) fail(`luz dentro de una pared (${l.x},${l.y})`);
+    if (inDark(L.entry.x, L.entry.y) || inDark(L.player.x, L.player.y) || inDark(L.bike.x, L.bike.y)) fail('entrada, jugador o moto a oscuras');
+    const nd = L.enemies.filter((e) => inDark(e.x, e.y)).length;
+    if (nd < 3 || nd > L.enemies.length - 3) fail(`enemigos a oscuras: ${nd}/${L.enemies.length} (debe haber mezcla de sombra y luz)`);
+    const total = map.dark.reduce((x, y) => x + y, 0);
+    console.log(`  penumbra: ${total} casillas a oscuras · ${map.lights.length} luces · enemigos en sombra ${nd}/${L.enemies.length}`);
+  }
   // 6) cada enemigo puede llegar al jugador y a la salida (pathfinding)
   const pEntry = L.entry;
   const noPath = L.enemies.filter((e) => !findPath(map, e.x, e.y, pEntry.x, pEntry.y));

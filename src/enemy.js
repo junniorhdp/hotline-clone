@@ -159,7 +159,10 @@ export class Enemy {
   canSee(p, map) {
     const dx = p.x - this.x, dy = p.y - this.y;
     const d = Math.hypot(dx, dy);
-    if (d > VIEW_DIST) return false;
+    // Penumbra (pisos oscuros): a oscuras te ven a la mitad de distancia, salvo que acabes de hacer ruido (disparo, golpe) y delates tu posición.
+    const dk = map.dark;
+    const lim = dk && !(map.reveal > 0) && dk[tileKey(map, p.x, p.y)] ? VIEW_DIST * 0.5 : VIEW_DIST;
+    if (d > lim) return false;
     if (d > CLOSE_SENSE && Math.abs(angleDiff(Math.atan2(dy, dx), this.angle)) > FOV / 2) return false;
     return lineOfSight(map, this.x, this.y, p.x, p.y);
   }
