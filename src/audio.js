@@ -116,6 +116,16 @@ const SOUNDS = {
     s.noise({ dur: 0.5, gain: 0.25 * v, filter: 'bandpass', freq: 5000, freqTo: 3500, q: 1.5, delay: 0.12 });
     s.tone({ type: 'sine', from: 520, to: 780, dur: 0.18, gain: 0.14 * v, delay: 0.3 });
   },
+  // Culpa: arcada del vómito y sollozo de un civil.
+  retch(s, v) {
+    s.noise({ dur: 0.38, gain: 0.45 * v, filter: 'lowpass', freq: 520, freqTo: 170, q: 2 });
+    s.tone({ type: 'sawtooth', from: 135, to: 58, dur: 0.32, gain: 0.2 * v });
+    s.noise({ dur: 0.26, gain: 0.3 * v, filter: 'bandpass', freq: 900, freqTo: 380, q: 3, delay: 0.14 });
+  },
+  sob(s, v) {
+    s.tone({ type: 'sine', from: 540, to: 400, dur: 0.16, gain: 0.12 * v });
+    s.tone({ type: 'sine', from: 520, to: 380, dur: 0.18, gain: 0.1 * v, delay: 0.22 });
+  },
   // ¡CLAC! del cocodrilo: mandíbulas que se cierran de golpe.
   crocSnap(s, v) {
     s.noise({ dur: 0.09, gain: 0.5 * v, filter: 'highpass', freq: 2200 });

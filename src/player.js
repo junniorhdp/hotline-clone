@@ -1,5 +1,6 @@
 import { moveAndSlide, lineOfSight, isSolidAt, castRay } from './map.js';
 import { WEAPON_DEFS, Bullet, Pickup, inMeleeArc, drawWeaponShape } from './weapons.js';
+import { VOMIT } from './particles.js';
 import { COLORS, TAU, angleDiff, clamp } from './utils.js';
 import { drawSprite, sprites, pixelRect, pixelDisc, drawMaskHead, maskHead, playerBody, BLOOD_LEVELS, WORLD_PX } from './sprites.js';
 import { DEFAULT_EFFECTS } from './masks.js';
@@ -80,6 +81,7 @@ export class Player {
     this.perks = perks;
     this.maskId = maskId;
     this.masked = masked;
+    this.vomit = null; // { t, dur, spurts, wasMasked }: vomitando por culpa (ver startVomit)
     this.bloodLevel = 0;  // 0..BLOOD_LEVELS: cuánta sangre lleva encima (lo fija Game)
     this.soles = 0;       // pisadas manchadas que le quedan
     this.solesMax = 0;    // las de la carga actual (para saber en qué punto de la secuencia va)
@@ -137,6 +139,7 @@ export class Player {
 
     // Ejecutando: sin movimiento, ataque ni recoger/lanzar hasta que acabe (EXEC_TIME).
     if (this.exec) { this.updateExecution(dt, game); return; }
+    if (this.vomit) { this.updateVomit(dt, game); return; } // vomitando: quieto, sin máscara y vulnerable
     this.bumpCd = Math.max(0, this.bumpCd - dt);
     this.boost *= Math.exp(-dt / DODGE_DECAY);
     const startX = this.x, startY = this.y;
@@ -263,6 +266,46 @@ export class Player {
     if (start && !this.weapon) this.weapon = { type: start, ammo: WEAPON_DEFS[start].maxAmmo || 0 };
     game.particles.neon(this.x, this.y, this.angle, 14, Math.PI);
     game.sfx.play('maskOn');
+  }
+
+  // --- Culpa: vómito ---------------------------------------------------------------------------
+  // Tras matar a un civil el jugador se quita la máscara (queda en su mano) y vomita tres arcadas en el suelo, a unos 2,7 s en total:
+  // sin movimiento, ataque ni recoger/lanzar, y vulnerable (el juego es de un golpe). Al acabar se vuelve a poner la máscara.
+  startVomit(game) {
+    if (this.vomit || !this.alive) return;
+    this.vomit = { t: 0, dur: 2.7, spurts: 0, wasMasked: this.masked };
+    this.masked = false;
+    this.moving = false; this.swing = 0; this.recoil = 0; this.muzzle = 0;
+    game.sfx.play('maskOn', 0.6);
+    game.addFloat(this.x, this.y - 20, 'NO PUEDO MÁS...', '#c6d65a', 1, 1.6);
+  }
+
+  updateVomit(dt, game) {
+    const v = this.vomit;
+    v.t += dt;
+    this.cooldown = Math.max(this.cooldown, 0.3);
+    const times = [0.75, 1.3, 1.85];
+    if (v.spurts < times.length && v.t >= times[v.spurts]) {
+      const k = v.spurts++, a = this.angle;
+      const mx = this.x + Math.cos(a) * 14, my = this.y + Math.sin(a) * 14;
+      game.sfx.play('retch', 0.9);
+      game.particles.blood(mx, my, a, 10, 0.45, VOMIT);
+      game.vomitSplat(mx + Math.cos(a) * 6 * k, my + Math.sin(a) * 6 * k, a, 0.55 + 0.12 * k);
+      game.camera.addShake(3);
+      if (k === 0) game.addFloat(mx, my - 14, '¡BLEEEH!', '#c6d65a', 1, 1.2);
+    }
+    if (v.t >= v.dur) {
+      this.vomit = null;
+      if (v.wasMasked) { this.masked = true; game.particles.neon(this.x, this.y, this.angle, 8, Math.PI); game.sfx.play('maskOn'); }
+      this.cooldown = 0.4;
+    }
+  }
+
+  // Cuánto se echa el cuerpo hacia delante al vomitar (se encorva, con sacudidas en cada arcada).
+  vomitLean() {
+    const t = this.vomit.t;
+    const base = t < 0.3 ? 3 * (t / 0.3) : t > 2.3 ? 3 * (1 - (t - 2.3) / 0.4) : 3;
+    return base + (t > 0.6 && t < 2.2 ? 1.5 * Math.sin(t * 20) : 0);
   }
 
   // --- Ejecución (remate de un enemigo derribado) --------------------------------------------
@@ -528,6 +571,7 @@ export class Player {
       }
     }
     if (!pose) inHand();
+    if (this.vomit) bodyLean = this.vomitLean();
 
     // Cuerpo (con la ropa y la sangre que toquen) y encima la cabeza de la máscara, ya en el eje
     // de apuntado. En la ejecución el cuerpo se echa atrás al cargar y hacia delante al golpear.

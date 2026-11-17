@@ -19,7 +19,7 @@ import { Player, bloodLevelFor, FINISH_RANGE } from './player.js';
 import { Enemy } from './enemy.js';
 import { Door, ENEMY_PUSH_SPEED } from './doors.js';
 import { Pickup, Bullet, ENEMY_WEAPONS, WEAPON_DEFS, segmentPointDistance } from './weapons.js';
-import { Particles, Footprints, GIB_COLORS, TOXIC, RED, TOXIC_GIBS } from './particles.js';
+import { Particles, Footprints, GIB_COLORS, TOXIC, RED, TOXIC_GIBS, VOMIT, palOf } from './particles.js';
 import { Sfx } from './audio.js';
 import { ScreenFx } from './effects.js';
 import { drawSprite, pixelDisc, pixelRect, BLOOD_LEVELS, WORLD_PX } from './sprites.js';
@@ -211,6 +211,7 @@ export class Game {
     this.ads = new Ads(this); // gestor de pausa para un SDK de anuncios (ads.js); sin SDK no hace nada
     this.stats = this.newStats(); // estadísticas del intento (ver recordAttack / statsSummary)
     this.bpal = RED;       // paleta de sangre en uso (roja; verde tóxica para las bajas del tubo oxidado)
+    this.guilt = null;     // culpa por haber matado a un civil: { t } cuenta atrás hasta que el jugador vomita (ver Player.startVomit)
     this.buff = null;      // lata de la máquina expendedora: { t, max } (+velocidad, +cadencia; solo esta partida)
     this.streetRun = newStreetRun(); // moneda, teléfono y reto del piso (sobrevive a R; se reinicia por piso)
     this.maskDrops = [];   // máscaras caídas de un portador: { x, y, mask, t } (ver dropMask)
@@ -919,6 +920,7 @@ export class Game {
     this.prints.clear();
     this.sewer = new Sewer(this.map.sewers); // easter egg: cocodrilo en la alcantarilla
     this.sewer.bind(this);
+    this.guilt = null;
     this.street = new StreetLife(this); // contenedores, moneda, máquina, cabina y vagabundo de la calle
     this.pools = [];
     // masks (selección) | arriving (llega en moto) | playing (fuera o dentro: ver `inside`) | dead |
@@ -1045,6 +1047,12 @@ export class Game {
     this.prints.update(dt);
     this.sewer.update(dt, this);
     this.street.update(dt);
+    // Culpa: 3 s después de matar (o herir de muerte) a un civil, el jugador se quita la máscara y vomita (vulnerable y quieto).
+    if (this.guilt) {
+      const gp = this.player;
+      if (!gp.alive || this.state === 'dead') this.guilt = null;
+      else if (this.state === 'playing' && !this.panel && !gp.exec && !gp.vomit && (this.guilt.t -= dt) <= 0) { this.guilt = null; gp.startVomit(this); }
+    }
 
     this.bullets = this.bullets.filter((b) => b.alive);
     this.pickups = this.pickups.filter((p) => p.alive);
@@ -1641,6 +1649,13 @@ export class Game {
   }
 
   // `cause` es el estilo de la baja para la puntuación (ver STYLE en score.js).
+  // Charco de vómito del jugador (culpa): misma capa del suelo, paleta amarillo verdosa y sin manchar las suelas.
+  vomitSplat(x, y, angle, power) {
+    this.bpal = VOMIT;
+    this.splatBlood(x, y, angle, power, 0.5, false);
+    this.bpal = RED;
+  }
+
   // Tubo oxidado (y demás armas con `poison`): no mata, NOQUEA e INTOXICA. El enemigo cae al suelo y no se levanta;
   // agoniza POISON_TIME (3,6 s) y muere solo (causa 'poison', sangre verde) salvo que lo remates antes (ejecución, sangre verde también).
   // Contra el jefe no se usa (ver Player.attack): pega como un arma normal.
@@ -1747,7 +1762,7 @@ export class Game {
   bleed(x, y, angle, power, wide, tox = false) {
     if (!this.goreOn) { this.particles.cleanKill(x, y, angle, power, wide); return; }
     this.particles.gore(x, y, angle, power, wide, tox);
-    this.bpal = tox ? TOXIC : RED;
+    this.bpal = palOf(tox);
     this.splatBlood(x, y, angle, power, wide);
     this.splatWalls(x, y, angle, power, wide);
     this.bpal = RED;
@@ -1893,7 +1908,7 @@ export class Game {
     if (this.goreOn) {
       const tox = this.isToxicKill(e, 'execution');
       this.particles.blood(e.x, e.y, angle, style === 'burst' ? 6 : 9, 0.8, tox);
-      this.bpal = tox ? TOXIC : RED;
+      this.bpal = palOf(tox);
       this.splatBlood(e.x, e.y, angle, 0.4, 0.6);
       this.bpal = RED;
     } else {
@@ -1925,6 +1940,7 @@ export class Game {
     const p = this.player;
     p.alive = false;
     p.cancelExecution(); // si lo matan a mitad de un remate, el derribado no se queda congelado
+    p.vomit = null;
     this.state = 'dead';
     this.bleed(p.x, p.y, angle, 1.3, 0.7);
     this.drawCorpse(p.x, p.y, angle, 'playerCorpse');
@@ -1989,7 +2005,7 @@ export class Game {
   // la que viajaba, así el salpicado tiene dirección), un resto que se para (con su mancha) o
   // una gota del rastro que va dejando un resto en vuelo.
   bake(kind, p) {
-    this.bpal = p.tox ? TOXIC : RED;
+    this.bpal = p.tox ? palOf(p.tox) : RED;
     this.bakeDrop(kind, p);
     this.bpal = RED;
   }
@@ -2024,7 +2040,8 @@ export class Game {
   // Charco, charcos satélite, gotas en cono, regueros y arrastre, todo en píxeles. `power` es la
   // cantidad (más en melé y remate) y `wide` la semiapertura del salpicado. Solo se borra al
   // reiniciar el piso.
-  splatBlood(x, y, angle, power = 1, wide = 0.55) {
+  // `track` = el charco mancha las suelas (huellas); el vómito no.
+  splatBlood(x, y, angle, power = 1, wide = 0.55, track = true) {
     const ctx = this.bloodCtx;
     const px = x / WORLD_PX, py = y / WORLD_PX;
     const cos = Math.cos(angle), sin = Math.sin(angle);
@@ -2033,8 +2050,10 @@ export class Game {
     ctx.fillStyle = this.bpal.dark;
     const poolR = rand(5, 7) * power;
     pixelDisc(ctx, px + cos * 3, py + sin * 3, poolR);
-    this.pools.push({ x: x + cos * 6, y: y + sin * 6, r: poolR * WORLD_PX * 0.9 });
-    if (this.pools.length > MAX_POOLS) this.pools.shift();
+    if (track) {
+      this.pools.push({ x: x + cos * 6, y: y + sin * 6, r: poolR * WORLD_PX * 0.9 });
+      if (this.pools.length > MAX_POOLS) this.pools.shift();
+    }
     ctx.fillStyle = this.bpal.blood;
     pixelDisc(ctx, px + cos * 3 - 1, py + sin * 3 - 1, rand(3.5, 5) * power);
     // Charcos satélite: salpicaduras gordas que han caído más lejos.

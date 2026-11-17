@@ -17,6 +17,10 @@ const INTERACT_GAP = 28;      // distancia (al borde del objeto) para poder inte
 const COIN_RADIUS = 18;
 const BUFF_TIME = 45;         // segundos de lata, contados solo dentro del edificio
 const PENALTY_HURT = 400, PENALTY_KILL = 1500; // puntos que resta cada civil herido / muerto al final del piso
+const GIFT_POINTS = 300;      // puntos por darle una moneda a un vagabundo
+const GUILT_DELAY = 3;        // s hasta que el jugador vomita tras matar a un civil
+const MOURN_RANGE = 340;      // los civiles que ven morir a otro (a menos de esto) entran en pánico profundo
+const COIN_SHOW = 3.5;        // s que se ve el contador de monedas tras subir
 
 export function newStreetRun() {
   return { taken: [], coins: 0, phoneDone: false, phoneLines: null, challenge: null };
@@ -76,10 +80,11 @@ export class StreetLife {
     // Los vagabundos no pueden entrar al edificio (zona vetada: su huella hasta la puerta principal).
     const z = game.entry.zone;
     const ban = { x0: z.x0, x1: z.x1, y0: z.y0, y1: game.entry.y + 2 * TILE };
-    this.npcs = (st.npcs || []).map((d) => new Vagrant(d, ban));
+    this.npcs = (st.npcs || []).map((d) => new Vagrant(d, ban, this));
     this.fires = st.fire ? [{ x: st.fire.x, y: st.fire.y }] : [];
     this.coins = (st.coins || []).map((c, i) => ({ id: i, x: c.x, y: c.y })).filter((c) => !run.taken.includes(c.id));
     this.extraCoins = 0;
+    this.lastCoins = run.coins; this.coinFlash = 0; // contador de monedas: se muestra unos segundos cuando sube
     this.hurtSet = new Set(); this.killedSet = new Set();
     this.ringT = 0.5;
   }
@@ -87,7 +92,19 @@ export class StreetLife {
   get run() { return this.game.streetRun; }
   get ringing() { return !!this.phone && !this.game.entered && !this.run.phoneDone; }
 
-  targets() { return [...this.dumpsters, this.vending, this.phone].filter(Boolean); }
+  // Objetivos de interacción: contenedores, máquina, cabina y, si llevas una moneda, los vagabundos a los que se les puede dar.
+  targets() {
+    const t = [...this.dumpsters, this.vending, this.phone].filter(Boolean);
+    if (this.run.coins > 0) {
+      for (const n of this.npcs) {
+        if (!n.alive || !n.canGift) continue;
+        n.tgt = n.tgt || { kind: 'npc', n, w: 12, h: 12 };
+        n.tgt.x = n.x; n.tgt.y = n.y;
+        t.push(n.tgt);
+      }
+    }
+    return t;
+  }
 
   nearTarget() {
     const p = this.game.player;
@@ -99,6 +116,9 @@ export class StreetLife {
   update(dt) {
     const g = this.game, p = g.player;
     this.clock += dt;
+    if (this.run.coins > this.lastCoins) this.coinFlash = COIN_SHOW; // sube la cantidad: el contador aparece y se ilumina
+    this.lastCoins = this.run.coins;
+    this.coinFlash = Math.max(0, this.coinFlash - dt);
     if (this.dialog) { this.dialog.t -= dt; if (this.dialog.t <= 0) this.dialog = null; }
     // Lata: solo corre dentro del edificio, mientras se juega.
     if (g.buff && g.inside && g.state === 'playing' && (g.buff.t -= dt) <= 0) {
@@ -157,6 +177,14 @@ export class StreetLife {
       g.buff = { t: BUFF_TIME, max: BUFF_TIME };
       g.sfx.play('can');
       g.addFloat(t.x, t.y - 38, '¡LATA NEÓN! +VELOCIDAD +CADENCIA', COLORS.player, 1, 1.8);
+    } else if (t.kind === 'npc') {
+      // Darle una moneda a un vagabundo: se pone feliz y agradecido y da puntos extra (una vez por persona).
+      if (!t.n.gift()) return;
+      this.run.coins--;
+      g.score.addBonus(GIFT_POINTS);
+      g.sfx.play('coin');
+      g.sfx.play('pickup', 0.7);
+      g.addFloat(t.n.x, t.n.y - 26, `+${GIFT_POINTS} ¡BUENA ACCIÓN!`, COLORS.enemy, 1, 1.8);
     } else if (t.kind === 'phone') {
       if (this.dialog) { this.dialog = null; return; }
       this.answer();
@@ -193,11 +221,26 @@ export class StreetLife {
   }
 
   // --- Civiles: daño y penalización -----------------------------------------------------------------
-  damage(n, dmg, angle) {
-    const g = this.game, res = n.hurt(g, dmg, angle);
+  // `def` = arma con la que se golpea (las oxidadas, con `poison`, envenenan: el civil cae, agoniza y muere con sangre verde).
+  damage(n, dmg, angle, def = null) {
+    const g = this.game, poison = !!(def && def.poison);
+    const res = poison ? n.poisonHit(g, angle, def.poisonTime) : n.hurt(g, dmg, angle);
     if (!res) return;
-    if (res.first) { this.hurtSet.add(n); g.addFloat(n.x, n.y - 22, `¡CIVIL! -${PENALTY_HURT} AL FINAL`, COLORS.blood, 1, 1.6); }
-    if (res.killed) { this.killedSet.add(n); g.addFloat(n.x, n.y - 30, `¡CIVIL ABATIDO! -${PENALTY_KILL} AL FINAL`, COLORS.blood, 1, 2); }
+    if (res.first) { this.hurtSet.add(n); g.addFloat(n.x, n.y - 22, `¡CIVIL${poison ? ' ENVENENADO' : ''}! -${PENALTY_HURT} AL FINAL`, COLORS.blood, 1, 1.6); }
+    if (res.poisoned) this.startGuilt(); // herida mortal: la culpa empieza ya
+  }
+
+  // Un civil ha muerto (golpe, bala o veneno): penalización, culpa del jugador y pánico profundo en los demás.
+  civilianDied(n) {
+    const g = this.game;
+    this.hurtSet.add(n); this.killedSet.add(n);
+    g.addFloat(n.x, n.y - 30, `¡CIVIL ABATIDO! -${PENALTY_KILL} AL FINAL`, COLORS.blood, 1, 2);
+    this.startGuilt();
+    for (const m of this.npcs) if (m !== n && m.alive && Math.hypot(m.x - n.x, m.y - n.y) < MOURN_RANGE) m.mourn(n.x, n.y);
+  }
+
+  startGuilt() {
+    if (!this.game.guilt) this.game.guilt = { t: GUILT_DELAY };
   }
 
   // Golpe cuerpo a cuerpo del jugador contra los civiles: puños 1 de daño, cualquier arma 2 (tienen 3 de vida). Devuelve true si golpeó a alguien.
@@ -206,7 +249,7 @@ export class StreetLife {
     const dmg = p.weapon ? 2 : 1;
     for (const n of this.npcs) {
       if (!n.alive || !inMeleeArc(p.x, p.y, p.angle, def, n)) continue;
-      this.damage(n, dmg, p.angle);
+      this.damage(n, dmg, p.angle, def);
       hit = true;
     }
     return hit;
@@ -224,7 +267,9 @@ export class StreetLife {
 
   // Resumen para el final del piso: civiles heridos (no muertos), muertos y puntos que restan.
   civilianPenalty() {
-    const killed = this.killedSet.size, hurt = this.hurtSet.size - killed;
+    // Los que agonizan envenenados ya cuentan como muertos (no hay vuelta atrás) aunque el piso acabe antes de que mueran.
+    const dying = [...this.hurtSet].filter((n) => n.state === 'agony' && !this.killedSet.has(n)).length;
+    const killed = this.killedSet.size + dying, hurt = this.hurtSet.size - killed;
     return { hurt, killed, penalty: hurt * PENALTY_HURT + killed * PENALTY_KILL };
   }
 
@@ -304,13 +349,15 @@ export class StreetLife {
     if (t) {
       let txt;
       if (t.kind === 'dumpster') txt = t.open ? null : `${key} · REGISTRAR`;
+      else if (t.kind === 'npc') txt = `${key} · DAR MONEDA`;
       else if (t.kind === 'vending') txt = this.run.coins > 0 ? `${key} · USAR MONEDA` : 'MÁQUINA · FALTA UNA MONEDA';
       else txt = this.ringing ? `${key} · CONTESTAR` : `${key} · TELÉFONO`;
-      if (txt) label(txt, t.x, t.y - t.h / 2 - 12, t.kind === 'phone' && this.ringing ? COLORS.player : COLORS.text);
+      if (txt) label(txt, t.x, t.kind === 'npc' ? t.y + 14 : t.y - t.h / 2 - 12, t.kind === 'phone' && this.ringing ? COLORS.player : COLORS.text);
     }
     // Burbujas de los vagabundos (cajas enteras con margen de seguridad en los cuatro bordes).
     // Solo hablan a la vez los 2 más cercanos y las burbujas no se pisan (se apilan hacia arriba).
-    const talkers = this.npcs.filter((n) => n.alive && n.sayT > 0 && n.say)
+    const onScreen = (n) => { const q = cam.worldToScreen(n.x, n.y); return q.x > -4 && q.x < w + 4 && q.y > -4 && q.y < h + 4; }; // las burbujas son solo de los que se ven
+    const talkers = this.npcs.filter((n) => n.alive && n.sayT > 0 && n.say && onScreen(n))
       .sort((a, b) => Math.hypot(a.x - g.player.x, a.y - g.player.y) - Math.hypot(b.x - g.player.x, b.y - g.player.y)).slice(0, 2);
     const boxes = [];
     for (const n of talkers) {
@@ -322,7 +369,7 @@ export class StreetLife {
       by = Math.max(by, 4 + g.safe.t);
       boxes.push({ x: bx, y: by, w: tw + 8 });
       ctx.fillStyle = 'rgba(13, 2, 33, 0.92)'; ctx.fillRect(bx, by, tw + 8, 13);
-      ctx.fillStyle = n.scared ? COLORS.blood : COLORS.player;
+      ctx.fillStyle = n.state === 'mourn' ? '#7ad7ff' : n.state === 'happy' ? COLORS.enemy : n.scared ? COLORS.blood : COLORS.player;
       ctx.fillRect(bx, by, tw + 8, 1); ctx.fillRect(bx, by + 12, tw + 8, 1); ctx.fillRect(bx, by, 1, 13); ctx.fillRect(bx + tw + 7, by, 1, 13);
       drawText(ctx, n.say, bx + 4, by + 3, { color: COLORS.text, shadow: null });
     }
@@ -334,8 +381,20 @@ export class StreetLife {
       ctx.fillStyle = '#140a24'; ctx.fillRect(bx, top + 10, bw, 3);
       ctx.fillStyle = COLORS.player; ctx.fillRect(bx, top + 10, Math.round(bw * k), 3);
       if (!g.inside) drawText(ctx, 'SE GASTA DENTRO DEL EDIFICIO', w / 2, top + 15, { color: '#9d8fb8', align: 'center' });
-    } else if (this.run.coins > 0) {
-      drawText(ctx, `MONEDA x${this.run.coins}`, w / 2, top, { color: COLORS.enemy, align: 'center' });
+    }
+    // Contador de monedas: aparece (y se ilumina) solo cuando sube la cantidad y se desvanece solo a los pocos segundos.
+    if (this.coinFlash > 0) {
+      const age = COIN_SHOW - this.coinFlash, fade = clamp(this.coinFlash / 0.8, 0, 1);
+      const cx0 = 6 + g.safe.l, cy0 = 54 + g.safe.t;
+      ctx.save();
+      if (age < 0.6) { ctx.globalAlpha = fade * 0.45 * (1 - age / 0.6); ctx.fillStyle = '#ffbe0b'; ctx.fillRect(cx0 - 3, cy0 - 3, 44, 17); }
+      ctx.globalAlpha = fade;
+      ctx.fillStyle = '#140a24'; ctx.fillRect(cx0, cy0, 10, 10);
+      ctx.fillStyle = '#b38600'; ctx.fillRect(cx0 + 1, cy0 + 1, 8, 8);
+      ctx.fillStyle = '#ffbe0b'; ctx.fillRect(cx0 + 2, cy0 + 2, 6, 6);
+      ctx.fillStyle = '#fff6c8'; ctx.fillRect(cx0 + 3, cy0 + 3, 1, 3);
+      drawText(ctx, `x${this.run.coins}`, cx0 + 14, cy0 - 1, { color: age < 0.6 ? '#ffffff' : COLORS.enemy, scale: age < 0.25 ? 3 : 2 });
+      ctx.restore();
     }
     // Cuadro del teléfono (abajo, centrado, sobre la línea de controles).
     if (this.dialog) {

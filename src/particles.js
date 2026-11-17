@@ -9,6 +9,10 @@ export const GIB_COLORS = [COLORS.flesh, COLORS.gore, COLORS.bone]; // carne · 
 // Sangre TÓXICA (verde óxido): la de las bajas del tubo oxidado y demás armas con veneno. Misma estructura que la roja.
 export const TOXIC = { blood: '#7fb81e', mid: '#5f8f18', dark: '#3d5c12', wet: '#c6ee55' };
 export const RED = { blood: COLORS.blood, mid: COLORS.bloodMid, dark: COLORS.bloodDark, wet: COLORS.bloodWet };
+// Vómito del jugador (culpa): amarillo verdoso apagado.
+export const VOMIT = { blood: '#a8b43a', mid: '#8a9630', dark: '#5e6a22', wet: '#d4de6a' };
+// Paleta de un valor `tox` (true = tóxica, un objeto = esa paleta, falsy = roja).
+export const palOf = (t) => (t === true ? TOXIC : t || RED);
 export const TOXIC_GIBS = ['#6f9a1a', '#3d5c12', '#b9d77a'];
 const TOXIC_NEON = ['#9be32a', '#c6ee55', '#5f8f18', '#e7ff9a'];
 
@@ -191,7 +195,7 @@ export class Particles {
         pixelRect(ctx, p.x, p.y, size, size);
         continue;
       }
-      ctx.fillStyle = p.type === 'dust' ? COLORS.dust : p.type === 'chip' ? COLORS.door : p.tox ? TOXIC.blood : COLORS.blood;
+      ctx.fillStyle = p.type === 'dust' ? COLORS.dust : p.type === 'chip' ? COLORS.door : p.tox ? palOf(p.tox).blood : COLORS.blood;
       const size = p.size > 3 ? 2 : 1;
       pixelRect(ctx, p.x, p.y, size, size);
     }
