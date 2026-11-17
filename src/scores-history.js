@@ -15,6 +15,9 @@
 // Datos antiguos: si no existe la clave nueva pero sí `neonrush.highscore` (versión anterior,
 // un único número), se migra como una entrada "heredada". Cualquier JSON corrupto o entrada
 // inválida se descarta en la lectura; nunca se escribe nada que no sea el formato válido.
+// TEMPORAL: con true, el selector de pisos deja elegir cualquier piso sin haber completado el anterior. Poner a false para volver al desbloqueo normal.
+const UNLOCK_ALL_FLOORS = true;
+
 const STORAGE_KEY = 'neonrush.scores.v1';
 const LEGACY_KEY = 'neonrush.highscore';
 const SIGNATURE_KEY = 'neonrush.signature.v1';
@@ -230,6 +233,7 @@ export class FloorStats {
   }
 
   isUnlocked(n) {
+    if (UNLOCK_ALL_FLOORS) return true; // TEMPORAL (pruebas): todos los pisos disponibles
     return n === 1 || this.get(n - 1).completed;
   }
 
