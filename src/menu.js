@@ -108,7 +108,9 @@ export class Menu {
       if (input.wasPressed('ArrowRight') || input.wasPressed('KeyD')) this.floorIndex = (this.floorIndex + 1) % n;
       const cards = this.floorsLayout().cards;
       const hovered = cards.findIndex(inside);
-      if (hovered >= 0 && moved) this.floorIndex = hovered;
+      // Con ratón solo cuenta si se ha movido (hover); con un TOQUE siempre: al tocar la tarjeta del borde la ventana se desplaza y la de debajo del dedo pasa a ser otro piso,
+      // así que el siguiente toque cae en el MISMO punto de la pantalla y, sin esto, se ignoraba (no se podía avanzar más allá de los primeros pisos).
+      if (hovered >= 0 && (moved || (input.touchMode && input.mousePressed.left))) this.floorIndex = hovered;
       // Tocar los bordes (donde están las flechas < >) desplaza la selección cuando hay más pisos fuera de la ventana.
       if (input.mousePressed.left && hovered < 0) {
         if (m.x < 26 && this.floorIndex > 0) this.floorIndex--;
