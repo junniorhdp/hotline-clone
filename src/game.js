@@ -218,6 +218,7 @@ export class Game {
     this.prints = new Footprints(); // huellas de sangre (se desvanecen; ver Footprints)
     this.pools = [];                // charcos de baja: { x, y, r } en unidades del mundo
     this.sfx = new Sfx();
+    this.sfx.isLite = () => this.fx && this.fx.lite; // la música omite sus capas extra en móviles flojos (efectos ligeros)
     this.fx = new ScreenFx();
     this.history = new ScoreHistory();
     this.score = new Score(this.history.best());
@@ -380,6 +381,7 @@ export class Game {
   // Entra en un piso nuevo (el total de puntos acumulado se conserva) pasando antes por la
   // selección de máscara.
   goToLevel(index) {
+    this.sfx.pickTrack(); // pista de combate del piso nuevo (sin repetir la última); con R se conserva
     this.levelIndex = index;
     this.streetRun = newStreetRun();
     this.civilianBase = { ...this.civilianRecord }; // el registro al entrar al piso (R lo restaura)
@@ -941,6 +943,7 @@ export class Game {
 
   // Partida nueva empezando en el piso `index` (desde el menú o el selector de pisos).
   startRunAt(index, prologue = false) {
+    this.sfx.pickTrack(); // pista de combate de la partida nueva (sin repetir la última)
     this.runId = newRunId();
     this.prologue = prologue;
     this.comms.forget(); this.flow.forget();
