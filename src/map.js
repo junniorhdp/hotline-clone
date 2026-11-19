@@ -820,7 +820,7 @@ function placeActivities(map, enemies, rnd, occupied, doors) {
   const nearDoor = (tx, ty) => doors.some((d) => Math.abs(d.tx - tx) <= 2 && Math.abs(d.ty - ty) <= 2);
   const taken = new Set();
   for (const e of enemies) {
-    if (e.kind === 'boss' || e.carrier) continue;                      // el jefe y los portadores de máscara no cambian
+    if (e.kind === 'boss' || e.carrier || e.keepAct) continue;         // el jefe, los portadores de máscara no cambian
     const r = rnd();
     let act = e.kind === 'runner' ? 'patrol' : e.kind === 'heavy' ? (r < 0.6 ? 'watch' : 'patrol') : r < 0.42 ? 'patrol' : r < 0.68 ? 'watch' : r < 0.86 ? 'smoke' : 'sit';
     if (e.axis === 'none') act = 'watch';                              // los que por diseño no se mueven, vigilan
@@ -1167,7 +1167,26 @@ export function loadLevel(index = 0, rng = Math.random, override = null) {
   });
   // Actividades iniciales de los enemigos y rehenes (al azar por partida y piso: R repite lo mismo; otra partida, otro reparto).
   const actRnd = seededRandom(((Math.floor(rng() * 4294967296) ^ 0x51ed1234) >>> 0) || 1);
+  // Prólogo: actividades fijas (`def.activities`: [casilla x, y, 'smoke' | 'watch', ángulo]) y enemigos asustados (`def.scared`: [[x, y], ...]), en casillas de LEVELS.
+  // Se localizan ANTES del sorteo de actividades (que puede mover a un enemigo sentado) y se aplican después.
+  const at = (sx, sy) => enemies.find((e) => e.tx === sx + OUTSKIRT && e.ty === sy + OUTSKIRT);
+  const fixedActs = (def.activities || []).map(([sx, sy, act, ang]) => {
+    const e = at(sx, sy);
+    if (!e) throw new Error(`${def.name}: no hay enemigo en (${sx},${sy}) para la actividad ${act}`);
+    e.keepAct = true; // el sorteo de actividades no lo toca (podría sentarlo y moverlo)
+    return { e, act, ang };
+  });
+  const scaredList = (def.scared || []).map(([sx, sy]) => {
+    const e = at(sx, sy);
+    if (!e) throw new Error(`${def.name}: no hay enemigo asustado en (${sx},${sy})`);
+    return e;
+  });
   placeActivities(map, enemies, actRnd, occupied, doors);
+  for (const { e, act, ang } of fixedActs) {
+    e.activity = act; e.patrol = [{ x: e.x, y: e.y }];
+    if (ang !== undefined) e.seatAngle = ang;
+  }
+  for (const e of scaredList) e.scared = true;
   if (map.trap) {
     // Fase final (tanda C): `ext` = el punto de la calle justo al sur de la puerta principal (quien se queda fuera); `spawns` = 6 puntos de aparición de oleadas por cada
     // extremo de la calle (el asfalto llega hasta la valla por ambos lados).

@@ -3,7 +3,7 @@ import { ENEMY_WEAPONS, ENEMY_MELEE, WEAPON_DEFS, drawWeaponShape, weaponCategor
 import { COLORS, TAU, angleDiff, clamp } from './utils.js';
 import { drawSprite, pixelRect, pixelDisc, maskHead, WORLD_PX } from './sprites.js';
 import { drawText } from './pixelfont.js';
-import { spotLine, corpseLine } from './barks.js';
+import { spotLine, corpseLine, scaredLine } from './barks.js';
 
 export const VIEW_DIST = 340;
 export const FOV = Math.PI * 0.6;
@@ -14,6 +14,7 @@ const PATROL_SPEED = 84;     // (70)
 const PATROL_WAIT = 0.7;     // pausa mirando alrededor en cada punto de la ruta (1)
 const INVESTIGATE_SPEED = 144; // (120)
 const CHASE_SPEED = 192;     // (172)
+const FROZEN_MAX = 8;       // s que un enemigo `scared` aguanta paralizado de miedo antes de reaccionar
 const REACTION_TIME = 0.18;  // pausa entre verte y empezar a perseguir (0,3)
 const ATTACK_REACH = 14;     // hueco entre cuerpos para poder golpear
 const WINDUP = 0.17;         // preparación del puñetazo (ventana para esquivar) (0,22)
@@ -114,6 +115,9 @@ export class Enemy {
     this.relaxDelay = 0;       // s extra que tarda en reaccionar al verte si lo pillas relajado
     this.scanT = 0; this.scanAngle = this.angle;
     this.smokeT = Math.random() * 4; this.smoking = false; this.puffed = false; this.tipT = 0;
+    // ASUSTADO (prólogo; `scared` lo pone el mapa: def.scared): al verte no da la alarma ni ataca; se PARALIZA (estado 'frozen': tiembla, suda y balbucea) hasta que lo golpeas,
+    // oye un ruido, pasan FROZEN_MAX s o, si te pierde de vista 1,5 s, se calma y vuelve a lo suyo. Al descongelarse reacciona normal (y deja de estar asustado).
+    this.scared = false; this.frozenT = 0; this.lostT = 0; this.thawNow = false;
   }
 
   // Asigna la actividad inicial (la elige loadLevel al azar por partida y piso). 'sit' lleva el rumbo hacia la mesa.
@@ -173,6 +177,7 @@ export class Enemy {
   // Un ruido (disparo, golpe, patada): se detiene, mira hacia allí (0,35 s) y va a investigarlo. Con un ruido nuevo durante la investigación se queda
   // con el más cercano a él. Los que ya te persiguen o están derribados lo ignoran.
   hear(x, y) {
+    if (this.state === 'frozen') { this.thawNow = true; return; } // un ruido lo saca de la parálisis
     if (this.state === 'chase' || this.state === 'alert' || this.state === 'down' || this.state === 'panic') return;
     if (this.state === 'investigate' && this.target && Math.hypot(this.target.x - this.x, this.target.y - this.y) < Math.hypot(x - this.x, y - this.y)) return;
     this.target = { x, y };
@@ -183,7 +188,7 @@ export class Enemy {
 
   // Grito de un compañero (te ha visto o ha encontrado un cadáver): se pone en estado de combate y corre hacia la zona.
   answerAlarm(x, y, delay) {
-    if (this.state === 'chase' || this.state === 'alert' || this.state === 'down' || this.state === 'panic') return;
+    if (this.state === 'frozen' || this.state === 'chase' || this.state === 'alert' || this.state === 'down' || this.state === 'panic') return;
     this.target = { x, y };
     this.state = 'investigate';
     this.listenT = 0.25 + delay;
@@ -217,6 +222,7 @@ export class Enemy {
 
   // Derribado: suelta el arma (lo gestiona Game) y queda en el suelo un rato.
   knockDown(angle, map) {
+    this.scared = false; // golpeado: ya no se paraliza (al levantarse reacciona normal)
     this.state = 'down';
     this.timer = DOWN_TIME;
     this.windup = this.aim = this.burstLeft = 0;
@@ -255,7 +261,8 @@ export class Enemy {
     if (this.state !== 'patrol') { this.seated = false; this.smoking = false; } // se levanta / tira el cigarrillo en cuanto pasa algo
     if (this.sees) {
       this.target = { x: p.x, y: p.y };
-      if (this.state !== 'alert' && this.state !== 'chase' && this.state !== 'panic') {
+      if (this.scared && this.state === 'patrol') this.freeze(game);
+      if (this.state !== 'alert' && this.state !== 'chase' && this.state !== 'panic' && this.state !== 'frozen') {
         const relaxed = this.state === 'patrol' ? this.relaxDelay : 0; // pillado fumando o sentado: tarda más en reaccionar
         this.state = 'alert';
         this.timer = this.alarmed ? REACTION_TIME * 0.4 : REACTION_TIME + relaxed; // en estado de combate (alarma) reacciona al instante
@@ -275,7 +282,7 @@ export class Enemy {
     // PÁNICO: un enemigo desarmado (nunca tuvo arma o la perdió) que te ve con CUALQUIER arma en la mano no se lanza
     // a puñetazos: retrocede, busca un arma del suelo o se cubre. Vuelve a atacar al recoger una o si te quedas sin arma.
     this.noPanic = Math.max(0, this.noPanic - dt);
-    if (this.isUnarmed && p.alive && p.weapon && this.noPanic <= 0 && this.state !== 'panic' && (this.sees || this.state === 'chase')) {
+    if (this.isUnarmed && p.alive && p.weapon && this.noPanic <= 0 && this.state !== 'panic' && this.state !== 'frozen' && (this.sees || this.state === 'chase')) {
       this.state = 'panic';
       this.panicT = 0;
       this.cornered = 0;
@@ -300,6 +307,7 @@ export class Enemy {
         break;
       case 'chase': this.updateChase(dt, game); break;
       case 'panic': this.updatePanic(dt, game); break;
+      case 'frozen': this.updateFrozen(dt, game); break;
       case 'investigate':
         if (this.listenT > 0) { // se para a escuchar y mira hacia el ruido
           this.listenT -= dt;
@@ -314,6 +322,33 @@ export class Enemy {
         if (this.timer <= 0) { this.state = 'patrol'; this.path = null; this.hurry = false; this.alarmed = false; }
         break;
     }
+  }
+
+  // Paralizado por el miedo: se queda clavado mirándote, sin dar la alarma. Ver `scared`.
+  freeze(game) {
+    this.state = 'frozen';
+    this.frozenT = 0; this.lostT = 0; this.thawNow = false;
+    this.windup = this.aim = this.burstLeft = 0;
+    game.playAt('alert', this.x, this.y);
+    game.bark(this, scaredLine(game.lastBark), true);
+  }
+
+  updateFrozen(dt, game) {
+    const p = game.player;
+    this.frozenT += dt;
+    this.lostT = this.sees ? 0 : this.lostT + dt;
+    if (p.alive) this.turnTowards(Math.atan2(p.y - this.y, p.x - this.x), 5, dt);
+    if (this.thawNow || this.frozenT > FROZEN_MAX) { this.thaw(game); return; }
+    if (this.lostT > 1.5) { this.state = 'patrol'; this.path = null; } // te pierde de vista: se calma (y si vuelve a verte, se paraliza otra vez)
+  }
+
+  thaw(game) {
+    const p = game.player;
+    this.scared = false; this.thawNow = false;
+    this.state = 'alert';
+    this.timer = REACTION_TIME * 2;
+    this.target = { x: p.x, y: p.y };
+    game.playAt('alert', this.x, this.y);
   }
 
   startSearch() {
@@ -672,7 +707,7 @@ export class Enemy {
       ctx.restore();
     }
     // Pánico: tiembla (1 px) y suda.
-    const trem = this.state === 'panic' ? (Math.floor(time * 30) % 2 ? WORLD_PX : -WORLD_PX) : 0;
+    const trem = this.state === 'panic' || this.state === 'frozen' ? (Math.floor(time * 30) % 2 ? WORLD_PX : -WORLD_PX) : 0;
     ctx.save();
     ctx.translate(this.x + trem, this.y);
     ctx.save();
@@ -718,18 +753,18 @@ export class Enemy {
     if (this.drawGear) this.drawGear(ctx, time); // (blindado) el escudo
     ctx.restore();
 
-    if (this.state === 'panic') {
+    if (this.state === 'panic' || this.state === 'frozen') {
       ctx.fillStyle = '#9ff6ff';
       for (let i = 0; i < 2; i++) {
         const f = (time * 3 + i * 0.5) % 1;
         pixelRect(ctx, (i ? 7 : -9) , -this.r - 4 - f * 8, 1, 2);
       }
     }
-    const icon = this.state === 'panic' ? '!' : this.state === 'alert' || this.state === 'chase' ? '!'
+    const icon = this.state === 'panic' || this.state === 'frozen' ? '!' : this.state === 'alert' || this.state === 'chase' ? '!'
       : this.state === 'investigate' || this.state === 'search' ? '?' : '';
     if (icon) {
       const bob = Math.round(Math.sin(time * 10)) * WORLD_PX;
-      drawText(ctx, icon, 0, -this.r - 22 + bob, { color: this.state === 'panic' ? '#9ff6ff' : icon === '!' ? COLORS.blood : COLORS.enemy, scale: WORLD_PX, align: 'center' });
+      drawText(ctx, icon, 0, -this.r - 22 + bob, { color: this.state === 'panic' || this.state === 'frozen' ? '#9ff6ff' : icon === '!' ? COLORS.blood : COLORS.enemy, scale: WORLD_PX, align: 'center' });
     }
     ctx.restore();
   }

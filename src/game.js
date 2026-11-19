@@ -610,6 +610,7 @@ export class Game {
     const en = e.kind === 'shield' ? new ShieldGuard(e.x, e.y, e.patrol, weapon, e.melee) : new Enemy(e.x, e.y, e.patrol, weapon, e.kind, e.melee);
     // Portador: solo si su máscara aún no está desbloqueada (si no, es un enemigo normal).
     if (e.carrier && !this.settings.isMaskUnlocked(e.carrier)) en.setCarrier(e.carrier);
+    if (e.scared) en.scared = true; // asustado: se paraliza al verte (prólogo; ver Enemy.freeze)
     if (e.activity && e.activity !== 'patrol') en.setActivity(e.activity, e.seatAngle ?? null); // fumando, sentado o vigilando (ver placeActivities en map.js)
     return en;
   }

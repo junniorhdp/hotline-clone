@@ -39,6 +39,9 @@ export const PROLOGUE_DEF = {
   mix: { arm: 0, melee: 0.35 },   // sin sorteo de pistolas: solo lo que dibuja el mapa (4 enemigos: 3 sin arma o con tubo/bate/cuchillo y 1 con pistola)
   par: 60,
   hostage: [37, 5],               // casilla fija del compañero (R lo conserva)
+  // Los dos primeros enemigos (pasillo y sala central) fuman, relajados y de cara a por donde entras, y están ASUSTADOS: al verte se paralizan (Enemy.freeze) en vez de reaccionar.
+  activities: [[24, 9, 'smoke', Math.PI], [18, 5, 'smoke', Math.PI / 2]],
+  scared: [[24, 9], [18, 5]],
   rows: [
     '########################################',
     '#............#............#............#',
@@ -49,7 +52,7 @@ export const PROLOGUE_DEF = {
     '#............#............#............#',
     '######D############D############D#######',
     '#......................................#',
-    '#...........................E..........#',
+    '#.......................E..............#',
     '###################D####################',
     '#......................................#',
     '#......................................#',
