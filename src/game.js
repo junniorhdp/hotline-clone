@@ -3337,11 +3337,12 @@ export class Game {
     a.cancelExecution();
     const nameA = (AGENTS[a.gender] || AGENTS.male).name, nameB = (AGENTS[b.gender] || AGENTS.male).name;
     this.state = 'radio';
+    const legs = !!(this.ladderRoom && T.manhole);   // la llegada del compañero se ve desde FUERA: corre por la calle, fuerza la tapa de la alcantarilla y baja; corte: sube por la escalera del cuarto de servicio
     this.radioCine = {
-      t: 0, end: 5.0, split: 2.9, cut: false,
+      t: 0, end: legs ? 8.0 : 5.0, split: 2.9, split2: legs ? 5.7 : 2.9, legs, cut: false, inside: false, sinkViz: null,
       lines: [
         { who: a, mask: this.mask, level: a.bloodLevel, bits: [...this.maskBits], lines: [`¡${nameB}, ME HAN ENCERRADO,`, 'HAY GAS!'], from: 0.35 },   // el retrato lleva la sangre (roja / verde) que el agente tiene encima
-        { who: b, mask: this.partnerMask, level: b.bloodLevel, bits: [...this.partnerBlood.maskBits], lines: [`¡AGUANTA, ${nameA}!`, '¡VOY PARA ALLÁ!'], from: 3.1 },
+        { who: b, mask: this.partnerMask, level: b.bloodLevel, bits: [...this.partnerBlood.maskBits], lines: [`¡AGUANTA, ${nameA}!`, '¡VOY PARA ALLÁ!'], from: legs ? 3.0 : 3.1 },
       ],
     };
     this.showCallout('¡TRAMPA!', COLORS.blood, 2.2, 'GAS TÓXICO · SALA SELLADA');
@@ -3366,16 +3367,54 @@ export class Game {
     for (const f of this.floatingTexts) f.t -= dt;
     this.floatingTexts = this.floatingTexts.filter((f) => f.t > 0);
     for (const L of R.lines) if (before < L.from && R.t >= L.from) { this.sfx.play('empty'); this.sfx.play('pickup', 0.6); } // chasquido de radio al empezar cada línea
+    const toLadder = () => {                                                         // corte a la escalera del cuarto de servicio: sube y asoma (misma animación que el piso 3)
+      const L = this.ladderRoom;
+      R.inside = true; R.sinkViz = null;
+      this.camera.setBounds(this.map.pixelW, this.map.pixelH);
+      b.away = false; b.x = L.ladder.x; b.y = L.ladder.y;
+      R.emerge = { t: 0, sink: 1, dust: false, rung: -1 };
+      this.sfx.play('manholeScrape', 0.5);
+      this.camera.snap(b.x, b.y);
+    };
     if (!R.cut && R.t >= R.split) {                                                  // corte al compañero
       R.cut = true;
-      if (this.ladderRoom) {                                                         // asoma por la boca de la escalera del cuarto de servicio (misma animación que el piso 3)
-        const L = this.ladderRoom;
-        b.away = false; b.x = L.ladder.x; b.y = L.ladder.y;
-        R.emerge = { t: 0, sink: 1, dust: false, rung: -1 };
-        this.sfx.play('manholeScrape', 0.5);
-      }
-      this.camera.snap(b.x, b.y);
+      if (R.legs) {                                                                  // 1) en la CALLE: llega corriendo a la boca de alcantarilla (misma tapa por la que saldrá un agente al elegir el rol)
+        const M = this.trap.manhole, lid = this.sewer.covers.find((c) => c.tx === M.tx && c.ty === M.ty) || null, ext = this.trap.ext;
+        if (lid) { lid.face = 0; lid.dir = this.sewer.pickDir(lid, this); lid.slide = 0; }
+        const d = lid ? lid.dir : 1, stand = { x: M.x - d * 26, y: M.y + 2 };
+        R.st = { t: 0, lid, d, M, stand, from: { x: M.x - 280, y: ext.y }, corner: { x: stand.x, y: ext.y }, heaves: -1 };
+        b.away = false; b.x = R.st.from.x; b.y = R.st.from.y; b.angle = 0;
+        this.showCallout(`${(AGENTS[b.gender] || AGENTS.male).name} LLEGA POR LA CALLE`, COLORS.player, 2.6, 'PUERTA CERRADA · ENTRA POR LA ALCANTARILLA');
+        this.camera.setBounds(this.map.pixelW, this.map.pixelH + 170);   // la calle está pegada al borde sur: se amplía el límite para poder subir el encuadre sobre la caja de radio
+        this.camera.snap(b.x, b.y + 110);
+      } else if (this.ladderRoom) toLadder();
+      else this.camera.snap(b.x, b.y);
     }
+    if (R.st && !R.inside) {                                                         // tramo de calle: corre · fuerza la tapa (3 tirones) · pisa el hueco · baja
+      const S = R.st, u = (S.t += dt), k = (v) => v * v * (3 - 2 * v), c01 = (v) => Math.max(0, Math.min(1, v)), M = S.M;
+      if (u < 0.9) {                                                                 // corre por la acera hacia la boca
+        const q = k(u / 0.9);
+        if (q < 0.8) { const w = q / 0.8; b.x = S.from.x + (S.corner.x - S.from.x) * w; b.y = S.from.y; b.angle = 0; }
+        else { const w = (q - 0.8) / 0.2; b.x = S.corner.x; b.y = S.from.y + (S.stand.y - S.from.y) * w; b.angle = Math.PI / 2; }
+        if (Math.random() < 0.5) this.particles.dust(b.x - 8, b.y + 6, 1);
+      } else if (u < 1.9) {                                                          // tres tirones: la tapa cede a golpes
+        const t2 = (u - 0.9) / 1.0, h = Math.min(2, Math.floor(t2 * 3)), f = t2 * 3 - h;
+        b.x = S.stand.x - S.d * 4 * Math.sin(Math.min(1, f * 1.4) * Math.PI); b.y = S.stand.y; b.angle = S.d > 0 ? 0 : Math.PI;
+        if (h > S.heaves) {
+          S.heaves = h; this.sfx.play(h === 2 ? 'manholeScrape' : 'knock', 0.9); this.camera.addShake(3 + h * 2);
+          this.particles.dust(M.x - S.d * 14, M.y, 6); this.particles.sparks(M.x - S.d * 20, M.y, S.d > 0 ? Math.PI : 0, 6, 0.5);
+        }
+        if (S.lid) S.lid.slide = (h + k(Math.min(1, f * 1.6))) / 3;
+      } else if (u < 2.2) {                                                          // paso sobre el hueco
+        if (S.lid) S.lid.slide = 1;
+        const q = k((u - 1.9) / 0.3); b.x = S.stand.x + (M.x - S.stand.x) * q; b.y = S.stand.y + (M.y - 6 - S.stand.y) * q;
+      } else {                                                                       // baja: se hunde en la abertura
+        b.x = M.x; b.y = M.y - 6;
+        const sk = k(c01((u - 2.2) / 0.55)); R.sinkViz = { hole: M, sink: sk };
+        if (sk > 0.5 && !S.splash) { S.splash = true; this.sfx.play('crocDown', 0.5); this.particles.dust(M.x, M.y, 8); }
+      }
+    }
+    if (R.legs && !R.inside && R.t >= R.split2) toLadder();                         // 2) corte: dentro, sube por la escalera
     if (R.emerge) {                                                                  // 0-0,7 s asoma · 0,7-1,1 s sale y se pone de pie en el cuarto
       const E = R.emerge, L = this.ladderRoom, k = (v) => v * v * (3 - 2 * v);
       E.t += dt;                                                                 // 0-0,35 s se oye subir (peldaños) · 0,35-1,45 s asoma con las manos en el borde · 1,45-1,95 s sale y se pone en pie
@@ -3388,13 +3427,15 @@ export class Game {
       this.particles.update(dt, this.map, (kind, pt) => this.bake(kind, pt));
     }
     const f = R.cut ? b : a;
-    this.camera.update(dt, f.x, f.y);
+    this.camera.update(dt, f.x, f.y + (R.st && !R.inside ? 110 : 0)); // en la calle, el encuadre queda por encima de la caja de radio
     if (skip && R.t > 0.8) R.t = R.end;
     if (R.t >= R.end) this.endRadio();
   }
 
   endRadio() {
     const T = this.trap;
+    this.camera.setBounds(this.map.pixelW, this.map.pixelH);
+    if (this.ladderRoom) { const b = this.partner, L = this.ladderRoom; b.away = false; b.x = L.service.x; b.y = L.service.y; b.angle = -Math.PI / 2; } // (si se saltó la cinemática, ya está en el cuarto)
     this.radioCine = null;
     T.state = 'gas'; T.t = GAS_TIME; T.hold = 0; T.cough = 1.2; T.fade = 1;
     this.state = 'playing';
@@ -4091,9 +4132,10 @@ export class Game {
     const t = this.partner;
     if (!t || !t.alive || t.away || (this.finalExit && this.finalExit.out === t) || !['playing', 'cleared', 'scuffle', 'dead', 'reunion', 'radio', 'ambush', 'ending'].includes(this.state)) return;
     const T = this.trap, gassed = T && T.state === 'gas' && T.victim === t, k = gassed ? 1 - T.t / GAS_TIME : 0;
-    const ox = t.x, em = this.radioCine && this.radioCine.emerge && this.ladderRoom && this.radioCine.emerge.sink > 0 ? this.radioCine : null;
+    const ox = t.x, RC = this.radioCine, em = RC && RC.emerge && this.ladderRoom && RC.emerge.sink > 0 ? { hole: this.ladderRoom.ladder, sink: RC.emerge.sink } : RC && RC.sinkViz && !RC.inside ? RC.sinkViz : null;
+    if (em && em.sink >= 1) return; // se ha metido del todo en la boca de la calle
     if (gassed) t.x += Math.sin(performance.now() / 70) * (0.5 + k * 2.5); // tambaleo del agente atrapado en el gas
-    if (em) this.drawThroughHole(ctx, t, this.ladderRoom.ladder, em.emerge.sink); // asoma de la boca de la escalera (con las manos en el borde)
+    if (em) this.drawThroughHole(ctx, t, em.hole, em.sink); // asoma de la escalera o se hunde en la boca de la calle (con las manos en el borde)
     else t.draw(ctx);
     t.x = ox;
     if (em) return; // asomando de la escalera: sin nombre ni flecha hasta que sale
