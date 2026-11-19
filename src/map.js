@@ -746,6 +746,9 @@ export const LEVELS = [
     // Llegada del compañero: la puerta principal se cierra detrás del primer agente, así que el compañero llega por la ALCANTARILLA: sale por la escalera de este cuarto de servicio
     // (x 1..3, y 21..22 del vestíbulo, puerta en (4,22)) cuando acaba la radio (ver Game.updateRadio). `service` = donde queda de pie; `ladder` = la boca de la escalera.
     ladderRoom: { service: [2, 21], ladder: [1, 21] },
+    // Salida por la alcantarilla: la puerta principal sigue cerrada, así que el agente que se queda fuera (siempre el de apoyo) baja por la escalera del cuarto de servicio y sale por esta
+    // boca de la calle, a 2 casillas al sur del punto exterior `trap.ext` (ver Game.beginExit).
+    exitManhole: [24, 27],
     ventSide: 'e',      // cara exterior de la pared: 's' (sur) o 'e' (este)
     zones: [
       ['carpet', 19, 1, 28, 8], ['wood', 1, 1, 8, 8], ['wood', 10, 1, 17, 8], ['carpet', 30, 1, 38, 8], ['wood', 40, 1, 46, 8], ['metal', 1, 10, 46, 19],
@@ -772,7 +775,7 @@ export const LEVELS = [
       ['shelf', 46, 21, 1, 2], ['rug', 16, 21, 4, 2], ['papers', 14, 22, 1, 1],
       ['trash', 41, 22, 1, 1], ['tv', 44, 21, 1, 1], ['stain', 40, 22, 1, 1],
       ['crates', 4, 28, 1, 1], ['crates', 5, 28, 1, 1], ['barrel', 13, 28, 1, 1],
-      ['trash', 18, 27, 1, 1], ['stain', 24, 26, 1, 1], ['debris', 30, 27, 1, 1],
+      ['trash', 18, 27, 1, 1], ['stain', 24, 26, 1, 1], ['debris', 30, 27, 1, 1], ['sewer', 24, 27, 1, 1],
       ['barrel', 36, 28, 1, 1], ['crates', 40, 28, 1, 1], ['crates', 41, 28, 1, 1],
       ['crates', 41, 27, 1, 1], ['trash', 44, 25, 1, 1], ['papers', 28, 28, 1, 1],
       // Barricadas en la calle (cobertura para quien se queda en el PERÍMETRO: la fase final se defiende aquí fuera)
@@ -1217,6 +1220,11 @@ export function loadLevel(index = 0, rng = Math.random, override = null) {
     // extremo de la calle (el asfalto llega hasta la valla por ambos lados).
     const mk = (side, i) => ({ x: side === 'w' ? (2 + (i >> 1) * 1.2) * TILE + TILE / 2 : map.pixelW - (2 + (i >> 1) * 1.2) * TILE - TILE / 2, y: mainDoor.y + (2.5 + (i % 3) * 0.9) * TILE });
     map.trap.ext = { x: mainDoor.x, y: mainDoor.y + 2 * TILE };
+    if (def.exitManhole) {                      // boca de la calle por la que sale el agente de apoyo (la tapa la dibuja `Sewer`, fija: nunca asoma el cocodrilo)
+      const mx = def.exitManhole[0] + OUTSKIRT, my = def.exitManhole[1] + OUTSKIRT;
+      map.trap.manhole = { tx: mx, ty: my, x: mx * TILE + TILE / 2, y: my * TILE + TILE / 2 };
+      map.sewers.push({ ...map.trap.manhole, fixed: true });
+    }
     map.trap.meet = { x: bike.x + 64, y: bike.y - 32 }; // dónde se encuentran los dos agentes junto a la moto (el beso del final)
     map.trap.spawns = { w: [0, 1, 2, 3, 4, 5].map((i) => mk('w', i)), e: [0, 1, 2, 3, 4, 5].map((i) => mk('e', i)) };
   }

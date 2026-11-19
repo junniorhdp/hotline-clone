@@ -220,6 +220,20 @@ for (let n = 0; n <= LEVELS.length; n++) {
     if (!findPath(map, S.x, S.y, L.mainDoor.x, L.mainDoor.y - TILE)) fail('no hay camino del cuarto de servicio del compañero al resto del edificio');
     else console.log('  compañero: cuarto de servicio libre, apartado y con camino a la ventilación');
   }
+  // 5l) salida del agente de apoyo por la alcantarilla (piso 10, `trap.manhole`): la boca de la calle existe, es suelo libre y alcanzable, está a ≤ 4 casillas del punto exterior `trap.ext` y la tapa
+  // está dibujada (hay una `sewer` en la lista de la calle, marcada `fixed`: nunca asoma el cocodrilo).
+  if (L.trap && L.ladderRoom) {
+    const Mh = L.trap.manhole;
+    if (!Mh) fail('el piso con escalera de llegada no tiene boca de alcantarilla de salida');
+    else {
+      const frM = !isWallTile(map, Mh.tx, Mh.ty);
+      if (!frM) fail('la boca de alcantarilla de salida está tapada');
+      if (!findPath(map, L.trap.ext.x, L.trap.ext.y, Mh.x, Mh.y)) fail('la boca de alcantarilla de salida es inalcanzable desde el punto exterior');
+      if (Math.hypot(Mh.x - L.trap.ext.x, Mh.y - L.trap.ext.y) > 4 * TILE) fail('la boca de alcantarilla de salida está a más de 4 casillas del punto exterior');
+      if (!map.sewers.some((c) => c.fixed && c.tx === Mh.tx && c.ty === Mh.ty)) fail('la boca de salida no está en la lista de tapas (no se dibujaría)');
+      if (frM) console.log('  salida del agente de apoyo: boca de alcantarilla libre, alcanzable y junto a la puerta');
+    }
+  }
   // 6) cada enemigo puede llegar al jugador y a la salida (pathfinding)
   const pEntry = L.entry;
   const noPath = L.enemies.filter((e) => !findPath(map, e.x, e.y, pEntry.x, pEntry.y));

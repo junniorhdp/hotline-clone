@@ -34,7 +34,7 @@ export class Sewer {
     if (!cur) {
       this.timer -= dt;
       if (this.timer > 0) return;
-      const near = this.covers.filter((c) => { if (c.entrance) return false; const d = Math.hypot(c.x - p.x, c.y - p.y); return d > SEE_MIN && d < SEE_MAX; });
+      const near = this.covers.filter((c) => { if (c.entrance || c.fixed) return false; const d = Math.hypot(c.x - p.x, c.y - p.y); return d > SEE_MIN && d < SEE_MAX; });
       if (!near.length) { this.timer = 4; return; } // ninguna a la vista: reintenta pronto
       this.start(near[Math.floor(Math.random() * near.length)], game);
       this.timer = rand(...NEXT_DELAY);
