@@ -360,7 +360,10 @@ export class TouchControls {
       const p = g.toInternal(t.x, t.y);
       if (t.isNew && !this.roles.has(t.id)) {
         const button = L.buttons.find((b) => inside(b, p));
-        if (button) {
+        if (g.comms.hit(p)) {                         // tocar la caja de comunicación la salta (sin disparar ni mover)
+          this.roles.set(t.id, 'ignored');
+          g.comms.skip();
+        } else if (button) {
           this.roles.set(t.id, `button:${button.id}`);
           this.press(button.id, t.id);
         } else if (p.x < half && !this.move) {

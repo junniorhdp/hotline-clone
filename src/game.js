@@ -16,6 +16,8 @@ import { BikeExit, EXIT_EXTRA } from './exits.js';
 import { StreetLife, newStreetRun } from './street.js';
 import { Hostages } from './hostages.js';
 import { PROLOGUE_DEF, markPrologueSeen } from './prologue.js';
+import { Comms } from './comms.js';
+const SKIP_HOLD = 1.5; // s que hay que mantener P / el botón táctil para saltar el prólogo
 import { weaponCategory } from './weapons.js';
 import { buildOptionsMenu, buildPauseMenu } from './options-menu.js';
 import { Player, bloodLevelFor, FINISH_RANGE } from './player.js';
@@ -237,6 +239,8 @@ export class Game {
     this.runId = newRunId();
     this.showRecords = false;
     this.levelIndex = 0;
+    this.comms = new Comms(this); // líneas cortas de lore no modales (prólogo)
+    this.skipHold = 0; this.skipAsk = 0; this.prologueT = 0;
     this.prologue = false; // tutorial aparte del piso 1 (ver prologue.js): sin resultados, récords ni estadísticas de campaña
     this.debug = false;
     this.acc = 0;
@@ -473,7 +477,12 @@ export class Game {
 
   updateMaskSelect() {
     const input = this.input, n = MASKS.length;
-    if (this.prologue && input.wasPressed('KeyP')) { this.skipPrologue(); return; }
+    if (this.prologue) {   // saltar exige MANTENER P (o el botón táctil) SKIP_HOLD s: así no se salta por accidente
+      if (input.wasPressed('KeyP')) this.showToast(this.hint('MANTÉN P PARA SALTAR EL PRÓLOGO', 'MANTÉN PULSADO PARA SALTAR'), 2);
+      const held = input.down('KeyP') || this.skipTouchHeld();
+      this.skipHold = held ? this.skipHold + 1 / 60 : Math.max(0, this.skipHold - 2 / 60);
+      if (this.skipHold >= SKIP_HOLD) { this.skipHold = 0; this.skipPrologue(); return; }
+    }
     const prev = this.maskIndex;
     if (input.wasPressed('ArrowLeft') || input.wasPressed('KeyA')) this.maskIndex = (this.maskIndex + n - 1) % n;
     if (input.wasPressed('ArrowRight') || input.wasPressed('KeyD')) this.maskIndex = (this.maskIndex + 1) % n;
@@ -527,7 +536,7 @@ export class Game {
       const back = { ...sized('back', 'VOLVER', 'Escape'), x: 6 + s.l, y: 6 + s.t };
       const records = sized('records', 'RÉCORDS', 'KeyT');
       const list = [back, { ...records, x: w - 6 - s.r - records.w, y: 6 + s.t }];
-      if (this.prologue) list.push({ ...sized('skip', w < 360 ? 'SALTAR' : 'SALTAR PRÓLOGO', 'KeyP', COLORS.enemy), x: 6 + s.l, y: 6 + s.t + back.h + 4 });
+      if (this.prologue) list.push({ ...sized('skip', w < 360 ? 'SALTAR' : 'SALTAR (MANTÉN)', 'KeyP', COLORS.enemy), x: 6 + s.l, y: 6 + s.t + back.h + 4 });
       return list;
     }
     if (this.state === 'dead') {
@@ -889,6 +898,50 @@ export class Game {
     this.floorStats.record(this.levelIndex + 1, this.results.rank, this.results.levelScore);
   }
 
+  // --- Prólogo: líneas de lore (comms.js) y salto -----------------------------------------------------
+  agentInfo(gender) { return { name: AGENTS[gender].name, color: AGENTS[gender].color }; }
+
+  // Las líneas del prólogo (una sola vez por partida: R no las repite). `id` = momento.
+  prologueLine(id) {
+    const me = this.agentInfo(this.gender).name, pa = this.agentInfo(this.gender === 'male' ? 'female' : 'male');
+    const L = {
+      intro: [{ speaker: 'central', text: `La mafia cayó casi entera esta semana. ${pa.name} se quedó dentro.` }],
+      enter: [{ speaker: 'central', text: 'Se cierran las salidas. Esto no estaba en el plan.' }],
+      kill: [{ speaker: 'central', text: 'Esos no llevan los colores de la familia.' }],
+      free: [{ speaker: pa, text: `Sabía que vendrías, ${me}. Me usaron de cebo.` }, { speaker: pa, text: 'Alguien de la Organización dio nuestros nombres.' }],
+      clear: [{ speaker: pa, text: 'Quedan tres nombres en la lista. Vámonos.' }],
+    };
+    this.comms.say(id, L[id]);
+  }
+
+  updatePrologue(dt) {
+    const input = this.input, c = this.comms;
+    // Saltar la línea visible con Espacio o clic: se consume la pulsación para que no patee ni ataque en falso (en táctil, tocar la caja: ver touch.js).
+    if (c.shown && (input.wasPressed('Space') || input.mousePressed.left)) {
+      c.skip();
+      input.pressed.delete('Space'); input.mousePressed.left = false;
+      this.player.cooldown = Math.max(this.player.cooldown, 0.3);
+    }
+    if (this.state === 'playing') this.prologueT += dt;
+    if (this.state === 'playing' && !this.inside && this.prologueT > 1.5) this.prologueLine('intro');
+    if (this.state === 'playing' && this.inside && this.time > 2.5) this.prologueLine('enter');
+    if (this.state === 'playing' && this.inside && this.stats.kills >= 1 && this.time > 4) this.prologueLine('kill');
+    if (this.state === 'cleared' && this.goalAge > 0.3) this.prologueLine('clear');
+    c.update(dt);
+  }
+
+  // ¿Hay un dedo sobre el botón táctil de saltar? (el salto del prólogo exige mantenerlo)
+  skipTouchHeld() {
+    const b = this.screenButtons().find((x) => x.id === 'skip');
+    if (!b) return false;
+    for (const t of this.input.touches.values()) {
+      if (t.ended) continue;
+      const p = this.toInternal(t.x, t.y);
+      if (p.x >= b.x && p.x <= b.x + b.w && p.y >= b.y && p.y <= b.y + b.h) return true;
+    }
+    return false;
+  }
+
   // Fin del prólogo (huida en moto o salto): queda marcado como visto y empieza la campaña (puntuación a 0, selección de máscara del piso 1).
   endPrologue() {
     markPrologueSeen();
@@ -907,6 +960,7 @@ export class Game {
   startRunAt(index, prologue = false) {
     this.runId = newRunId();
     this.prologue = prologue;
+    this.comms.forget(); this.skipHold = 0;
     this.buff = null;
     this.streetRun = newStreetRun();
     this.civilianBase = { hurt: 0, killed: 0, gifts: 0 }; // el comportamiento con los civiles se acumula durante toda la partida
@@ -981,7 +1035,12 @@ export class Game {
     // en una partida nueva cambian.
     this.sfx.stopMoto(0.05); // R, piso nuevo...: si la moto sonaba, se corta limpia
     const level = loadLevel(this.levelIndex, seededRandom(hashString(`${this.runId}:${this.levelIndex}`)), this.prologue ? PROLOGUE_DEF : null);
-    if (this.prologue) for (const hd of level.hostages) if (hd.partner) hd.look = { ...hd.look, gender: this.gender === 'male' ? 'f' : 'm', hair: this.gender === 'male' ? '#7a2fb8' : '#140a08' }; // el compañero es el otro agente (cosmético)
+    if (this.prologue) for (const hd of level.hostages) if (hd.partner) hd.look = { ...hd.look, gender: this.gender === 'male' ? 'f' : 'm', hair: this.gender === 'male' ? '#7a2fb8' : '#140a08' }; // (aspecto antiguo, ya no se dibuja)
+    if (this.prologue) for (const hd of level.hostages) if (hd.partner) {   // el compañero es el otro agente; la otra máscara (NEON, o BRUTE si llevas NEON) se la cedes al liberarlo
+      hd.agent = this.gender === 'male' ? 'female' : 'male';
+      const spare = MASKS.find((m) => m.id === (this.mask.id === 'neon' ? 'oso' : 'neon'));
+      hd.maskId = spare.id; hd.maskName = spare.name;
+    }
     this.levelName = level.name;
     this.dark = level.dark;       // piso en penumbra (ver map.dark y renderDark)
     this.strobe = level.strobe;   // el club: luces estroboscópicas (opción `strobeEnabled`)
@@ -1032,6 +1091,7 @@ export class Game {
     this.deathMsg = null; // mensaje propio de la pantalla de muerte (compañero caído)
     this.leaveAsk = 0;   // rehenes sin rescatar de los que se avisa junto a la moto (0 = nada que avisar)
     this.cams = new SecurityCams(this, level.cameras || []); // cámaras de seguridad y operador (piso 8)
+    this.comms.clear(); this.prologueT = 0;
     this.hostages = new Hostages(this, level.hostages || []); // rehenes atados a sillas dentro del edificio (ver hostages.js)
     this.pools = [];
     // masks (selección) | arriving (llega en moto) | playing (fuera o dentro: ver `inside`) | dead |
@@ -1181,6 +1241,7 @@ export class Game {
     this.updateMaskDrops(dt);
     for (const f of this.floatingTexts) f.t -= dt;
     this.floatingTexts = this.floatingTexts.filter((f) => f.t > 0);
+    if (this.prologue) this.updatePrologue(dt);
     if (this.player.alive && !this.asphyx) this.player.update(dt, this);
     if (this.final && this.state === 'playing') this.updateFinal(dt);
     else if (this.state === 'playing' && this.trap && this.trap.state === 'done' && this.partner && this.partner.immortal) this.updateAlly(dt); // el liberado cubre la zona hasta el reencuentro
@@ -3977,7 +4038,15 @@ export class Game {
       drawText(ctx, this.hint('FLECHAS: MÁSCARA · Q/E: AGENTE · ESPACIO / ENTER: EMPEZAR', 'TOCA UNA MÁSCARA: ELEGIR · OTRA VEZ: EMPEZAR'),
         cx, h - 12 - this.safe.b, { color: COLORS.player, align: 'center' });
     }
-    if (this.prologue && !this.input.touchMode) drawText(ctx, 'P: SALTAR PRÓLOGO', cx, h - 23 - this.safe.b, { color: COLORS.enemy, align: 'center' });
+    if (this.prologue && !this.input.touchMode) drawText(ctx, 'MANTÉN P: SALTAR PRÓLOGO', cx, h - 23 - this.safe.b, { color: COLORS.enemy, align: 'center' });
+    if (this.prologue && this.skipHold > 0) {   // progreso del salto mantenido
+      const bw = 150, bx = cx - bw / 2, by = Math.round(h * 0.5);
+      ctx.fillStyle = 'rgba(13, 2, 33, 0.92)'; ctx.fillRect(bx - 4, by - 14, bw + 8, 30);
+      ctx.fillStyle = COLORS.enemy; ctx.fillRect(bx - 4, by - 14, bw + 8, 1); ctx.fillRect(bx - 4, by + 15, bw + 8, 1);
+      drawText(ctx, 'SALTANDO PRÓLOGO...', cx, by - 9, { color: COLORS.enemy, align: 'center', shadow: null });
+      ctx.fillStyle = '#3a2a5a'; ctx.fillRect(bx, by + 3, bw, 7);
+      ctx.fillStyle = COLORS.enemy; ctx.fillRect(bx, by + 3, Math.round(bw * Math.min(1, this.skipHold / SKIP_HOLD)), 7);
+    }
   }
 
   // Escala de texto más grande (hasta `preferred`) con la que el texto cabe en `maxW`.
@@ -4172,6 +4241,7 @@ export class Game {
     this.drawFloatingTexts(ctx);
     this.street.drawHud(ctx, w, h);
     this.hostages.drawHud(ctx, w, h);
+    this.comms.draw(ctx, w);
     this.hostages.drawLeaveAsk(ctx, w, h);
     this.drawTrapHud(ctx, w, h);
     this.drawFinalHud(ctx, w, h);

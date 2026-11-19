@@ -324,7 +324,10 @@ export function buildPauseMenu(game) {
     items: [
       { kind: 'button', label: 'CONTINUAR', action: resume },
       { kind: 'button', label: 'OPCIONES', action: (g) => g.openOptions(() => g.openPause()) },
-      ...(game.prologue ? [{ kind: 'button', label: 'SALTAR PRÓLOGO', action: (g) => { g.closePanel(); g.skipPrologue(); } }] : []),
+      ...(game.prologue ? [{ kind: 'button', label: 'SALTAR PRÓLOGO', action: (g) => {   // en la pausa no se puede mantener: hay que pulsarlo dos veces en 3 s
+        if (g.skipAsk && performance.now() - g.skipAsk < 3000) { g.skipAsk = 0; g.closePanel(); g.skipPrologue(); }
+        else { g.skipAsk = performance.now(); g.showToast('OTRA VEZ PARA SALTAR EL PRÓLOGO', 3); }
+      } }] : []),
       { kind: 'button', label: 'SALIR AL MENÚ', action: (g) => { g.closePanel(); g.transition(() => g.openMenu()); } },
     ],
     onBack: resume,

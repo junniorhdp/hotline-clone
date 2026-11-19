@@ -1,7 +1,8 @@
 import { findPath, moveAndSlide } from './map.js';
 import { segmentPointDistance, inMeleeArc } from './weapons.js';
 import { ExtractionCar } from './extraction.js';
-import { pixelRect, WORLD_PX } from './sprites.js';
+import { pixelRect, WORLD_PX, drawSprite, drawMaskHead, playerBody } from './sprites.js';
+import { AGENTS } from './portraits.js';
 import { drawText, measureText } from './pixelfont.js';
 import { COLORS } from './utils.js';
 
@@ -38,6 +39,7 @@ class Hostage {
     this.x = d.x; this.y = d.y;
     this.look = d.look;
     this.partner = !!d.partner;   // compañero del prólogo
+    this.agent = d.agent || 'female'; this.maskId = d.maskId || 'neon'; this.maskName = d.maskName || ''; this.masked = false; // aspecto del agente; la máscara se la cedes al liberarlo
     this.protected = this.partner; // tus golpes y balas no le hacen nada
     this.facing = d.facing;
     this.r = 7;
@@ -246,6 +248,11 @@ export class Hostages {
       g.sfx.play('pickup', 0.8);
       g.addFloat(h.x, h.y - 20, '¡COMPAÑERO LIBRE!', '#9be32a', 1, 1.8);
       g.particles.dust(h.x, h.y, 6);
+      h.masked = true;                                       // le cedes la otra máscara (solo visual)
+      g.sfx.play('maskOn');
+      g.particles.neon(h.x, h.y, -Math.PI / 2, 10, 2);
+      g.addFloat(h.x, h.y - 34, `MÁSCARA CEDIDA: ${h.maskName}`, '#05d9e8', 1, 2);
+      if (g.prologue) g.prologueLine('free');
       return;
     }
     h.state = 'freed';
@@ -332,7 +339,32 @@ export class Hostages {
     for (const h of this.list) if (h.state === 'riding') this.drawOne(ctx, h);
   }
 
+  // El compañero del prólogo (`partner`): el otro agente, con su cuerpo y cabeza de personaje (herido: sangre nivel 2), atado a la silla hasta que lo liberas;
+  // sin máscara hasta que le cedes la otra (h.masked). Se dibuja girado hacia donde mira, como el jugador.
+  drawPartner(ctx, h) {
+    const g = this.game, x = Math.round(h.x), y = Math.round(h.y), tied = h.state === 'tied', female = h.agent === 'female', lvl = g.goreOn ? 2 : 0;
+    ctx.save();
+    ctx.globalAlpha = h.state === 'boarding' ? Math.max(0, h.fade) : 1;
+    ctx.fillStyle = 'rgba(5,0,15,0.5)'; pixelRect(ctx, x - 12, y + 8, 14, 4);                // sombra
+    ctx.translate(x, y);
+    ctx.rotate(h.facing);
+    if (tied) {                                                                              // silla (respaldo detrás) y asiento
+      ctx.fillStyle = '#14100a'; pixelRect(ctx, -16, -10, 5, 20);
+      ctx.fillStyle = '#5b4a2a'; pixelRect(ctx, -15, -9, 3, 18);
+      ctx.fillStyle = '#3a2f1a'; pixelRect(ctx, -12, -8, 14, 16);
+    }
+    drawSprite(ctx, playerBody(h.maskId, lvl, h.agent), 0, 0);
+    if (female) drawSprite(ctx, 'ponytail', -3, 0, 0, { ox: 10, oy: 2.5 });
+    drawMaskHead(ctx, h.masked ? h.maskId : (female ? 'bare_f' : 'bare'), lvl);
+    if (tied) { ctx.fillStyle = '#b8864a'; ctx.fillRect(-4, -12, 3, 24); ctx.fillRect(4, -12, 3, 24); } // cuerdas
+    ctx.restore();
+    const a = AGENTS[h.agent];
+    if (tied) { ctx.fillStyle = '#ffbe0b'; pixelRect(ctx, x, y - 26, 1, 3); pixelRect(ctx, x, y - 20, 1, 1); } // «!» de socorro
+    drawText(ctx, a.name, x, y - 34, { color: a.color, scale: WORLD_PX, align: 'center' });
+  }
+
   drawOne(ctx, h) {
+    if (h.partner) { this.drawPartner(ctx, h); return; }
     const L = h.look, x = Math.round(h.x), y = Math.round(h.y);
     const tied = h.state === 'tied', dead = h.state === 'dead';
     const moving = h.state === 'freed' || h.state === 'exiting' || h.state === 'riding' || h.state === 'follow';
