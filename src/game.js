@@ -387,7 +387,7 @@ export class Game {
     this.levelIndex = index;
     this.streetRun = newStreetRun();
     this.civilianBase = { ...this.civilianRecord }; // el registro al entrar al piso (R lo restaura)
-    this.trapRetry = false; this.finalRetry = false; this.finalRole = null; this.trapCheckpoint = null;
+    this.trapRetry = false; this.finalRetry = false; this.finalRole = null; this.trapCheckpoint = null; this.finalCheckpoint = null;
     this.score.startLevel();
     this.scuffleCount = 0;
     this.resetStains(); // el siguiente piso se empieza limpio: ropa y máscara sin sangre
@@ -956,7 +956,7 @@ export class Game {
     this.buff = null;
     this.streetRun = newStreetRun();
     this.civilianBase = { hurt: 0, killed: 0, gifts: 0 }; // el comportamiento con los civiles se acumula durante toda la partida
-    this.trapRetry = false; this.finalRetry = false; this.finalRole = null; this.trapCheckpoint = null;
+    this.trapRetry = false; this.finalRetry = false; this.finalRole = null; this.trapCheckpoint = null; this.finalCheckpoint = null;
     this.score.newRun(this.history.best());
     this.resetStains();
     this.scuffleCount = 0;
@@ -1067,6 +1067,7 @@ export class Game {
     this.camera.mul = this.camera.mulTarget = 1;
     this.sfx.setSlowMo(false);
     this.enemies = level.enemies.map((e) => this.makeEnemy(e));
+    this.levelEnemyCount = this.enemies.length; // (los refuerzos de la trampilla se añaden después: ver spawnAmbushEnemy)
     this.pickups = level.weapons.map((w) => new Pickup(w.type, w.x, w.y));
     this.doors = level.doors.map((d) => new Door(d.tx, d.ty, d.horizontal, d.main));
     this.mainDoor = this.doors.find((d) => d.main);
@@ -2770,8 +2771,6 @@ export class Game {
       for (const d of T.doors) { const door = this.doors.find((x) => x.tx === d.tx && x.ty === d.ty); if (door) { door.locked = false; door.closing = false; door.offset = 0; door.angVel = 0; } }
       this.partner.away = false;
       this.player.x = T.center.x - 24; this.player.y = T.center.y; this.partner.x = T.center.x + 24; this.partner.y = T.center.y;
-      const far = this.enemies.filter((e) => e.alive).sort((p, q) => Math.hypot(q.x - T.center.x, q.y - T.center.y) - Math.hypot(p.x - T.center.x, p.y - T.center.y));
-      far.slice(FINAL_KEEP).forEach((e) => { e.alive = false; });
       this.inside = true;
     }
     this.trapRetry = false;
@@ -2784,17 +2783,57 @@ export class Game {
     if (!animated) { out.x = ext.x; out.y = ext.y; out.angle = -Math.PI / 2; } // (R: directo a la calle; con animación, el agente de apoyo sale por la alcantarilla: ver beginExit)
     const ally = this.partner;
     ally.immortal = true; ally.weapon = { type: 'smg', ammo: 9999 }; ally.fireCd = 0; ally.path = null; ally.pathT = 0;
+    if (retry) {                                                      // R en la fase final: se vuelve al PUNTO DE REPETICIÓN (restoreFinalCheckpoint); sin él, los 6 enemigos más lejos
+      if (this.finalCheckpoint) this.restoreFinalCheckpoint(role);
+      else {
+        const far = this.enemies.filter((e) => e.alive).sort((p, q) => Math.hypot(q.x - T.center.x, q.y - T.center.y) - Math.hypot(p.x - T.center.x, p.y - T.center.y));
+        far.slice(FINAL_KEEP).forEach((e) => { e.alive = false; });
+      }
+    }
     this.final = { role, wave: 0, stage: 'wait', timer: 3.5, done: false, montage: null, ambushPending: false };
     // Emboscada: solo si juegas LIMPIEZA (dentro) y al elegirlo quedan menos de AMBUSH_MIN enemigos vivos; con 3 o más no ocurre nunca (y con R, que deja 6, tampoco).
     if (role === 'limpieza' && this.hatch && !this.hatch.used && this.enemies.filter((e) => e.alive).length < AMBUSH_MIN) this.final.ambushPending = true;
-    if (animated) this.beginExit(out, role); else this.startFinalPlay(role);
+    if (animated) this.beginExit(out, role); else this.startFinalPlay(role, retry);
   }
 
   // Arranque del asalto final tras situar a los agentes (directo en un reintento, o al acabar la salida animada).
-  startFinalPlay(role) {
+  startFinalPlay(role, retry = false) {
     if (role === 'perimetro') this.supplyDrop(true); // quien defiende la calle empieza armado y con armas a mano
+    if (!retry) this.captureFinalCheckpoint(); // PUNTO DE REPETICIÓN de la fase final: así empieza el asalto (ver captureFinalCheckpoint)
     this.camera.snap(this.player.x, this.player.y);
     this.showCallout(role === 'limpieza' ? 'LIMPIEZA' : 'PERÍMETRO', COLORS.player, 2.4, role === 'limpieza' ? 'DESPEJA EL EDIFICIO' : 'DEFIENDE LA CALLE: 2 OLEADAS');
+  }
+
+  // PUNTO DE REPETICIÓN DE LA FASE FINAL: se captura al empezar el asalto (rol elegido y salida hecha) y otra vez al TERMINAR la emboscada de la trampilla (los refuerzos ya van a por ti).
+  // R vuelve exactamente a ese momento: los mismos enemigos vivos, en su sitio y con la MISMA conciencia (los que ya iban a por ti siguen yendo a por ti, no «olvidan»), los refuerzos de
+  // la trampilla ya fuera y en persecución (la emboscada no se repite) y el agente con el ARMA con la que empezó (y su munición), no con las manos vacías.
+  captureFinalCheckpoint() {
+    const p = this.player;
+    this.finalCheckpoint = {
+      role: this.finalRole, px: p.x, py: p.y,
+      weapon: p.weapon ? { type: p.weapon.type, ammo: p.weapon.ammo } : null,
+      ambushDone: !!(this.hatch && this.hatch.used),
+      enemies: this.enemies.map((e, i) => (e.alive ? { i, ambushIdx: e.ambushIdx, x: e.x, y: e.y, angle: e.angle, aware: e.state === 'chase' || e.state === 'alert' || !!e.alarmed } : null)).filter(Boolean),
+    };
+  }
+
+  // El enemigo sabe dónde estás (como los refuerzos al salir de la trampilla): persecución, alarmado y con la mira en ti.
+  alertEnemy(e) {
+    const p = this.player;
+    e.found = true; e.alarmed = true; e.state = 'chase'; e.target = { x: p.x, y: p.y }; e.attackCd = 0.8;
+  }
+
+  restoreFinalCheckpoint(role) {
+    const cp = this.finalCheckpoint, n0 = this.levelEnemyCount, p = this.player;
+    const keep = new Set(cp.enemies.filter((c) => c.ambushIdx === undefined && c.i < n0).map((c) => c.i));
+    this.enemies.forEach((e, i) => { if (i < n0 && !keep.has(i)) e.alive = false; });
+    if (cp.ambushDone && this.hatch) { this.hatch.used = true; this.hatch.state = 'open'; this.hatch.open = 1; } // la trampilla ya está abierta y no se repite la emboscada
+    if (role === 'limpieza' && cp.role === 'limpieza') { p.x = cp.px; p.y = cp.py; p.angle = -Math.PI / 2; }     // dentro: donde estabas
+    p.weapon = cp.weapon ? { ...cp.weapon } : null;                                                              // y con tu arma, no sin ella
+    for (const c of cp.enemies) {
+      if (c.ambushIdx !== undefined) this.spawnAmbushEnemy(c.ambushIdx, { x: c.x, y: c.y });                    // refuerzo de la trampilla (siempre en persecución)
+      else { const e = this.enemies[c.i]; e.x = c.x; e.y = c.y; e.angle = c.angle; e.path = null; if (c.aware) this.alertEnemy(e); }
+    }
   }
 
   // --- Salida del agente de apoyo al elegir el rol (estado 'exit', ~5 s, Espacio / Enter / clic la salta tras 0,8 s) -------------------------------------------------------
@@ -3154,17 +3193,17 @@ export class Game {
     } else H.open = Math.min(1, H.open + dt * 4);
     const next = 1.7 + A.spawned * 0.3;
     if (H.state === 'open' && A.spawned < AMBUSH.length && A.t >= next) this.spawnAmbushEnemy(A.spawned++);
-    if (A.spawned >= AMBUSH.length && A.t >= 1.7 + AMBUSH.length * 0.3 + 0.9) { this.ambush = null; this.state = 'playing'; }
+    if (A.spawned >= AMBUSH.length && A.t >= 1.7 + AMBUSH.length * 0.3 + 0.9) { this.ambush = null; this.state = 'playing'; this.captureFinalCheckpoint(); } // nuevo punto de repetición: la pelea empieza aquí
   }
 
-  spawnAmbushEnemy(i) {
-    const H = this.hatch, d = AMBUSH[i], p = this.player;
-    const a = (i / AMBUSH.length) * TAU + 0.6, x = H.x + Math.cos(a) * 14, y = H.y + Math.sin(a) * 14;
+  spawnAmbushEnemy(i, at = null) {      // `at`: reaparición desde el punto de repetición (sin efectos)
+    const H = this.hatch, d = AMBUSH[i];
+    const a = (i / AMBUSH.length) * TAU + 0.6, x = at ? at.x : H.x + Math.cos(a) * 14, y = at ? at.y : H.y + Math.sin(a) * 14;
     const en = this.makeEnemy({ x, y, patrol: [{ x, y }], weapon: d.weapon || null, kind: d.kind, melee: null });
-    en.found = true; en.alarmed = true; en.state = 'chase'; en.target = { x: p.x, y: p.y }; en.attackCd = 0.8; en.ambush = true;
+    en.ambush = true; en.ambushIdx = i;
     this.enemies.push(en);
-    this.particles.dust(x, y, 6);
-    this.playAt('alert', x, y, 1);
+    this.alertEnemy(en);
+    if (!at) { this.particles.dust(x, y, 6); this.playAt('alert', x, y, 1); }
   }
 
   // La trampilla abierta (sobre el suelo, bajo los personajes): el hueco con una escalera, un resplandor y la tapa levantada de canto.
