@@ -21,7 +21,7 @@ import { Comms, drawTalkingMask, voiceFor, talkBlips } from './comms.js';
 import { weaponCategory } from './weapons.js';
 import { buildOptionsMenu, buildPauseMenu } from './options-menu.js';
 import { Player, bloodLevelFor, FINISH_RANGE } from './player.js';
-import { Enemy, resetAiBudget } from './enemy.js';
+import { Enemy, resetAiBudget, AI, setAiLevel } from './enemy.js';
 import { SecurityCams } from './cameras.js';
 import { ShieldGuard } from './shield.js';
 const GAS_TIME = 60;        // s hasta que el gas mata al agente atrapado en el despacho (piso 10)
@@ -921,6 +921,9 @@ export class Game {
     ctx.drawImage(this._hudLayer, 0, 0);
     ctx.restore();
   }
+
+  // Nivel de IA enemiga (opción IA ENEMIGA): TONTOS / PROMEDIO / GENIOS; ver AI en enemy.js.
+  setAiLevel(v) { setAiLevel(v); }
 
   // ¿Animación del agente al cerrar / abrir la puerta principal? (opción ANIMACIÓN DE LA PUERTA)
   get doorAnimOn() { return this.settings.get('doorAnim') !== false; }
@@ -3232,7 +3235,8 @@ export class Game {
     const def = e.gunDef;
     const pellets = def.pellets || 1;
     for (let i = 0; i < pellets; i++) {
-      const angle = e.angle + (pellets > 1 ? rand(-def.fan, def.fan) : rand(-def.spread, def.spread));
+      const sp = def.spread * AI.spread; // puntería según el nivel de IA enemiga (TONTOS dispersan más, GENIOS menos)
+      const angle = e.angle + (pellets > 1 ? rand(-def.fan, def.fan) : rand(-sp, sp));
       const speed = def.bulletSpeed * (pellets > 1 ? 0.85 + Math.random() * 0.3 : 1);
       this.bullets.push(new Bullet(bx, by, angle, speed, 'enemy', def.bulletRange || Infinity));
     }

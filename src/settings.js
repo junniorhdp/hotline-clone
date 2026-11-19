@@ -35,6 +35,11 @@ export const OPTIONS = [
   // Luces estroboscópicas del piso 4 (el club): pulsos de color neón sobre la escena. Apagarlas deja el club
   // con su luz normal (recomendado con fotosensibilidad).
   { id: 'strobeEnabled', section: 'JUEGO', label: 'LUCES ESTROBOSCÓPICAS', type: 'toggle', default: true },
+  // IA ENEMIGA: TONTOS (tardan más en reaccionar, preparan y espacian más los golpes y disparos, apuntan peor y ven menos) · PROMEDIO (el comportamiento de siempre) ·
+  // GENIOS (reaccionan casi al instante, golpean y disparan antes y más seguido, apuntan fino y ven y te buscan más). Multiplicadores en `AI` (enemy.js). Afecta a la partida en curso.
+  { id: 'aiLevel', section: 'JUEGO', label: 'IA ENEMIGA', type: 'choice', default: 'avg',
+    choices: [{ label: 'TONTOS', value: 'dumb' }, { label: 'PROMEDIO', value: 'avg' }, { label: 'GENIOS', value: 'genius' }],
+    apply: (g, v) => g.setAiLevel(v) },
   // Sin la animación, la puerta principal se cierra al cruzar el umbral y se abre al despejar el piso al instante (como antes), sin que el agente se pare a cerrarla / abrirla.
   { id: 'doorAnim', section: 'JUEGO', label: 'ANIMACIÓN DE LA PUERTA', type: 'toggle', default: true },
   { id: 'goreEnabled', section: 'JUEGO', label: 'SANGRE', type: 'toggle', default: true,

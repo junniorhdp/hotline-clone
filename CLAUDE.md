@@ -726,6 +726,21 @@ Todo está ajustado para que el combate sea frenético (entre paréntesis, el va
   (1,52 s); el armado con pistola dispara a los 0,58 s (0,85 s) y con subfusil a los 0,67 s (0,93 s).
   Si se retoca el ritmo, repetir esa medición.
 
+### Nivel de IA enemiga (opción IA ENEMIGA, `aiLevel`; `AI` y `setAiLevel` en `enemy.js`)
+Tres niveles con nombre gracioso y efecto real, en OPCIONES → JUEGO (ciclable con Enter / clic / flechas y con un toque en táctil; se guarda en `neonrush.settings.v1` y se aplica al arrancar con `applyAll` → `Game.setAiLevel`; afecta también a la partida en curso). Son **multiplicadores globales** (`AI`) sobre los tiempos y la puntería de todos los enemigos; PROMEDIO = todo ×1 (el comportamiento de siempre, por defecto). El jefe conserva sus ataques y los enemigos `scared` del prólogo siguen paralizándose igual (la prueba de humo pasa en los tres niveles).
+
+| Multiplicador | TONTOS | PROMEDIO | GENIOS | Qué afecta |
+|---|---|---|---|---|
+| `react` | ×2,2 | ×1 | ×0,5 | pausa entre verte y actuar, y al levantarse de un derribo |
+| `windup` | ×1,35 | ×1 | ×0,8 | preparación del golpe y del apuntado (la ventana para esquivar) |
+| `cooldown` | ×1,6 | ×1 | ×0,75 | espera entre golpes, disparos y ráfagas |
+| `spread` | ×1,9 | ×1 | ×0,55 | dispersión de las balas (puntería; `Game.enemyShoot`) |
+| `speed` | ×0,9 | ×1 | ×1,05 | persecución y búsqueda (GENIOS 202 u/s < 228 del jugador) |
+| `view` / `sense` | ×0,8 / ×0,8 | ×1 | ×1,12 / ×1,2 | alcance de la vista y detección a la espalda |
+| `search` | ×0,7 | ×1 | ×1,3 | cuánto te buscan tras perderte |
+
+**Medido** (grunt con pistola a 150 u de frente, media de 4 pruebas; pasos de 1/60 s): reacción **24 / 11 / 8,5** (TONTOS / PROMEDIO / GENIOS), primer disparo **56 / 35 / 28,5**, desviación de la puntería **0,054 / 0,029 / 0,016 rad**; grunt cuerpo a cuerpo, primer golpe **68 / 49 / 41** pasos. No rompe reglas: ni el golpe más rápido (≥ 0,13 s de preparación) ni las balas son inesquivables, y la persecución nunca iguala al jugador.
+
 ### Arsenal del jugador (`WEAPON_DEFS` en `weapons.js`)
 Alcance en unidades del mundo (1 casilla = 32). Cadencia = segundos entre ataques.
 
@@ -1098,7 +1113,7 @@ Colores centralizados en `COLORS` (`src/utils.js`) y `PALETTE` (`src/sprites.js`
   `Settings` guarda `{ version: 1, values: {…} }` en `localStorage` clave **`neonrush.settings.v1`** (lectura defensiva
   con `sanitize`: JSON corrupto, tipos o valores fuera de rango → valor por defecto; escritura con try/catch). `set`/`adjust`
   guardan y llaman a `apply`; `applyAll` (al final del constructor de `Game`) aplica lo guardado; `reset` restaura.
-- **Opciones actuales**: AUDIO `musicVolume`, `sfxVolume` (0–100 % de 10 en 10) · JUEGO `playerGender` (JACK / VEX, cosmético; **oculta en el menú** con `hidden: true`, se elige en ELIGE TU MÁSCARA y `RESTAURAR` no la toca), `strobeEnabled` (LUCES ESTROBOSCÓPICAS del club), `doorAnim` (ANIMACIÓN DE LA PUERTA: apagada, la puerta principal se cierra al cruzar el umbral y se abre al despejar al instante, sin la animación del agente ni `doorPending`; `Game.doorAnimOn`), `goreEnabled` · TÁCTIL `buttonScale`
+- **Opciones actuales**: AUDIO `musicVolume`, `sfxVolume` (0–100 % de 10 en 10) · JUEGO `playerGender` (JACK / VEX, cosmético; **oculta en el menú** con `hidden: true`, se elige en ELIGE TU MÁSCARA y `RESTAURAR` no la toca), `strobeEnabled` (LUCES ESTROBOSCÓPICAS del club), `aiLevel` (IA ENEMIGA: TONTOS / PROMEDIO / GENIOS, ver "Nivel de IA enemiga"), `doorAnim` (ANIMACIÓN DE LA PUERTA: apagada, la puerta principal se cierra al cruzar el umbral y se abre al despejar al instante, sin la animación del agente ni `doorPending`; `Game.doorAnimOn`), `goreEnabled` · TÁCTIL `buttonScale`
   (PEQUEÑO 0,85 / NORMAL 1 / GRANDE 1,2), `buttonOpacity` (BAJA 0,5 / MEDIA 0,75 / ALTA 1), `stickFire` (DISPARO CON JOYSTICK: BORDE 0,85 / FÁCIL 0,6 / NO = solo apunta; escribe `fireThreshold`), `autoFire` (DISPARO AUTOMÁTICO), `hapticsEnabled`,
   `aimAssist` (OFF / SUAVE / ALTO; el antiguo sí/no se migra: true → SUAVE, false → OFF). Las táctiles escriben en `touch.setConfig`.
 - **Audio** (`audio.js`): `sfx.setVolumes({ music, sfx })`. Hay un `sfxBus` nuevo entre todos los efectos (y la moto) y el master;
