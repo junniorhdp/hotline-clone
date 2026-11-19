@@ -292,7 +292,7 @@ export class Player {
   // el piso (`open`: al llegar a ella). ~0,9 s sin control; el arma se guarda un momento. La hoja se mueve en `fired` (0,5 s): ver Door.lock / unlock.
   startDoorAnim(game, kind, door) {
     if (!game.doorAnimOn || this.doorAnim || !this.alive) { if (kind === 'close') door.lock(); else door.unlock(); return; } // (sin animación —opción— o si no se puede, el efecto se aplica igual)
-    this.doorAnim = { kind, t: 0, dur: 0.9, door, fired: false };
+    this.doorAnim = { kind, t: 0, dur: 0.8, door, fired: false };
     this.moving = false; this.swing = 0; this.recoil = 0; this.muzzle = 0;
   }
 

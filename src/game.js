@@ -16,7 +16,7 @@ import { BikeExit, EXIT_EXTRA } from './exits.js';
 import { StreetLife, newStreetRun } from './street.js';
 import { Hostages } from './hostages.js';
 import { PROLOGUE_DEF, PROLOGUE_LINES, markPrologueSeen } from './prologue.js';
-import { Comms } from './comms.js';
+import { Comms, drawTalkingMask } from './comms.js';
 const SKIP_HOLD = 1.5; // s que hay que mantener P / el botón táctil para saltar el prólogo
 import { weaponCategory } from './weapons.js';
 import { buildOptionsMenu, buildPauseMenu } from './options-menu.js';
@@ -988,8 +988,17 @@ export class Game {
     } else if (!T.done.has('weapon') && armed && (t = near(live.filter((e) => e.state === 'frozen'), 170))) {
       id = 'weapon'; l1 = 'USA TU ARMA'; l2 = this.hint(`${k.label('attack')}: GOLPEAR`, 'ATACAR: GOLPEAR'); l3 = this.hint(`${k.label('throw')}: LANZAR (DERRIBA)`, 'LANZAR: DERRIBA');
     }
+    if (!id && this.prologue) {   // al llegar al compañero atado: si hay guardias cerca, despejar primero; si no, liberarlo (solo una pista a la vez, sin bloquear nada)
+      const ph = this.hostages.list.find((x) => x.partner && x.state === 'tied');
+      const dph = ph ? Math.hypot(ph.x - p.x, ph.y - p.y) : 0;
+      if (ph && dph < 150 && dph > 46 && lineOfSight(this.map, p.x, p.y, ph.x, ph.y)) {
+        const name = AGENTS[ph.agent].name;
+        if (live.some((e) => e.state !== 'down' && Math.hypot(e.x - ph.x, e.y - ph.y) < 230)) { id = 'guards'; t = ph; l1 = '¡HAY GUARDIAS CERCA!'; l2 = 'DESPEJA LA SALA PRIMERO'; }
+        else { id = 'free'; t = ph; l1 = `LIBERA A ${name}`; l2 = this.hint(`${k.label('kick')} · LIBERAR`, 'BOTA · LIBERAR'); }
+      }
+    }
     if (!id) return;
-    T.cur = { id, x: t.x, y: t.y, lines: l3 ? [l1, l2, l3] : [l1, l2] };
+    T.cur = { id, x: t.x, y: t.y, lines: l3 ? [l1, l2, l3] : [l1, l2], below: id === 'guards' || id === 'free' }; // (las del compañero van DEBAJO: arriba habla)
     if (!T.seen.has(id)) { T.seen.add(id); this.tutFocus = { x: t.x, y: t.y, t: 0, life: 1.8 }; }
   }
 
@@ -997,9 +1006,9 @@ export class Game {
   drawTutorial(ctx) {
     const c = this.tut.cur;
     if (!c || this.state !== 'playing') return;
-    const s = this.camera.worldToScreen(c.x, c.y - 30);
+    const s = this.camera.worldToScreen(c.x, c.y + (c.below ? 26 : -30));
     const bw = Math.max(...c.lines.map((l) => measureText(l))) + 12, bh = 4 + c.lines.length * 10;
-    const p = this.keepOnScreen(s.x, s.y - bh, bw, bh, 6);
+    const p = this.keepOnScreen(s.x, c.below ? s.y : s.y - bh, bw, bh, 6);
     const bx = Math.round(p.x - bw / 2), by = Math.round(p.y);
     ctx.fillStyle = 'rgba(13, 2, 33, 0.92)'; ctx.fillRect(bx, by, bw, bh);
     ctx.fillStyle = Math.floor(performance.now() / 350) % 2 ? '#05d9e8' : '#ffbe0b';
@@ -1528,6 +1537,7 @@ export class Game {
   // El forcejeo congela el mundo, hace zoom ×2 y baja la música (ver abajo); hay que aporrear ATACAR para empujar la
   // barra y la resistencia del enemigo sube con cada forcejeo del piso (+22 %, tope ×2,2).
   enemyStrike(e, angle) {
+    if (this.player.doorAnim) return; // intocable mientras cierra / abre la puerta
     const p = this.player;
     if (this.state !== 'playing' || !p.alive) return;
     if (this.scuffleGrace > 0) { e.attackCd = 0.4; return; } // acaba de forcejear: ese golpe no cuenta
@@ -3010,7 +3020,11 @@ export class Game {
     ctx.fillStyle = 'rgba(5, 0, 15, 0.92)'; ctx.fillRect(bx, by, bw, bh);
     ctx.fillStyle = ag.color;
     ctx.fillRect(bx, by, bw, 1); ctx.fillRect(bx, by + bh - 1, bw, 1); ctx.fillRect(bx, by, 1, bh); ctx.fillRect(bx + bw - 1, by, 1, bh);
-    ctx.drawImage(bloodyMaskPortrait(cur.mask, this.goreOn ? cur.level || 0 : 0, cur.who.gender, cur.bits || []), bx + 5, by + 6, 32, 32);
+    // El retrato mueve la boca al hablar igual que en los diálogos del prólogo (con la sangre roja / verde del agente): ver drawTalkingMask.
+    const full = cur.lines.join(' '), typedN = Math.min(full.length, Math.max(0, Math.floor((R.t - cur.from) * 30)));
+    cur.text = full;
+    cur.portrait = { mask: cur.mask, gender: cur.who.gender, level: this.goreOn ? cur.level || 0 : 0, bits: cur.bits || [] };
+    drawTalkingMask(ctx, cur, bx + 5, by + 6, typedN, typedN < full.length);
     ctx.fillStyle = ag.color; ctx.fillRect(bx + 4, by + 5, 34, 1); ctx.fillRect(bx + 4, by + 38, 34, 1); ctx.fillRect(bx + 4, by + 5, 1, 34); ctx.fillRect(bx + 37, by + 5, 1, 34);
     drawText(ctx, `${ag.name} · RADIO`, bx + 44, by + 5, { color: ag.color });
     // texto tecleado (30 caracteres por segundo)
@@ -3200,7 +3214,7 @@ export class Game {
   }
 
   killPlayer(angle) {
-    if (this.state !== 'playing' || !this.player.alive) return;
+    if (this.state !== 'playing' || !this.player.alive || this.player.doorAnim) return; // (el agente es intocable mientras cierra / abre la puerta: ~0,8 s sin control; ver Player.startDoorAnim)
     const p = this.player;
     p.alive = false;
     p.cancelExecution(); // si lo matan a mitad de un remate, el derribado no se queda congelado
