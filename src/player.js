@@ -19,7 +19,7 @@ const BUFF_SPEED = 1.18;       // lata de la máquina expendedora (game.buff): +
 const MAX_SPEED_STACK = 1.45;  // tope del multiplicador de velocidad acumulado (pico con empujón ≈ 430 u/s: < 7,2 u por paso, sin atravesar paredes)
 const BUFF_COOLDOWN = 0.8;     // …y -20 % de espera entre ataques
 const THROW_SPEED = 720;
-const NOISE_RADIUS_KICK = 260;
+const NOISE_RADIUS_KICK = 420; // una patada a una puerta se oye mucho más lejos que abrirla andando (antes 260)
 export const FINISH_RANGE = 34;      // distancia (además del radio) para rematar; cubre el empuje del derribo
 // Ejecución de un derribado: el jugador queda clavado `time` segundos y el/los golpes caen en `hits` (s).
 // Cada arma tiene su estilo (ver startExecution): el último golpe es el que mata (o daña al jefe); los

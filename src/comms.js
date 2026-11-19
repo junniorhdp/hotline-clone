@@ -12,6 +12,24 @@ const TYPE_CPS = 30, GAP = 0.45, GUARD = 0.3;   // 30 car./s (igual que la caja 
 const SPEAKERS = { central: { name: 'CENTRAL', color: '#ffbe0b' } };
 const VOWELS = 'aeiouáéíóúüAEIOUÁÉÍÓÚ';
 
+// VOZ RETRO: un chirrido corto por letra tecleada (sfx `blip`). El tono depende de quién habla: máscaras rudas (oso, tiburón) más graves y ásperas, el guepardo agudo y rápido,
+// las mujeres un poco más agudas; CENTRAL (sin máscara) suena por walkie-talkie (banda estrecha y estática).
+const MASK_VOICE = { oso: { f: 105, rough: true }, tiburon: { f: 120, rough: true }, neon: { f: 165 }, guepardo: { f: 215, sharp: true, fast: true }, buho: { f: 145 } };
+export function voiceFor(mask, gender) {
+  if (!mask) return { f: 185, radio: true };
+  const m = MASK_VOICE[mask.id] || { f: 150 };
+  return { f: m.f * (gender === 'female' ? 1.25 : 1), rough: m.rough, sharp: m.sharp, fast: m.fast };
+}
+// Suena un chirrido por cada letra nueva entre `n0` y `n1` caracteres tecleados (las pausas no suenan; una de cada dos, salvo las voces rápidas).
+export function talkBlips(game, voice, text, n0, n1) {
+  for (let i = n0 + 1; i <= n1; i++) {
+    const ch = text[i - 1];
+    if (!ch || ch === ' ' || /[.,:;¡!¿?]/.test(ch)) continue;
+    if (!voice.fast && i % 2) continue;
+    game.sfx.play('blip', 1, { ...voice, vowel: VOWELS.includes(ch) });
+  }
+}
+
 export class Comms {
   constructor(game) {
     this.game = game;
@@ -67,7 +85,9 @@ export class Comms {
   step(dt, click) {
     const c = this.cur;
     if (!c) return;
+    const n0 = Math.min(c.text.length, Math.floor(c.t * TYPE_CPS));
     c.t += dt; c.age += dt;
+    talkBlips(this.game, voiceFor(c.portrait && c.portrait.mask, c.portrait && c.portrait.gender), c.text, n0, Math.min(c.text.length, Math.floor(c.t * TYPE_CPS)));
     if (!click || c.age < GUARD) return;   // un clic / Espacio / toque pasa DIRECTAMENTE a la siguiente línea (o cierra), aunque el texto no haya acabado de teclearse
     if (this.queue.length) this.begin(this.queue.shift());
     else { this.cur = null; this.gap = GAP; this.game.player.cooldown = Math.max(this.game.player.cooldown, 0.3); }

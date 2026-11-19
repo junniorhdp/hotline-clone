@@ -329,7 +329,7 @@ export class Enemy {
     this.state = 'frozen';
     this.frozenT = 0; this.lostT = 0; this.thawNow = false;
     this.windup = this.aim = this.burstLeft = 0;
-    game.playAt('alert', this.x, this.y);
+    game.playAt('scaredBabble', this.x, this.y);   // balbuceo nervioso al aparecer su «!»
     game.bark(this, scaredLine(game.lastBark), true);
   }
 

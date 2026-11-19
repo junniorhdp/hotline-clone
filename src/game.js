@@ -17,7 +17,7 @@ import { StreetLife, newStreetRun } from './street.js';
 import { Hostages } from './hostages.js';
 import { PROLOGUE_DEF } from './prologue.js';
 import { PrologueFlow } from './prologue-flow.js';
-import { Comms, drawTalkingMask } from './comms.js';
+import { Comms, drawTalkingMask, voiceFor, talkBlips } from './comms.js';
 import { weaponCategory } from './weapons.js';
 import { buildOptionsMenu, buildPauseMenu } from './options-menu.js';
 import { Player, bloodLevelFor, FINISH_RANGE } from './player.js';
@@ -1772,12 +1772,13 @@ export class Game {
         if (!e.standing) continue;
         const hit = door.collide(e, this.map, { pushSpeed: ENEMY_PUSH_SPEED, canPush: () => e.doorContact() });
         if (hit === 'knock') this.doorKnock(door, e);
+        else if (hit === 'push' && door.creakCd <= 0) { this.playAt('doorSoft', door.cx, door.cy, 0.6); door.creakCd = 0.5; } // un enemigo abre una puerta
       }
       if (!this.player.alive) continue;
       const wasClosed = Math.abs(door.offset) < 0.5 && !door.fast;
       if (door.collide(this.player, this.map, { player: true }) === 'push' && wasClosed && door.creakCd <= 0) {
         // Empujón del jugador: la puerta se abre de golpe (y derriba a quien esté detrás).
-        this.playAt('kick', door.cx, door.cy, 0.6);
+        this.playAt('doorSoft', door.cx, door.cy, 0.8);
         this.particles.dust(door.cx, door.cy, 5);
         this.camera.addShake(1.5);
         door.creakCd = 0.4;
@@ -1795,7 +1796,7 @@ export class Game {
     this.camera.addShake(5);
     this.fx.kick(0.35);
     this.hitstop = Math.max(this.hitstop, HITSTOP.doorKnock);
-    this.playAt('kick', e.x, e.y);
+    this.playAt('doorKick', e.x, e.y);
   }
 
   updateBullets(dt) {
@@ -2534,7 +2535,7 @@ export class Game {
     this.particles.sparks(x, y, Math.random() * TAU, 12, 3.14);
     this.particles.dust(x, y, 8);
     this.camera.addShake(5 + size * 5);
-    this.playAt('blast', x, y, 1);
+    this.playAt('blast', x, y, Math.min(1, 0.5 + size * 0.22)); // (las explosiones se solapan: las pequeñas suenan menos)
     if (size > 1.4 && this.settings.get('strobeEnabled')) this.flashT = 0.08; // el destello respeta la opción de luces estroboscópicas
   }
 
@@ -2855,6 +2856,11 @@ export class Game {
     const R = this.radioCine, a = this.trap.victim, b = this.partner;
     const before = R.t;
     R.t += dt;
+    const talk = [...R.lines].reverse().find((L) => R.t >= L.from);   // la línea que se está tecleando: un chirrido retro por letra (voz según su máscara)
+    if (talk) {
+      const txt = talk.lines.join(' '), n = (t) => Math.max(0, Math.min(txt.length, Math.floor((t - talk.from) * 30)));
+      talkBlips(this, voiceFor(talk.mask, talk.who.gender), txt, n(before), n(R.t));
+    }
     this.updateDoors(dt); // los portazos terminan de cerrarse
     if (this.callout && (this.callout.t -= dt) <= 0) this.callout = null;
     for (const f of this.floatingTexts) f.t -= dt;
@@ -3209,13 +3215,13 @@ export class Game {
       // Bloqueada: no cede. Un golpe sordo y nada más.
       this.camera.addShake(1.5);
       this.particles.dust(best.cx, best.cy, 4);
-      this.sfx.play('empty');
+      this.sfx.play('doorThud');
       return true;
     }
     best.kick(player.x, player.y);
     this.particles.dust(best.cx, best.cy, 8);
     this.camera.addShake(3);
-    this.sfx.play('kick');
+    this.sfx.play('doorKick');   // golpe seco, grave y fuerte (mucho más que abrir caminando)
     return true;
   }
 
