@@ -14,6 +14,7 @@ export const DEFAULT_EFFECTS = { meleeLethal: false, speedMul: 1, startWeapon: n
 export const MASKS = [
   {
     id: 'neon',
+    jaw: { x0: 4, x1: 8, y0: 8 }, // región que baja al hablar (celdas del retrato 12×12; y1 por defecto 12): ver Comms.drawMaskTalking
     name: 'NEON',
     passive: ['SIN PASIVA.', 'LA EXPERIENCIA CLÁSICA.'],
     effects: {},
@@ -36,6 +37,7 @@ export const MASKS = [
   },
   {
     id: 'oso',
+    jaw: { x0: 0, x1: 12, y0: 9 }, // región que baja al hablar (celdas del retrato 12×12; y1 por defecto 12): ver Comms.drawMaskTalking
     name: 'BRUTE',
     passive: ['PUÑETAZOS MORTALES:', 'MATAN AL INSTANTE, SIN DERRIBAR.'],
     effects: { meleeLethal: true },
@@ -57,6 +59,7 @@ export const MASKS = [
   },
   {
     id: 'guepardo',
+    jaw: { x0: 0, x1: 12, y0: 9 }, // región que baja al hablar (celdas del retrato 12×12; y1 por defecto 12): ver Comms.drawMaskTalking
     name: 'STRIKE',
     lockFloor: 2, // bloqueada: la lleva un enemigo portador en este piso (ver Game.dropMask)
     passive: ['VELOCIDAD DE MOVIMIENTO', '+30%.'],
@@ -79,6 +82,7 @@ export const MASKS = [
   },
   {
     id: 'tiburon',
+    jaw: { x0: 0, x1: 12, y0: 9 }, // región que baja al hablar (celdas del retrato 12×12; y1 por defecto 12): ver Comms.drawMaskTalking
     name: 'BLADE',
     lockFloor: 3,
     passive: ['EMPIEZAS CON UN CUCHILLO', 'DE CARNICERO (+ALCANCE).'],
@@ -101,6 +105,7 @@ export const MASKS = [
   },
   {
     id: 'buho',
+    jaw: { x0: 5, x1: 7, y0: 8, y1: 9 }, // región que baja al hablar (celdas del retrato 12×12; y1 por defecto 12): ver Comms.drawMaskTalking
     name: 'GHOST',
     lockFloor: 4,
     passive: ['TUS BALAS: +20% VELOCIDAD', 'Y MÁS PRECISIÓN.'],

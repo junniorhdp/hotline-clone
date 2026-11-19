@@ -118,21 +118,29 @@ export class Comms {
     }
   }
 
-  // Máscara que habla: la parte de arriba queda fija y la mandíbula baja según la letra que se está tecleando (vocal: abierta; m, b, p y pausas: cerrada; el resto: media),
-  // con un pequeño cabeceo en las vocales. Al acabar de teclear cierra la boca.
+  // Máscara que habla: se dibuja entera y, si tiene `jaw` (región de la cuadrícula 12×12 que baja: ver masks.js), esa región se borra y se vuelve a pintar desplazada hacia abajo
+  // según la letra que se está tecleando (vocal: abierta; m, b, p y pausas: cerrada; el resto: media), con el hueco oscuro detrás (la boca). Cabecea 1 px en las vocales.
+  // Al acabar de teclear cierra la boca. Cada máscara anima solo SU boca (el pico del gallo y del búho, el hocico y el mentón del oso...), no la nariz.
   drawMaskTalking(ctx, c, x, y, typed, talking) {
     const ch = talking ? c.text[typed - 1] || ' ' : ' ';
     const target = !talking ? 0 : VOWELS.includes(ch) ? 2 : /[mbpMBP .,:;¡!¿?]/.test(ch) ? 0 : 1;
     c.open += (target - c.open) * 0.5;
     const bob = talking && c.open > 1.2 ? -1 : 0;
-    const cv = bloodyMaskPortrait(c.portrait.mask, 0, c.portrait.gender, []);
-    const sw = cv.width, sh = cv.height, cut = Math.round(sh * 0.62), dcut = Math.round(32 * 0.62), jaw = Math.round(c.open);
+    const mask = c.portrait.mask, cv = bloodyMaskPortrait(mask, 0, c.portrait.gender, []);
+    const k = 32 / cv.width, jaw = Math.round(c.open), J = mask.jaw;
     ctx.save();
     ctx.beginPath(); ctx.rect(x, y, 32, 32); ctx.clip();
     ctx.fillStyle = '#14091f'; ctx.fillRect(x, y, 32, 32);
-    ctx.drawImage(cv, 0, 0, sw, cut, x, y + bob, 32, dcut);                         // cráneo
-    ctx.fillStyle = '#05000f'; ctx.fillRect(x + 8, y + dcut + bob, 16, jaw);         // la boca abierta se ve oscura
-    ctx.drawImage(cv, 0, cut, sw, sh - cut, x, y + dcut + bob + jaw, 32, 32 - dcut); // mandíbula
+    ctx.drawImage(cv, x, y + bob, 32, 32);
+    if (J && jaw > 0) {
+      const PAD = 2, cell = 2;                                        // el retrato tiene 2 px de margen y cada celda del 12×12 mide 2 px
+      const sx = PAD + J.x0 * cell, sw = (J.x1 - J.x0) * cell, sy = PAD + J.y0 * cell, sh = ((J.y1 ?? 12) - J.y0) * cell;
+      const dx = x + sx * k, dy = y + bob + sy * k, dw = sw * k, dh = sh * k;
+      ctx.fillStyle = '#14091f'; ctx.fillRect(dx, dy, dw, dh);          // se borra la región original
+      const inset = (J.x1 - J.x0) > 6 ? 3 * cell * k : 0;
+      ctx.fillStyle = '#05000f'; ctx.fillRect(dx + inset, dy, dw - inset * 2, jaw);   // la boca abierta se ve oscura
+      ctx.drawImage(cv, sx, sy, sw, sh, dx, dy + jaw, dw, dh);          // región desplazada
+    }
     ctx.restore();
   }
 

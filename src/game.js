@@ -1769,7 +1769,11 @@ export class Game {
     this.particles.sparks(door.cx, door.cy, -Math.PI / 2, 12, 1.2);
     this.camera.addShake(8);
     this.fx.kick(0.8);
-    if (door.main) this.showCallout('SALIDAS BLOQUEADAS', COLORS.blood); // las puertas del despacho sellado tienen su propio cartel (¡TRAMPA!)
+    if (door.main) {   // las puertas del despacho sellado tienen su propio cartel (¡TRAMPA!)
+      // En el prólogo la puerta la cierra el agente (que no salga la mafia): el cartel lo dice así. En los pisos de la campaña sigue `SALIDAS BLOQUEADAS`.
+      if (this.prologue) { this.showCallout('PUERTA CERRADA', COLORS.blood, 2.4, `${AGENTS[this.gender].name} CIERRA: QUE NO ESCAPE NADIE`); }
+      else this.showCallout('SALIDAS BLOQUEADAS', COLORS.blood);
+    }
   }
 
   showCallout(text, color, seconds = 2.4, sub = null) {

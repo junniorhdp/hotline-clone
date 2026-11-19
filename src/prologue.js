@@ -20,7 +20,7 @@ export function markPrologueSeen() {
 //     quedan tres nombres pendientes (cabo suelto de misterio).
 export const PROLOGUE_LINES = {
   intro: [{ who: 'central', text: 'La mafia cayó casi entera esta semana. {PARTNER} se quedó dentro.' }],
-  enter: [{ who: 'central', text: 'Se cierran las salidas. Esto no estaba en el plan.' }],
+  enter: [{ who: 'central', text: 'Bien, puerta cerrada. Que no salga ninguno.' }],
   kill: [{ who: 'central', text: 'Esos no llevan los colores de la familia.' }],
   free: [
     { who: 'partner', text: 'Sabía que vendrías, {ME}. Me usaron de cebo.' },
