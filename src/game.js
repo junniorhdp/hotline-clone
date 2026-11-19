@@ -691,6 +691,10 @@ export class Game {
       // Entra en la tabla: antes de enseñarla, se pide la firma (iniciales de arcade).
       this.startInitials(position);
       this.sfx.play('clear');
+    } else if (!completed) {
+      // Abandonar tras morir SIN entrar al Top 5: directo al menú con un aviso breve (la tabla de récords es para quien bate algo o termina el edificio).
+      this.openMenu();
+      this.showToast(`FIN DE PARTIDA · PISO ${this.levelIndex + 1} · ${this.score.total.toLocaleString('es')} PTS`, 3);
     } else {
       this.state = 'gameover';
     }
