@@ -201,9 +201,9 @@ export class TouchControls {
         attack, throwB, actB,
         // Debajo de la miniatura de la máscara del HUD.
         { id: 'retry', label: 'REINICIAR', x: left, y: 56 + s.t, w: measureText('REINICIAR') + 12, h: rh },
-        // Pausa (= Esc): abre el menú de pausa con OPCIONES. Arriba a la DERECHA, justo bajo el HUD de puntos y piso y por encima de la columna
+        // Pausa (= Esc): abre el menú de pausa con OPCIONES. Arriba a la DERECHA, justo bajo el HUD de puntos y por encima de la columna
         // de botones (antes estaba bajo REINICIAR, junto a la máscara del HUD, donde estorbaba): no tapa nada y queda lejos del pulgar izquierdo.
-        { id: 'pause', icon: ICONS.pause, x: right - rh, y: Math.max(40 + s.t, Math.min(68 + s.t, actB.y - rh - 4)), w: rh, h: rh },
+        { id: 'pause', icon: ICONS.pause, x: right - rh, y: Math.max(26 + s.t, Math.min(32 + s.t, actB.y - rh - 4)), w: rh, h: rh },
       ],
     };
   }

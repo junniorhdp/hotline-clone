@@ -28,7 +28,8 @@ export const OPTIONS = [
   // sueltan chispas de neón y humo. Lo leen game.js (`goreOn`) y el HUD.
   // Agente (JACK / VEX): SOLO cosmético (sprite, retrato del duelo VS y voz); mismas estadísticas. Se elige también
   // en la pantalla ELIGE TU MÁSCARA. Todas las ventajas jugables siguen siendo de las 5 máscaras.
-  { id: 'playerGender', section: 'JUEGO', label: 'AGENTE', type: 'choice', default: 'male',
+  // OCULTA en el menú de opciones (`hidden`): el agente se elige en la pantalla ELIGE TU MÁSCARA antes de cada piso, que es donde se ve; el ajuste sigue guardándose aquí.
+  { id: 'playerGender', section: 'JUEGO', label: 'AGENTE', type: 'choice', default: 'male', hidden: true,
     choices: [{ label: 'JACK', value: 'male' }, { label: 'VEX', value: 'female' }],
     apply: (g, v) => g.setGender(v) },
   // Luces estroboscópicas del piso 4 (el club): pulsos de color neón sobre la escena. Apagarlas deja el club
@@ -159,7 +160,7 @@ export class Settings {
   }
 
   reset() {
-    for (const o of OPTIONS) this.values[o.id] = o.default;
+    for (const o of OPTIONS) if (!o.hidden) this.values[o.id] = o.default; // (el agente elegido no se restaura)
     this.save();
     this.applyAll();
   }

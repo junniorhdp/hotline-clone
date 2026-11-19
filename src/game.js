@@ -202,6 +202,9 @@ class Camera {
   }
 }
 
+// ¿Hay una línea de avisos (SONIDO OFF, EFECTOS LIGEROS...) bajo los puntos de arriba a la derecha? (los textos que esquivan el HUD se bajan lo justo)
+const flagsOn = (g) => !!(g.sfx.muted || !g.fx.enabled || (g.fx.enabled && g.fx.lite));
+
 export class Game {
   constructor(canvas) {
     this.canvas = canvas;
@@ -2271,8 +2274,8 @@ export class Game {
     if (touch) { const col = this.touch.rightColumn(); if (y + th > col.y - 2) right = Math.min(right, col.x - 4); }
     const cx = clamp(x, sf.l + margin + tw / 2, Math.max(sf.l + margin + tw / 2, right - tw / 2));
     let cy = clamp(y, sf.t + margin, Math.max(sf.t + margin, h - sf.b - margin - th));
-    // Y esquivan el HUD de las esquinas de arriba (izquierda: arma, máscara y, en táctil, REINICIAR/PAUSA; derecha: puntos y piso): se bajan por debajo.
-    const rz = { x: w - sf.r - 134, b: 66 + sf.t }, lz = { x: sf.l + (touch ? 78 : 118), b: (touch ? 84 : 52) + sf.t };
+    // Y esquivan el HUD de las esquinas de arriba (izquierda: arma, máscara y, en táctil, REINICIAR/PAUSA; derecha: puntos): se bajan por debajo.
+    const rz = { x: w - sf.r - 134, b: (flagsOn(this) ? 31 : 22) + sf.t }, lz = { x: sf.l + (touch ? 78 : 118), b: (touch ? 84 : 52) + sf.t };
     for (let k = 0; k < 2; k++) {
       if (cx + tw / 2 > rz.x && cy < rz.b) cy = rz.b;
       if (cx - tw / 2 < lz.x && cy < lz.b) cy = lz.b;
@@ -4354,14 +4357,11 @@ export class Game {
       if (!tl) drawText(ctx, this.partnerMask.name, px + 18, py + 9, { color: '#5b4f78' });
     }
 
-    const alive = this.enemies.filter((e) => e.alive).length;
-    drawText(ctx, `ENEMIGOS ${alive}/${this.enemies.length}`, R, 4 + T, { color: COLORS.enemy, align: 'right' });
-    drawText(ctx, `${this.score.total.toLocaleString('es')} PTS`, R, 15 + T, { color: COLORS.text, scale: 2, align: 'right', shadow: COLORS.wall });
-    drawText(ctx, `RÉCORD ${this.bestScore.toLocaleString('es')}`, R, 36 + T, { color: this.score.isRecord ? COLORS.enemy : '#9d8fb8', align: 'right' });
-    drawText(ctx, this.levelName, R, 47 + T, { color: '#9d8fb8', align: 'right' });
+    // Arriba a la derecha SOLO los puntos (sin contador de enemigos, récord ni nombre del piso: tapaban demasiado en móvil); debajo, los avisos raros.
+    drawText(ctx, `${this.score.total.toLocaleString('es')} PTS`, R, 4 + T, { color: COLORS.text, scale: 2, align: 'right', shadow: COLORS.wall });
     const flags = [this.sfx.muted && 'SONIDO OFF', !this.fx.enabled && 'EFECTOS OFF', this.fx.enabled && this.fx.lite && 'EFECTOS LIGEROS']
       .filter(Boolean).join(' · ');
-    if (flags) drawText(ctx, flags, R, 58 + T, { color: '#9d8fb8', align: 'right' });
+    if (flags) drawText(ctx, flags, R, 21 + T, { color: '#9d8fb8', align: 'right' });
 
     this.drawComboMeter(ctx, w);
 
