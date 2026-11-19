@@ -324,6 +324,7 @@ export function buildPauseMenu(game) {
     items: [
       { kind: 'button', label: 'CONTINUAR', action: resume },
       { kind: 'button', label: 'OPCIONES', action: (g) => g.openOptions(() => g.openPause()) },
+      ...(game.prologue ? [{ kind: 'button', label: 'SALTAR PRÓLOGO', action: (g) => { g.closePanel(); g.skipPrologue(); } }] : []),
       { kind: 'button', label: 'SALIR AL MENÚ', action: (g) => { g.closePanel(); g.transition(() => g.openMenu()); } },
     ],
     onBack: resume,

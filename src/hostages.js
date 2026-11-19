@@ -26,12 +26,19 @@ const TIED = ['¡MMMPH! ¡MMM!', '¡MMM-MMM!', '(SOLLOZOS...)', '¡MMMPH!', '¡M
 const FREED = ['¡GRACIAS!', '¡ME SALVASTE!', '¡CUIDADO, HAY MÁS!', '¡NO ME DEJES AQUÍ!'];
 const RELIEF = ['¡POR FIN LIBRES!', '¡VÁMONOS DE AQUÍ!', '¡GRACIAS POR TODO!'];
 const HIT = '¡MMMPH!!';
-const TARGETABLE = new Set(['tied', 'freed', 'waiting', 'exiting', 'ready']);
+// COMPAÑERO del prólogo (`partner`): rehén herido que no pelea. Mientras `protected`, tus golpes y balas lo ignoran (ni muere ni penaliza); al liberarlo pasa a `follow`
+// (te sigue cojeando, sin acercarse más de FOLLOW_GAP) y, con el piso despejado, a `freed`: sale con el flujo normal de extracción (moto, detrás de ti).
+const FOLLOW_GAP = 26, FOLLOW_SPEED = 80, FOLLOW_FAST = 110, FOLLOW_FAR = 130;
+const PARTNER_TIED = ['(TOS...) ¡AQUÍ!', '¡CUIDADO CON ELLOS!', '¡SUÉLTAME!'];
+const PARTNER_FREED = ['TARDASTE...', 'ESTOY BIEN. VÁMONOS.'];
+const TARGETABLE = new Set(['tied', 'follow', 'freed', 'waiting', 'exiting', 'ready']);
 
 class Hostage {
   constructor(d) {
     this.x = d.x; this.y = d.y;
     this.look = d.look;
+    this.partner = !!d.partner;   // compañero del prólogo
+    this.protected = this.partner; // tus golpes y balas no le hacen nada
     this.facing = d.facing;
     this.r = 7;
     this.state = 'tied';
@@ -93,7 +100,14 @@ export class Hostages {
       if (h.state === 'tied') {
         h.shiver += dt * (hot ? 45 : 14);
         // Gimen amordazados cuando el jugador está cerca.
-        if (p.alive && h.sayCd <= 0 && h.sayT <= 0 && Math.hypot(p.x - h.x, p.y - h.y) < 150) { h.say = TIED[Math.floor(Math.random() * TIED.length)]; h.sayT = 2.2; h.sayCd = 4 + Math.random() * 3; }
+        if (p.alive && h.sayCd <= 0 && h.sayT <= 0 && Math.hypot(p.x - h.x, p.y - h.y) < 150) { { const L = h.partner ? PARTNER_TIED : TIED; h.say = L[Math.floor(Math.random() * L.length)]; } h.sayT = 2.2; h.sayCd = 4 + Math.random() * 3; }
+      } else if (h.state === 'follow') {
+        h.shiver += dt * 5;
+        if (g.state === 'cleared') { h.state = 'freed'; h.path = null; }  // piso despejado: sigue la extracción de siempre
+        else if (!h.down && p.alive) {
+          if (Math.hypot(p.x - h.x, p.y - h.y) > FOLLOW_GAP) this.walk(h, dt, p.x, p.y, Math.hypot(p.x - h.x, p.y - h.y) > FOLLOW_FAR ? FOLLOW_FAST : FOLLOW_SPEED, FOLLOW_GAP, () => {});
+          else h.path = null;
+        }
       } else if (h.state === 'freed') {
         h.shiver += dt * 30;
         if (!h.down) this.walk(h, dt, g.entry.x, g.entry.y, RUN_SPEED, 26, () => {
@@ -225,6 +239,15 @@ export class Hostages {
   // --- Liberar, golpes y balas ----------------------------------------------------------------------
   free(h) {
     const g = this.game;
+    if (h.partner) {
+      h.state = 'follow'; h.down = false; h.path = null;
+      h.say = PARTNER_FREED[Math.floor(Math.random() * PARTNER_FREED.length)]; h.sayT = 2.4; h.sayCd = 6;
+      g.sfx.play('unlock');
+      g.sfx.play('pickup', 0.8);
+      g.addFloat(h.x, h.y - 20, '¡COMPAÑERO LIBRE!', '#9be32a', 1, 1.8);
+      g.particles.dust(h.x, h.y, 6);
+      return;
+    }
     h.state = 'freed';
     h.down = false;
     h.say = FREED[Math.floor(Math.random() * FREED.length)]; h.sayT = 2.4; h.sayCd = 6;
@@ -240,7 +263,7 @@ export class Hostages {
   meleeHit(p, def) {
     let hit = false;
     for (const h of this.list) {
-      if (!h.alive || !inMeleeArc(p.x, p.y, p.angle, def, h)) continue;
+      if (!h.alive || h.protected || !inMeleeArc(p.x, p.y, p.angle, def, h)) continue;
       hit = true;
       if (h.hitCd > 0) continue;                       // pasado un instante del primer golpe: el aviso se nota, no se remata en el mismo tirón
       h.hits++;
@@ -263,7 +286,7 @@ export class Hostages {
   // Una bala del jugador: la bala se detiene en el rehén y lo mata (sin aviso previo). Devuelve true si le dio a alguien.
   bulletHit(b) {
     for (const h of this.list) {
-      if (!h.alive || segmentPointDistance(b.px, b.py, b.x, b.y, h.x, h.y) >= h.r + b.r) continue;
+      if (!h.alive || h.protected || segmentPointDistance(b.px, b.py, b.x, b.y, h.x, h.y) >= h.r + b.r) continue;
       this.kill(h, Math.atan2(b.vy, b.vx));
       return true;
     }
@@ -312,7 +335,7 @@ export class Hostages {
   drawOne(ctx, h) {
     const L = h.look, x = Math.round(h.x), y = Math.round(h.y);
     const tied = h.state === 'tied', dead = h.state === 'dead';
-    const moving = h.state === 'freed' || h.state === 'exiting' || h.state === 'riding';
+    const moving = h.state === 'freed' || h.state === 'exiting' || h.state === 'riding' || h.state === 'follow';
     const sh = (tied || moving || h.state === 'waiting') ? Math.round(Math.sin(h.shiver) * (h.state === 'waiting' ? 0.6 : 1)) : 0;
     ctx.save();
     ctx.globalAlpha = h.state === 'boarding' ? Math.max(0, h.fade) : 1;
@@ -345,12 +368,16 @@ export class Hostages {
     const fx = Math.cos(h.facing) >= 0 ? 1 : -2;
     px(fx, -6, 2, 2, L.skin);
     if (tied) {
-      px(fx, -6, 2, 1, '#e8e4f0');                                          // mordaza
+      if (!h.partner) px(fx, -6, 2, 1, '#e8e4f0');                          // mordaza (el compañero habla)
       px(-6, -3, 12, 1, '#b8864a'); px(-6, 1, 12, 1, '#b8864a');           // cuerdas
       px(-7, -1, 2, 3, L.skin);                                              // manos atadas a la espalda
       px(0, -12, 1, 3, '#ffbe0b'); px(0, -8, 1, 1, '#ffbe0b');              // «!» de socorro
     } else {
       px(-8, -2, 2, 4, L.skin); px(6, -2, 2, 4, L.skin);                    // brazos sueltos
+    }
+    if (h.partner) {                                                         // herido: venda en la frente, moretón y sangre en la camisa
+      px(-3, -8, 7, 1, '#e8e4f0'); px(fx, -5, 2, 1, '#6b2f5a');
+      px(-3, -2, 3, 2, '#d90429'); px(1, 1, 2, 2, '#8a0a1d');
     }
     ctx.restore();
   }

@@ -15,6 +15,7 @@ import { Sewer } from './sewer.js';
 import { BikeExit, EXIT_EXTRA } from './exits.js';
 import { StreetLife, newStreetRun } from './street.js';
 import { Hostages } from './hostages.js';
+import { PROLOGUE_DEF, markPrologueSeen } from './prologue.js';
 import { weaponCategory } from './weapons.js';
 import { buildOptionsMenu, buildPauseMenu } from './options-menu.js';
 import { Player, bloodLevelFor, FINISH_RANGE } from './player.js';
@@ -236,6 +237,7 @@ export class Game {
     this.runId = newRunId();
     this.showRecords = false;
     this.levelIndex = 0;
+    this.prologue = false; // tutorial aparte del piso 1 (ver prologue.js): sin resultados, récords ni estadísticas de campaña
     this.debug = false;
     this.acc = 0;
     this.last = 0;
@@ -471,6 +473,7 @@ export class Game {
 
   updateMaskSelect() {
     const input = this.input, n = MASKS.length;
+    if (this.prologue && input.wasPressed('KeyP')) { this.skipPrologue(); return; }
     const prev = this.maskIndex;
     if (input.wasPressed('ArrowLeft') || input.wasPressed('KeyA')) this.maskIndex = (this.maskIndex + n - 1) % n;
     if (input.wasPressed('ArrowRight') || input.wasPressed('KeyD')) this.maskIndex = (this.maskIndex + 1) % n;
@@ -523,7 +526,9 @@ export class Game {
     if (this.state === 'masks') {
       const back = { ...sized('back', 'VOLVER', 'Escape'), x: 6 + s.l, y: 6 + s.t };
       const records = sized('records', 'RÉCORDS', 'KeyT');
-      return [back, { ...records, x: w - 6 - s.r - records.w, y: 6 + s.t }];
+      const list = [back, { ...records, x: w - 6 - s.r - records.w, y: 6 + s.t }];
+      if (this.prologue) list.push({ ...sized('skip', w < 360 ? 'SALTAR' : 'SALTAR PRÓLOGO', 'KeyP', COLORS.enemy), x: 6 + s.l, y: 6 + s.t + back.h + 4 });
+      return list;
     }
     if (this.state === 'dead') {
       return row([['retry', 'REINTENTAR', 'KeyR', COLORS.player], ['end', this.endAskActive() ? '¿SEGURO?' : 'TERMINAR', 'Escape', COLORS.blood],
@@ -861,6 +866,7 @@ export class Game {
 
   // Al pisar la salida (con la pantalla ya en negro): resultados, Top 5 y estadísticas del piso.
   finishFloor() {
+    if (this.prologue) { this.endPrologue(); return; } // el prólogo no tiene resultados ni guarda nada
     this.state = 'results';
     this.resultsAge = 0;
     const challenge = this.street.settle(); // reto de la cabina telefónica (suma su bonus antes del rango)
@@ -883,9 +889,24 @@ export class Game {
     this.floorStats.record(this.levelIndex + 1, this.results.rank, this.results.levelScore);
   }
 
+  // Fin del prólogo (huida en moto o salto): queda marcado como visto y empieza la campaña (puntuación a 0, selección de máscara del piso 1).
+  endPrologue() {
+    markPrologueSeen();
+    this.startRunAt(0, false);
+  }
+
+  // Saltar el prólogo (P en la selección de máscara, su botón táctil o la pausa): mismo destino que terminarlo.
+  skipPrologue() {
+    if (!this.prologue) return;
+    markPrologueSeen();
+    this.sfx.play('pickup');
+    this.transition(() => this.startRunAt(0, false));
+  }
+
   // Partida nueva empezando en el piso `index` (desde el menú o el selector de pisos).
-  startRunAt(index) {
+  startRunAt(index, prologue = false) {
     this.runId = newRunId();
+    this.prologue = prologue;
     this.buff = null;
     this.streetRun = newStreetRun();
     this.civilianBase = { hurt: 0, killed: 0, gifts: 0 }; // el comportamiento con los civiles se acumula durante toda la partida
@@ -902,6 +923,7 @@ export class Game {
 
   openMenu(screen = 'title') {
     this.state = 'menu';
+    this.prologue = false;
     this.showRecords = false;
     this.menu.open(screen);
     this.sfx.setMusic('menu');
@@ -958,7 +980,8 @@ export class Game {
     // Armas aleatorias con semilla por partida y piso: al reintentar (R) todo sigue en su sitio;
     // en una partida nueva cambian.
     this.sfx.stopMoto(0.05); // R, piso nuevo...: si la moto sonaba, se corta limpia
-    const level = loadLevel(this.levelIndex, seededRandom(hashString(`${this.runId}:${this.levelIndex}`)));
+    const level = loadLevel(this.levelIndex, seededRandom(hashString(`${this.runId}:${this.levelIndex}`)), this.prologue ? PROLOGUE_DEF : null);
+    if (this.prologue) for (const hd of level.hostages) if (hd.partner) hd.look = { ...hd.look, gender: this.gender === 'male' ? 'f' : 'm', hair: this.gender === 'male' ? '#7a2fb8' : '#140a08' }; // el compañero es el otro agente (cosmético)
     this.levelName = level.name;
     this.dark = level.dark;       // piso en penumbra (ver map.dark y renderDark)
     this.strobe = level.strobe;   // el club: luces estroboscópicas (opción `strobeEnabled`)
@@ -1023,7 +1046,7 @@ export class Game {
 
     // Las capas estáticas solo se regeneran al cambiar de piso O de partida: la calle exterior es distinta en cada partida (runId),
     // y con R (mismo piso y partida) se conservan.
-    const layersKey = `${this.levelIndex}:${this.runId}`;
+    const layersKey = `${this.levelIndex}${this.prologue ? 'p' : ''}:${this.runId}`;
     if (this.layersLevel !== layersKey) {
       this.layersLevel = layersKey;
       this.floorLayer = renderFloor(this.map);
@@ -1118,7 +1141,7 @@ export class Game {
     if (input.wasPressed('KeyR')) { this.restartLevel(); return; }
     // Terminar la partida tras morir: ESC (lejos de Espacio y Enter, que se pulsan sin querer) y hay que pulsarlo DOS veces en 3 s: así no se pierde el progreso del piso por error. R reintenta.
     if (this.state === 'dead' && back) {
-      if (this.endAskActive()) { this.endAskAt = 0; this.transition(() => this.endRun(false)); }
+      if (this.endAskActive()) { this.endAskAt = 0; this.transition(() => (this.prologue ? this.openMenu() : this.endRun(false))); } // el prólogo no guarda récords
       else { this.endAskAt = performance.now(); this.sfx.play('empty'); }
       return;
     }
@@ -3954,6 +3977,7 @@ export class Game {
       drawText(ctx, this.hint('FLECHAS: MÁSCARA · Q/E: AGENTE · ESPACIO / ENTER: EMPEZAR', 'TOCA UNA MÁSCARA: ELEGIR · OTRA VEZ: EMPEZAR'),
         cx, h - 12 - this.safe.b, { color: COLORS.player, align: 'center' });
     }
+    if (this.prologue && !this.input.touchMode) drawText(ctx, 'P: SALTAR PRÓLOGO', cx, h - 23 - this.safe.b, { color: COLORS.enemy, align: 'center' });
   }
 
   // Escala de texto más grande (hasta `preferred`) con la que el texto cabe en `maxW`.

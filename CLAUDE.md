@@ -63,6 +63,7 @@ HTML5 Canvas, JavaScript Vanilla (ES Modules) y Vite. Sin frameworks ni librerí
   - `keybinds.js` — controles de PC reasignables (`KEY_CONFIG`, `KeyBinds`, `keyLabel`). Ver "Controles de PC reasignables".
   - `shield.js` — `ShieldGuard`: el blindado del piso 9 (escudo frontal que se rompe).
   - `cameras.js` — cámaras de seguridad del piso 8 y alerta general del operador (`SecurityCams`).
+  - `prologue.js` — `PROLOGUE_DEF` (mapa corto del tutorial aparte), `prologueSeen`/`markPrologueSeen` (`neonrush.prologue.v1`). Ver "Prólogo".
   - `hostages.js` — rehenes atados a sillas dentro del edificio, golpe de advertencia y extracción (`Hostages`). Ver "Actividades de los enemigos y rehenes".
   - `extraction.js` — `ExtractionCar`: el auto que recoge a 2 o más rehenes.
   - `exits.js` — `BikeExit`: la salida de la moto al acabar el piso (portón, carril lateral o salto). Ver "Salida de la moto".
@@ -197,6 +198,13 @@ Cada piso empieza **en la calle**, no dentro. El ciclo (`game.js`) es:
   SFX nuevos en `audio.js`: `lockdown`, `maskOn`, `unlock` y las voces de la moto.
 - **Mapas**: cada piso lleva al sur un exterior (ver "Diseño de niveles"). La leyenda cambia: ya no
   hay `X`; `N` = puerta principal y la moto es el mueble sólido `bike` (2×1 casillas).
+
+## Prólogo (tutorial aparte, `prologue.js`; tandas 1-2)
+Tutorial independiente del piso 1 que **no está en `LEVELS`** (el selector, los récords y las estadísticas de campaña no lo ven): `game.prologue = true` hace que `reset()` llame a `loadLevel(0, rng, PROLOGUE_DEF)` (`loadLevel` acepta una definición `override`; `def.mix` sustituye a `ENEMY_MIX` y `def.hostage` coloca al compañero en una casilla fija, así que **R lo conserva**).
+- **Mapa** (40×20 + anillo de calle): 3 salas arriba (con 2 puertas entre ellas), pasillo, vestíbulo y la calle con la moto de siempre. 4 enemigos (corredor de pasillo, uno en la sala central, y en la sala del compañero un armado y un cuerpo a cuerpo con patrulla vertical), un tubo `T` y un bate `B` en la sala izquierda; el jugador llega desarmado como siempre. `npm run check:levels` lo valida como un piso más (y su calle).
+- **Flujo**: JUGAR lanza el prólogo solo si no existe `neonrush.prologue.v1`; `PRÓLOGO` en el título lo juega siempre (`startRunAt(0, true)`). **Saltar**: tecla **P** en la selección de máscara (botón táctil `SALTAR PRÓLOGO` / `SALTAR` en pantallas estrechas, bajo VOLVER) o `SALTAR PRÓLOGO` en la pausa → `skipPrologue()`. Terminarlo (huida en moto) → `finishFloor` llama a `endPrologue()`: marca visto y `startRunAt(0, false)` (selección de máscara del piso 1, puntuación a 0). **Nunca** pasa por resultados, `saveRun`, `floorStats.record` ni `endRun`: morir y Esc ×2 vuelve al menú sin guardar. `openMenu()` y `startRunAt()` reponen `prologue`.
+- **Compañero** (`hostages.js`): un rehén `partner` (el otro agente: aspecto cian con pelo violeta si es VEX, venda, moretón y sangre; no lleva mordaza y gime frases propias) y `protected`: **tus golpes y balas lo ignoran** (ni muere ni penaliza ni da culpa). Liberarlo (PATEAR/INTERACTUAR, sin puntos) lo pasa a **`follow`**: te sigue cojeando (80 u/s, 110 si se queda a > 130 u), sin acercarse a menos de 26 u, atravesando puertas (BFS). Con el piso despejado (`cleared`) pasa a `freed` y sigue la extracción normal (sale a la calle y se sube detrás de ti en la moto). No dispara ni mata: no usa el compañero del piso 10 (`partner`/`updateAlly`).
+- **Pendiente** (tanda 3 del plan): líneas cortas de lore y avisos mecánicos con una caja de comunicación **no modal**, saltable con Espacio / clic / toque sin golpear en falso. Los pisos 1-10 no se han tocado.
 
 ## Diseño de niveles: edificio abandonado tomado por la mafia
 - **Arquitectura**: cada piso es un edificio coherente. Pasillos principales de **2 casillas** de

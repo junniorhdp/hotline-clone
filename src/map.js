@@ -1024,8 +1024,9 @@ function withOutskirts(def, index, rng) {
 }
 
 // `rng` (0..1) decide las armas aleatorias; el juego pasa uno con semilla por partida y piso.
-export function loadLevel(index = 0, rng = Math.random) {
-  const def = LEVELS[index];
+// `override` = una definición que no está en LEVELS (el prólogo, ver prologue.js).
+export function loadLevel(index = 0, rng = Math.random, override = null) {
+  const def = override || LEVELS[index];
   const { rows, zones: defZones, props: defProps, sewers, street } = withOutskirts(def, index, rng);
   const h = rows.length;
   const w = rows[0].length;
@@ -1134,7 +1135,7 @@ export function loadLevel(index = 0, rng = Math.random) {
   for (const e of enemies) {
     e.patrol = e.axis === 'none' ? [{ x: e.x, y: e.y }] : autoPatrol(map, e.tx, e.ty, e.axis);
     e.kind = e.kind || 'grunt';
-    const mix = ENEMY_MIX[index] || ENEMY_MIX[0];
+    const mix = def.mix || ENEMY_MIX[index] || ENEMY_MIX[0];
     if (!e.armed && e.kind === 'grunt' && e.kind !== 'boss' && rng() < mix.arm) e.armed = true; // más pistolas
     e.melee = !e.armed && (e.kind === 'grunt' || e.kind === 'runner') && rng() < mix.melee ? MELEE_TYPES[Math.floor(rng() * MELEE_TYPES.length)] : null;
     e.weapon = e.kind === 'heavy' ? 'shotgun' : e.kind === 'shield' ? 'smg' : e.armed ? (rng() < def.smgChance ? 'smg' : 'gun') : null;
@@ -1175,7 +1176,10 @@ export function loadLevel(index = 0, rng = Math.random) {
     map.trap.meet = { x: bike.x + 64, y: bike.y - 32 }; // dónde se encuentran los dos agentes junto a la moto (el beso del final)
     map.trap.spawns = { w: [0, 1, 2, 3, 4, 5].map((i) => mk('w', i)), e: [0, 1, 2, 3, 4, 5].map((i) => mk('e', i)) };
   }
-  const hostages = def.noHostages ? [] : placeHostages(map, enemies, actRnd, doors, mainDoor.ty, entry, occupied, index);
+  // Prólogo: el compañero capturado está en una casilla fija (R lo conserva) y es un rehén `partner` (no pelea; el aspecto lo pone Game según el agente elegido).
+  const fixedHostage = def.hostage ? [{ tx: def.hostage[0] + OUTSKIRT, ty: def.hostage[1] + OUTSKIRT, x: (def.hostage[0] + OUTSKIRT) * TILE + TILE / 2, y: (def.hostage[1] + OUTSKIRT) * TILE + TILE / 2,
+    look: { shirt: '#05d9e8', hair: '#140a08', skin: '#d9a67a', gender: 'm' }, facing: Math.PI, partner: true }] : null;
+  const hostages = fixedHostage || (def.noHostages ? [] : placeHostages(map, enemies, actRnd, doors, mainDoor.ty, entry, occupied, index));
   return { name: def.name, par: def.par, trap: map.trap, noHostages: !!def.noHostages, duo: !!def.duo, cameras: map.cameras, dark: !!def.dark, strobe: !!def.strobe, boss: !!def.boss, map, player, bike, mainDoor, entry, enemies, weapons, doors, hostages };
 }
 

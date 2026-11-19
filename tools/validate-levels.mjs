@@ -6,13 +6,16 @@
 //   - el punto de entrada está pasado el umbral y hay camino de la puerta principal a la moto.
 // Uso: `npm run check:levels` (sale con error si algo falla).
 import { LEVELS, loadLevel, isWallTile, TILE, findPath } from '../src/map.js';
+import { PROLOGUE_DEF } from '../src/prologue.js';
 let bad = 0;
 let prevEnemies = 0;
 const fail = (m) => { bad++; console.log('  ✗ ' + m); };
-for (let i = 0; i < LEVELS.length; i++) {
-  const L = loadLevel(i, () => 0.5);
+// El prólogo (src/prologue.js) se valida como un piso más (índice LEVELS.length: usa los datos del piso 1 salvo `override`).
+for (let n = 0; n <= LEVELS.length; n++) {
+  const pro = n === LEVELS.length, i = pro ? 0 : n;
+  const L = loadLevel(i, () => 0.5, pro ? PROLOGUE_DEF : null);
   const { map } = L;
-  const rows = LEVELS[i].rows;
+  const rows = (pro ? PROLOGUE_DEF : LEVELS[i]).rows;
   console.log(`\n${L.name}: ${map.w}×${map.h} · ${L.enemies.length} enemigos · ${L.doors.length} puertas · armas ${L.weapons.length}`);
   const free = (tx, ty) => !isWallTile(map, tx, ty);
   // 1) las dos casillas de paso de cada puerta, libres
