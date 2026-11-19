@@ -65,6 +65,47 @@ const TRACKS = {
     riser: { bar: 3, from: 8 },               // barrido de ruido que sube durante la caída
     impact: true,                             // al volver al primer tiempo: bombo grande + platillo
   },
+  // Pista B (~160 BPM): Cm - Ab - Bb - G. Percusión firme (bombo sincopado, caja en 4 y 12, charles con abierto en 2 y 10), bajo RÍTMICO y marcado (con silencios, sin saturar), acordes cortos
+  // de tres notas a contratiempo y un LEAD (cuadrada) con eco de dos repeticiones. Sin caída: un redoble corto al final del ciclo.
+  b: {
+    id: 'b', name: 'B', bpm: 160, stepTime: 60 / 160 / 4, restart: true,
+    roots: [65.41, 51.91, 58.27, 49.0],
+    chords: [[261.63, 311.13, 392.0], [207.65, 261.63, 311.13], [233.08, 293.66, 349.23], [196.0, 246.94, 293.66]],
+    bass: [1, 0, 1, 0, 1, 2, 0, 1, 1, 0, 1, 0, 2, 1, 0, 2], bassSat: false,
+    arp: [0, 1, 2, 1, 0, 1, 2, 1, 0, 1, 2, 1, 0, 1, 2, 1], arpOct: [0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1], arpGain: 0.034, arpDur: 0.07,
+    kicks: [0, 3, 4, 8, 11, 12], snares: [4, 12],
+    hat: { freq: 8600, gain: [0.05, 0.1], open: [2, 10], openDur: 0.1 },
+    crashEvery: 2, padGain: 0.04, padCut: 1600,
+    stab: { steps: [3, 6, 11, 14], gain: 0.03, notes: 3, dur: 0.09 },
+    fill: { bar: 3, from: 14 },
+    // Lead: por compás, 16 pasos con el índice del acorde (0-2 → octava `oct[0]`, 3-5 → `oct[1]`) o null (silencio); `echo` = repeticiones (pasos de retardo y ganancia relativa).
+    lead: {
+      type: 'square', gain: 0.042, dur: 0.11, oct: [2, 4], echo: [{ steps: 3, gain: 0.45 }, { steps: 6, gain: 0.2 }],
+      pattern: [
+        [2, null, null, 1, null, 0, null, null, 2, null, 1, null, 0, null, null, null],
+        [2, null, null, 1, null, 0, null, null, 1, null, 0, null, 2, null, null, null],
+        [1, null, null, 2, null, 3, null, null, 2, null, 1, null, 0, null, null, null],
+        [2, null, 3, null, 2, null, 1, null, 0, null, null, null, 4, null, null, null],
+      ],
+    },
+  },
+  // Pista C (~178 BPM): Gm - Eb - F - D. Rítmica ROTA y cortada (bombo y caja a destiempo con notas fantasma, charles con abiertos en 3 y 11), bajo saturado y con huecos, arpegio rápido,
+  // acordes picados y CORTES de energía periódicos: parada con redoble en el 2.º compás y gran caída con riser en el 4.º; al volver, impacto (también en el 3.er compás).
+  c: {
+    id: 'c', name: 'C', bpm: 178, stepTime: 60 / 178 / 4, restart: true,
+    roots: [49.0, 77.78, 87.31, 73.42],
+    chords: [[196.0, 233.08, 293.66], [155.56, 196.0, 233.08], [174.61, 220.0, 261.63], [146.83, 185.0, 220.0]],
+    bass: [1, 0, 1, 2, 0, 1, 0, 2, 1, 0, 2, 1, 0, 1, 2, 0], bassSat: true,
+    arp: [0, 2, 1, 2, 0, 2, 1, 0, 2, 1, 2, 0, 1, 2, 0, 1], arpOct: [0, 1, 0, 1, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0, 1, 1], arpGain: 0.06, arpDur: 0.06,
+    kicks: [0, 3, 6, 8, 11, 14], snares: [4, 10, 12], ghost: [2, 7, 15],
+    hat: { freq: 9500, gain: [0.05, 0.1], open: [3, 11], openDur: 0.1 },
+    crashEvery: 2, padGain: 0.045, padCut: 2000,
+    stab: { steps: [3, 7, 11, 15], gain: 0.025, dur: 0.05 },
+    dip: [{ bar: 1, from: 12 }, { bar: 3, from: 6 }],
+    fill: [{ bar: 1, from: 12 }, { bar: 3, from: 12 }],
+    riser: { bar: 3, from: 6 },
+    impact: [0, 2],
+  },
 };
 const TRACK_IDS = Object.keys(TRACKS);
 // Modo menú: Fmaj7 - Em7 - Dm7 - Cmaj7, pads lentos y campanas
@@ -535,24 +576,26 @@ export class Sfx {
   actionStep(step, t) {
     const tr = this.track, bar = step >> 4, s = step & 15, out = this.musicBus;
     const lite = !!(this.isLite && this.isLite());                                  // móvil flojo: sin las capas extra (caja fantasma, acordes cortos)
-    const dip = !!(tr.dip && tr.dip.bar === bar && s >= tr.dip.from);              // caída de energía: sin bombo ni bajo
+    const many = (x) => (x ? (Array.isArray(x) ? x : [x]) : []);                   // una entrada o varias (cada pista decide)
+    const dip = many(tr.dip).some((d) => d.bar === bar && s >= d.from && s <= (d.to ?? 15)); // caída / corte de energía: sin bombo ni bajo
     if (tr.kicks.includes(s) && !dip) this.kickDrum(t, s % 4 === 0 ? 1 : 0.65);
     if (tr.snares.includes(s)) {                                                   // caja/palmada
       this.noise({ dur: 0.18, gain: 0.45, filter: 'bandpass', freq: 1700, freqTo: 900, q: 0.7, at: t, dest: out });
       this.tone({ type: 'triangle', from: 320, to: 180, dur: 0.1, gain: 0.25, at: t, dest: out });
     }
     if (tr.ghost && !lite && tr.ghost.includes(s)) this.noise({ dur: 0.07, gain: 0.14, filter: 'bandpass', freq: 1900, q: 0.8, at: t, dest: out }); // caja fantasma
-    if (tr.fill && tr.fill.bar === bar && s >= tr.fill.from) {                    // redoble con crescendo
-      this.noise({ dur: 0.09, gain: 0.22 + (s - tr.fill.from) * 0.07, filter: 'bandpass', freq: 2100, freqTo: 1100, q: 0.7, at: t, dest: out });
+    const fill = many(tr.fill).find((f) => f.bar === bar && s >= f.from);
+    if (fill) {                                                                    // redoble con crescendo
+      this.noise({ dur: 0.09, gain: 0.22 + (s - fill.from) * 0.07, filter: 'bandpass', freq: 2100, freqTo: 1100, q: 0.7, at: t, dest: out });
     }
     // Charles con acento en los contratiempos; abierto en los pasos que marque la pista.
     const hat = tr.hat;
     this.noise({ dur: hat.open.includes(s) ? hat.openDur : 0.03, gain: s % 2 ? hat.gain[1] : hat.gain[0], filter: 'highpass', freq: hat.freq, at: t, dest: out });
     if (s === 0 && bar % tr.crashEvery === 0) this.noise({ dur: 0.5, gain: 0.1, filter: 'highpass', freq: 5200, at: t, dest: out }); // crash
-    if (tr.riser && bar === tr.riser.bar && s === tr.riser.from) {                 // barrido de ruido que sube hasta el primer tiempo
+    if (many(tr.riser).some((r) => r.bar === bar && s === r.from)) {              // barrido de ruido que sube hasta el primer tiempo
       this.noise({ dur: (16 - s) * tr.stepTime, gain: 0.13, filter: 'bandpass', freq: 400, freqTo: 6500, q: 1.1, at: t, dest: out });
     }
-    if (tr.impact && bar === 0 && s === 0) {                                       // al volver: bombo grande + sub + platillo
+    if (s === 0 && (tr.impact === true ? bar === 0 : many(tr.impact).includes(bar))) { // al volver: bombo grande + sub + platillo
       this.kickDrum(t, 1.25);
       this.noise({ dur: 0.7, gain: 0.16, filter: 'highpass', freq: 3800, at: t, dest: out });
     }
@@ -561,9 +604,14 @@ export class Sfx {
     const chord = tr.chords[bar];
     this.tone({ type: 'sawtooth', from: chord[tr.arp[s]] * (tr.arpOct[s] ? 4 : 2),
       dur: tr.arpDur, gain: tr.arpGain, at: t, dest: out });                       // arpegio
-    if (tr.stab && !lite && !dip && tr.stab.steps.includes(s)) {                  // acordes cortos a contratiempo
-      this.tone({ type: 'square', from: chord[0] * 2, dur: 0.07, gain: tr.stab.gain, at: t, dest: out });
-      this.tone({ type: 'square', from: chord[2] * 2, dur: 0.07, gain: tr.stab.gain, at: t, dest: out });
+    if (tr.stab && !lite && !dip && tr.stab.steps.includes(s)) {                  // acordes cortos a contratiempo (2 notas, o 3 con `notes: 3`)
+      for (const n of tr.stab.notes === 3 ? [0, 1, 2] : [0, 2]) this.tone({ type: 'square', from: chord[n] * 2, dur: tr.stab.dur || 0.07, gain: tr.stab.gain, at: t, dest: out });
+    }
+    const lead = tr.lead && !dip ? tr.lead.pattern[bar][s] : null;                // lead con eco (las repeticiones se omiten en modo ligero)
+    if (lead !== null && lead !== undefined) {
+      const f = chord[lead % 3] * tr.lead.oct[lead >= 3 ? 1 : 0];
+      this.tone({ type: tr.lead.type, from: f, dur: tr.lead.dur, gain: tr.lead.gain, at: t, dest: out });
+      if (!lite) for (const e of tr.lead.echo) this.tone({ type: tr.lead.type, from: f, dur: tr.lead.dur * 0.9, gain: tr.lead.gain * e.gain, at: t + e.steps * tr.stepTime, dest: out });
     }
     if (s === 0) this.pad(chord, t, tr.stepTime * 16, tr.padGain, tr.padCut);
   }
