@@ -913,7 +913,8 @@ export class Game {
     if (!lines) return;
     const pg = this.gender === 'male' ? 'female' : 'male', me = this.agentInfo(this.gender).name, pa = this.agentInfo(pg);
     const ph = this.hostages.list.find((x) => x.partner), mask = ph ? MASKS.find((m) => m.id === ph.maskId) : null;
-    const partner = { name: pa.name, color: pa.color, portrait: mask ? { mask, gender: pg } : null };
+    // El retrato lleva la sangre que el compañero tiene encima (herido: nivel 2, roja; sin sangre si está desactivada), igual que su sprite.
+    const partner = { name: pa.name, color: pa.color, portrait: mask ? { mask, gender: pg, level: this.goreOn ? 2 : 0, bits: [] } : null };
     const fill = (t) => t.replace(/\{ME\}/g, me).replace(/\{PARTNER\}/g, pa.name);
     this.comms.say(id, lines.map((l) => ({ speaker: l.who === 'partner' ? partner : 'central', text: fill(l.text) })), { urgent: id === 'free' }); // el compañero habla justo al liberarlo
   }
@@ -2916,8 +2917,8 @@ export class Game {
     this.radioCine = {
       t: 0, end: 5.0, split: 2.9, cut: false,
       lines: [
-        { who: a, mask: this.mask, lines: [`¡${nameB}, ME HAN ENCERRADO,`, 'HAY GAS!'], from: 0.35 },
-        { who: b, mask: this.partnerMask, lines: [`¡AGUANTA, ${nameA}!`, '¡VOY PARA ALLÁ!'], from: 3.1 },
+        { who: a, mask: this.mask, level: a.bloodLevel, bits: [...this.maskBits], lines: [`¡${nameB}, ME HAN ENCERRADO,`, 'HAY GAS!'], from: 0.35 },   // el retrato lleva la sangre (roja / verde) que el agente tiene encima
+        { who: b, mask: this.partnerMask, level: b.bloodLevel, bits: [...this.partnerBlood.maskBits], lines: [`¡AGUANTA, ${nameA}!`, '¡VOY PARA ALLÁ!'], from: 3.1 },
       ],
     };
     this.showCallout('¡TRAMPA!', COLORS.blood, 2.2, 'GAS TÓXICO · SALA SELLADA');
@@ -2978,7 +2979,7 @@ export class Game {
     ctx.fillStyle = 'rgba(5, 0, 15, 0.92)'; ctx.fillRect(bx, by, bw, bh);
     ctx.fillStyle = ag.color;
     ctx.fillRect(bx, by, bw, 1); ctx.fillRect(bx, by + bh - 1, bw, 1); ctx.fillRect(bx, by, 1, bh); ctx.fillRect(bx + bw - 1, by, 1, bh);
-    ctx.drawImage(bloodyMaskPortrait(cur.mask, 0, cur.who.gender, []), bx + 5, by + 6, 32, 32);
+    ctx.drawImage(bloodyMaskPortrait(cur.mask, this.goreOn ? cur.level || 0 : 0, cur.who.gender, cur.bits || []), bx + 5, by + 6, 32, 32);
     ctx.fillStyle = ag.color; ctx.fillRect(bx + 4, by + 5, 34, 1); ctx.fillRect(bx + 4, by + 38, 34, 1); ctx.fillRect(bx + 4, by + 5, 1, 34); ctx.fillRect(bx + 37, by + 5, 1, 34);
     drawText(ctx, `${ag.name} · RADIO`, bx + 44, by + 5, { color: ag.color });
     // texto tecleado (30 caracteres por segundo)
