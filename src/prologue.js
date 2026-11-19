@@ -12,6 +12,23 @@ export function markPrologueSeen() {
   try { localStorage.setItem(PROLOGUE_KEY, '1'); } catch { /* modo privado o cuota: sin guardar */ }
 }
 
+// LÍNEAS DE LORE del prólogo (se muestran con comms.js; ver Game.prologueLine). Aquí solo hay texto: se pulen sin tocar código.
+//   · `id` = momento (intro: fuera del edificio · enter: salidas cerradas · kill: primera baja · free: al liberarlo · clear: piso despejado). Cada id sale una vez por partida.
+//   · `who`: 'central' (la voz de la Organización por radio, ámbar) | 'partner' (el compañero, con su nombre, su color y el retrato de su máscara).
+//   · Marcadores: {ME} = nombre del agente que controlas, {PARTNER} = el del compañero. 1-2 frases cortas por línea (se parten solas en filas).
+//   · Arco que se insinúa (sin explicarlo): la mafia está casi caída (trabajo de la Organización) · alguien DENTRO de la Organización vendió los nombres de los agentes ·
+//     quedan tres nombres pendientes (cabo suelto de misterio).
+export const PROLOGUE_LINES = {
+  intro: [{ who: 'central', text: 'La mafia cayó casi entera esta semana. {PARTNER} se quedó dentro.' }],
+  enter: [{ who: 'central', text: 'Se cierran las salidas. Esto no estaba en el plan.' }],
+  kill: [{ who: 'central', text: 'Esos no llevan los colores de la familia.' }],
+  free: [
+    { who: 'partner', text: 'Sabía que vendrías, {ME}. Me usaron de cebo.' },
+    { who: 'partner', text: 'Alguien de la Organización dio nuestros nombres.' },
+  ],
+  clear: [{ who: 'partner', text: 'Quedan tres nombres en la lista. Vámonos.' }],
+};
+
 export const PROLOGUE_DEF = {
   prologue: true,
   name: 'PRÓLOGO · EL RESCATE',

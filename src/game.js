@@ -15,7 +15,7 @@ import { Sewer } from './sewer.js';
 import { BikeExit, EXIT_EXTRA } from './exits.js';
 import { StreetLife, newStreetRun } from './street.js';
 import { Hostages } from './hostages.js';
-import { PROLOGUE_DEF, markPrologueSeen } from './prologue.js';
+import { PROLOGUE_DEF, PROLOGUE_LINES, markPrologueSeen } from './prologue.js';
 import { Comms } from './comms.js';
 const SKIP_HOLD = 1.5; // s que hay que mantener P / el botón táctil para saltar el prólogo
 import { weaponCategory } from './weapons.js';
@@ -907,15 +907,13 @@ export class Game {
 
   // Las líneas del prólogo (una sola vez por partida: R no las repite). `id` = momento.
   prologueLine(id) {
-    const me = this.agentInfo(this.gender).name, pa = this.agentInfo(this.gender === 'male' ? 'female' : 'male');
-    const L = {
-      intro: [{ speaker: 'central', text: `La mafia cayó casi entera esta semana. ${pa.name} se quedó dentro.` }],
-      enter: [{ speaker: 'central', text: 'Se cierran las salidas. Esto no estaba en el plan.' }],
-      kill: [{ speaker: 'central', text: 'Esos no llevan los colores de la familia.' }],
-      free: [{ speaker: pa, text: `Sabía que vendrías, ${me}. Me usaron de cebo.` }, { speaker: pa, text: 'Alguien de la Organización dio nuestros nombres.' }],
-      clear: [{ speaker: pa, text: 'Quedan tres nombres en la lista. Vámonos.' }],
-    };
-    this.comms.say(id, L[id]);
+    const lines = PROLOGUE_LINES[id];
+    if (!lines) return;
+    const pg = this.gender === 'male' ? 'female' : 'male', me = this.agentInfo(this.gender).name, pa = this.agentInfo(pg);
+    const ph = this.hostages.list.find((x) => x.partner), mask = ph ? MASKS.find((m) => m.id === ph.maskId) : null;
+    const partner = { name: pa.name, color: pa.color, portrait: mask ? { mask, gender: pg } : null };
+    const fill = (t) => t.replace(/\{ME\}/g, me).replace(/\{PARTNER\}/g, pa.name);
+    this.comms.say(id, lines.map((l) => ({ speaker: l.who === 'partner' ? partner : 'central', text: fill(l.text) })));
   }
 
   updatePrologue(dt) {
