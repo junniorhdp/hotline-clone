@@ -25,28 +25,35 @@ export class Comms {
   clear() { this.queue.length = 0; this.cur = null; this.gap = 0; }   // reintento con R: se queda `seen`
 
   // Encola una secuencia de líneas con un id (una sola vez por partida). `entries`: [{ speaker: 'central' | { name, color, portrait }, text }].
-  say(id, entries) {
+  // `opts.urgent`: pasan delante de las que esperan y empiezan aunque haya enemigos en alerta (el mundo se congela mientras hablan): el compañero recién liberado habla justo después.
+  say(id, entries, opts = {}) {
     if (this.seen.has(id)) return false;
     this.seen.add(id);
-    for (const e of entries) {
+    const lines = entries.map((e) => {
       const sp = typeof e.speaker === 'string' ? SPEAKERS[e.speaker] : e.speaker;
-      this.queue.push({ who: sp.name, color: sp.color, text: e.text, portrait: sp.portrait || null, t: 0, age: 0, open: 0 });
-    }
+      return { who: sp.name, color: sp.color, text: e.text, portrait: sp.portrait || null, t: 0, age: 0, open: 0, urgent: !!opts.urgent };
+    });
+    if (opts.urgent) this.queue.unshift(...lines); else this.queue.push(...lines);
     return true;
   }
 
-  calm() {
+  // ¿Se puede hablar? (sin panel, fundido, forcejeo, vómito, ejecución ni puerta en animación...). Las urgentes no exigen que no haya enemigos en alerta.
+  idle() {
     const g = this.game, p = g.player;
     if (g.state !== 'playing' && g.state !== 'cleared') return false;
-    if (g.panel || g.fade || !p.alive || p.vomit || p.exec || g.hitstop > 0) return false;
-    return !g.enemies.some((e) => e.alive && (e.state === 'chase' || e.state === 'alert'));
+    return !(g.panel || g.fade || !p.alive || p.vomit || p.exec || p.doorAnim || g.hitstop > 0);
+  }
+
+  calm() {
+    return this.idle() && !this.game.enemies.some((e) => e.alive && (e.state === 'chase' || e.state === 'alert'));
   }
 
   // Fuera de una conversación: empieza la siguiente línea en cola si hay calma.
   update(dt) {
     if (this.cur) return;
     this.gap = Math.max(0, this.gap - dt);
-    if (this.queue.length && this.gap <= 0 && this.calm()) this.begin(this.queue.shift());
+    const q = this.queue[0];
+    if (q && this.gap <= 0 && (q.urgent ? this.idle() : this.calm())) this.begin(this.queue.shift());
   }
 
   begin(line) {

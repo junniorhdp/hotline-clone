@@ -915,7 +915,7 @@ export class Game {
     const ph = this.hostages.list.find((x) => x.partner), mask = ph ? MASKS.find((m) => m.id === ph.maskId) : null;
     const partner = { name: pa.name, color: pa.color, portrait: mask ? { mask, gender: pg } : null };
     const fill = (t) => t.replace(/\{ME\}/g, me).replace(/\{PARTNER\}/g, pa.name);
-    this.comms.say(id, lines.map((l) => ({ speaker: l.who === 'partner' ? partner : 'central', text: fill(l.text) })));
+    this.comms.say(id, lines.map((l) => ({ speaker: l.who === 'partner' ? partner : 'central', text: fill(l.text) })), { urgent: id === 'free' }); // el compañero habla justo al liberarlo
   }
 
   updatePrologue(dt) {
@@ -1140,7 +1140,7 @@ export class Game {
     this.deathMsg = null; // mensaje propio de la pantalla de muerte (compañero caído)
     this.leaveAsk = 0;   // rehenes sin rescatar de los que se avisa junto a la moto (0 = nada que avisar)
     this.cams = new SecurityCams(this, level.cameras || []); // cámaras de seguridad y operador (piso 8)
-    this.comms.clear(); this.prologueT = 0; this.tut.cur = null; this.tutFocus = null;
+    this.comms.clear(); this.prologueT = 0; this.tut.cur = null; this.tutFocus = null; this.doorPending = false;
     this.hostages = new Hostages(this, level.hostages || []); // rehenes atados a sillas dentro del edificio (ver hostages.js)
     this.pools = [];
     // masks (selección) | arriving (llega en moto) | playing (fuera o dentro: ver `inside`) | dead |
@@ -1331,13 +1331,15 @@ export class Game {
     // (la calle de arriba y de los lados también tiene y < lockY, y ahí no se bloquea nada).
     if (this.state === 'playing' && !this.inside && this.player.alive && this.inBuilding(this.player)) this.beginLockdown();
     if (this.trap) this.updateTrap(dt);
+    if (this.state === 'cleared' && this.doorPending && this.player.alive && !this.player.doorAnim && !this.player.vomit && !this.player.exec
+      && Math.hypot(this.player.x - this.mainDoor.cx, this.player.y - this.mainDoor.cy) < 84) { this.doorPending = false; this.player.startDoorAnim(this, 'open', this.mainDoor); }
     if (this.state === 'playing' && this.inside && this.enemies.every((e) => !e.alive) && (!this.trap || (this.trap.state === 'done' && this.final && this.final.done))) { // con trampa: resolverla, reencontrarse y ganar la fase final antes de dar el piso por despejado
       this.state = 'cleared';
       // Se acabó la adrenalina: `setMusic('empty')` corta la música con el frenazo de cinta y
       // abre el ambiente del edificio vacío, que acompaña hasta la moto. La puerta se desbloquea.
       this.sfx.setMusic('empty');
-      this.mainDoor.unlock();
-      this.sfx.play('unlock');
+      // La puerta principal la abre el agente al llegar a ella (animación; `doorPending`). En el piso 10 (trampa y final con la carrera de los dos agentes y el rehén de la IA) se abre sola.
+      if (this.trap) { this.mainDoor.unlock(); this.sfx.play('unlock'); } else this.doorPending = true;
       this.showCallout('PISO COMPLETADO', COLORS.player, 2.8, '¡EDIFICIO LIMPIO!'); // el objetivo (REGRESA A LA MOTO) sale al apagarse
     }
     // Junto a la moto con el piso despejado: si no quedan rehenes atados, la fuga arranca sola; si quedan, solo se AVISA (el rescate es opcional) y el jugador decide:
@@ -1817,7 +1819,7 @@ export class Game {
     this.entered = true;
     p.putOnMask(this);
     this.entryWeapon = p.weapon ? { type: p.weapon.type, ammo: p.weapon.ammo } : null;
-    this.mainDoor.lock();
+    p.startDoorAnim(this, 'close', this.mainDoor); // el agente se gira y cierra la puerta tras de sí (la hoja se cierra y bloquea a mitad de la animación)
     this.sfx.setMusic('action');
   }
 
@@ -1827,11 +1829,8 @@ export class Game {
     this.particles.sparks(door.cx, door.cy, -Math.PI / 2, 12, 1.2);
     this.camera.addShake(8);
     this.fx.kick(0.8);
-    if (door.main) {   // las puertas del despacho sellado tienen su propio cartel (¡TRAMPA!)
-      // En el prólogo la puerta la cierra el agente (que no salga la mafia): el cartel lo dice así. En los pisos de la campaña sigue `SALIDAS BLOQUEADAS`.
-      if (this.prologue) { this.showCallout('PUERTA CERRADA', COLORS.blood, 2.4, `${AGENTS[this.gender].name} CIERRA: QUE NO ESCAPE NADIE`); }
-      else this.showCallout('SALIDAS BLOQUEADAS', COLORS.blood);
-    }
+    // La puerta la cierra el agente (que no salga la mafia): el cartel lo dice así en todos los pisos. Las puertas del despacho sellado tienen su propio cartel (¡TRAMPA!).
+    if (door.main) this.showCallout('PUERTA CERRADA', COLORS.blood, 2.4, `${AGENTS[this.gender].name} CIERRA: QUE NO SALGA NADIE`);
   }
 
   showCallout(text, color, seconds = 2.4, sub = null) {
