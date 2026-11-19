@@ -387,7 +387,7 @@ export class Game {
     this.levelIndex = index;
     this.streetRun = newStreetRun();
     this.civilianBase = { ...this.civilianRecord }; // el registro al entrar al piso (R lo restaura)
-    this.trapRetry = false; this.finalRetry = false; this.finalRole = null;
+    this.trapRetry = false; this.finalRetry = false; this.finalRole = null; this.trapCheckpoint = null;
     this.score.startLevel();
     this.scuffleCount = 0;
     this.resetStains(); // el siguiente piso se empieza limpio: ropa y máscara sin sangre
@@ -956,7 +956,7 @@ export class Game {
     this.buff = null;
     this.streetRun = newStreetRun();
     this.civilianBase = { hurt: 0, killed: 0, gifts: 0 }; // el comportamiento con los civiles se acumula durante toda la partida
-    this.trapRetry = false; this.finalRetry = false; this.finalRole = null;
+    this.trapRetry = false; this.finalRetry = false; this.finalRole = null; this.trapCheckpoint = null;
     this.score.newRun(this.history.best());
     this.resetStains();
     this.scuffleCount = 0;
@@ -2778,6 +2778,8 @@ export class Game {
       this.inside = true;
     }
     this.trapRetry = false;
+    if (this.trapCheckpoint && !retry) { this.trapCheckpoint.total = this.score.total; this.trapCheckpoint.levelScore = this.score.levelScore; } // R en la fase final conserva los puntos de este momento
+    else if (this.trapCheckpoint) { this.score.total = this.trapCheckpoint.total; this.score.levelScore = this.trapCheckpoint.levelScore; }
     this.finalRole = role; this.finalRetry = true;
     const want = role === 'limpieza' ? 'main' : 'support';
     if (this.player.agentId !== want) this.swapControl(true);
@@ -3218,6 +3220,10 @@ export class Game {
     if (!T || T.state !== 'idle' || !b) return;
     T.victim = a; T.hold = 0; T.cough = 1.2; T.fade = 1; T.t = GAS_TIME;
     this.trapRetry = true;
+    // PUNTO DE REPETICIÓN: al empezar la trampa (fase 2) se guarda cómo está el piso. R vuelve aquí (no al principio del piso): los enemigos ya abatidos siguen abatidos y los puntos
+    // son los de ese momento. Se conserva hasta elegir el rol final (`beginFinal`, que lo actualiza); ni resolver la trampa lo borra.
+    if (!retry) this.trapCheckpoint = { dead: this.enemies.map((e, i) => (e.alive ? -1 : i)).filter((i) => i >= 0), total: this.score.total, levelScore: this.score.levelScore };
+    else if (this.trapCheckpoint) this.applyCheckpoint();
     for (const d of T.doors) {
       const door = this.doors.find((x) => x.tx === d.tx && x.ty === d.ty);
       if (!door) continue;
@@ -3390,10 +3396,16 @@ export class Game {
     if (T.t <= 0) this.trapFail();
   }
 
+  // Restaura el punto de repetición de la trampa: los abatidos siguen abatidos (mismo orden de `enemies`: el piso se recarga con la misma semilla) y los puntos son los guardados.
+  applyCheckpoint() {
+    const cp = this.trapCheckpoint;
+    for (const i of cp.dead) if (this.enemies[i]) this.enemies[i].alive = false;
+    this.score.total = cp.total; this.score.levelScore = cp.levelScore;
+  }
+
   trapSolved() {
     const T = this.trap, left = Math.max(0, Math.round(T.t));
-    T.state = 'done'; T.fade = 1; T.hold = 0;
-    this.trapRetry = false;
+    T.state = 'done'; T.fade = 1; T.hold = 0; // (trapRetry se mantiene: si te matan antes de elegir el rol final, R vuelve a la fase 2, que es el punto de repetición)
     for (const d of T.doors) { const door = this.doors.find((x) => x.tx === d.tx && x.ty === d.ty); if (door) door.unlock(); }
     this.particles.sparks(T.vent.sx, T.vent.sy - 14, -Math.PI / 2, 24, 1.4);
     this.particles.dust(T.vent.sx, T.vent.sy - 10, 14);
