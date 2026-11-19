@@ -246,7 +246,7 @@ export class Game {
     this.levelIndex = 0;
     this.comms = new Comms(this); // líneas cortas de lore no modales (prólogo)
     this.flow = new PrologueFlow(this); // lógica y estado del prólogo / tutorial (instrucciones, salto, fin): prologue-flow.js
-    this.descent = null; this.sewerRun = null; this.sewerStash = null; this.sewerRoute = null; this.keyRoute = false; this.hasKey = false; this.keyDrop = null; this.keyHintAt = 0; this.shutAt = 0; // piso 3: entrada por la alcantarilla y llave de salida
+    this.climb = null; this.emerge = null; this.descent = null; this.sewerRun = null; this.sewerStash = null; this.sewerRoute = null; this.keyRoute = false; this.hasKey = false; this.keyDrop = null; this.keyHintAt = 0; this.shutAt = 0; // piso 3: entrada por la alcantarilla y llave de salida
     this.cineK = 0; // 0..1: cuánto están puestas las barras de cine de llegada / fuga (anima las barras y el fundido del HUD)
     this.prologue = false; // tutorial aparte del piso 1 (ver prologue.js): sin resultados, récords ni estadísticas de campaña
     this.debug = false;
@@ -1020,7 +1020,7 @@ export class Game {
   //    la que cruzó el umbral y la puerta ya bloqueada. R no repite la llegada: tiene que ser instantáneo.
   //  - Reintento sin haber entrado todavía: otra vez en la acera, sin cinemática.
   reset({ arrival = false } = {}) {
-    this.descent = null;
+    this.descent = null; this.climb = null; this.emerge = null;
     if (this.sewerRun) this.restoreFromSewer(); // R dentro del túnel: se vuelve a la calle (aún no se había entrado al edificio)
     if (this.swapped) { this.swapBundles(); this.swapped = false; } // R: vuelve a controlar al primer agente con su máscara y su sangre
     // Armas aleatorias con semilla por partida y piso: al reintentar (R) todo sigue en su sitio;
@@ -1206,6 +1206,8 @@ export class Game {
 
     if (this.sewerRun && this.state === 'dead') { this.updateSewerDead(dt); return; } // muerto en el túnel: solo corre lo visual
     if (this.state === 'descend') { this.updateDescend(dt); return; }
+    if (this.state === 'ascend') { this.updateAscend(dt); return; }
+    if (this.state === 'emerge') { this.updateEmerge(dt); return; }
     if (this.state === 'sewer') { this.updateSewer(dt); return; }
     if (this.comms.cur) { this.comms.step(dt, confirm || input.mousePressed.left); return; } // línea de comunicación del prólogo: el mundo se congela (como la radio del piso 10)
     if (this.state === 'ambush') { this.updateAmbush(dt); return; }
@@ -1899,8 +1901,14 @@ export class Game {
 
   // El agente que se hunde: se dibuja desplazado hacia abajo y recortado por el borde de la abertura (solo se ve lo que queda por encima).
   drawPlayerBody(ctx) {
-    const D = this.descent;
-    if (this.state === 'descend' && D && D.sink > 0) {
+    const D = this.descent, E = this.emerge;
+    if (this.state === 'emerge' && E && E.sink > 0) {          // asoma de la boca de la escalera: desplazado hacia abajo y recortado por su borde
+      ctx.save();
+      ctx.beginPath(); ctx.rect(E.hole.x - 120, E.hole.y - 160, 240, 160 + 10); ctx.clip();
+      ctx.translate(0, E.sink * 34);
+      this.player.draw(ctx);
+      ctx.restore();
+    } else if (this.state === 'descend' && D && D.sink > 0) {
       ctx.save();
       ctx.beginPath(); ctx.rect(D.lid.x - 120, D.lid.y - 160, 240, 160 + 12); ctx.clip();
       ctx.translate(0, D.sink * 34);
@@ -1948,26 +1956,94 @@ export class Game {
     this.camera.setBounds(s.bw, s.bh);
   }
 
+  // Animación de subir (estado 'ascend', ~1,7 s sin control e invulnerable; el cocodrilo se queda quieto): el agente se pega a la escalera, sube peldaño a peldaño (el sprite se
+  // acerca a la cámara y se funde en la luz del pozo, con un destello) y fundido al cuarto de servicio, donde sale por la boca de la escalera (`updateEmerge`).
   climbLadder() {
     if (this.fade || this.state !== 'sewer') return;
-    this.sfx.play('pickup'); this.sfx.play('manholeScrape', 0.6);
-    this.transition(() => this.endSewer(), 0.35);
+    const l = this.sewerRun.map.ladder, p = this.player;
+    this.climb = { t: 0, from: { x: p.x, y: p.y }, to: { x: l.x - 4, y: l.y }, rungs: -1 };
+    this.state = 'ascend';
+    this.callout = null; this.floatingTexts.length = 0;
+    p.angle = -Math.PI / 2;
   }
 
-  // Sube al cuarto de servicio: se restaura el edificio y empieza el combate (máscara, reloj y música). La puerta principal ya estaba bloqueada.
+  updateAscend(dt) {
+    const C = this.climb, p = this.player, ease = (k) => k * k * (3 - 2 * k);
+    const REACH = 0.4, UP = 1.5;
+    C.t += dt;
+    p.angle = -Math.PI / 2;
+    this.sewerRun.amb.update(dt, this); this.sewerRun.clock += dt; // el túnel sigue vivo (goteras, ratas); el cocodrilo, quieto
+    if (C.t < REACH) {                                           // se pega a la escalera
+      const k = ease(C.t / REACH);
+      p.x = C.from.x + (C.to.x - C.from.x) * k; p.y = C.from.y + (C.to.y - C.from.y) * k;
+    } else if (C.t < UP) {                                       // sube: un peldaño cada 0,22 s
+      p.x = C.to.x; p.y = C.to.y;
+      const r = Math.floor((C.t - REACH) / 0.22);
+      if (r > C.rungs) { C.rungs = r; this.sfx.play('knock', 0.3); this.particles.dust(p.x, p.y, 1); }
+    } else if (!this.fade) { this.sfx.play('pickup'); this.sfx.play('manholeScrape', 0.5); this.transition(() => this.endSewer(), 0.3); }
+    this.particles.update(dt, this.map, (kind, pt) => this.bake(kind, pt));
+    this.camera.update(dt, p.x, p.y);
+  }
+
+  // El agente en el túnel: normal, o subiendo por la escalera (se agranda hacia la cámara y se desvanece en la luz).
+  drawClimber(ctx) {
+    const C = this.climb, p = this.player;
+    if (this.state !== 'ascend' || !C || C.t < 0.4) { p.draw(ctx); return; }
+    const k = Math.min(1, (C.t - 0.4) / 1.1), s = 1 + 0.45 * k * k, bob = Math.sin((C.t - 0.4) * 14.3) * 1.5;
+    ctx.save();
+    ctx.translate(p.x, p.y + bob - k * 8); ctx.scale(s, s); ctx.translate(-p.x, -p.y);
+    ctx.globalAlpha = 1 - 0.85 * k * k;
+    p.draw(ctx);
+    ctx.restore();
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter'; ctx.fillStyle = '#ffffff';
+    ctx.globalAlpha = 0.35 * k * k;                              // destello del pozo al llegar arriba
+    pixelDisc(ctx, p.x / WORLD_PX, p.y / WORLD_PX, 16, WORLD_PX);
+    ctx.restore();
+  }
+
+  // Sube al cuarto de servicio: se restaura el edificio y el agente sale por la boca de la escalera (`emerge`, ~1,3 s: asoma, sale y se pone la máscara). `inside`/`entered` y el
+  // arma de entrada se fijan ya, así que R durante la salida reaparece en el cuarto de servicio. La puerta principal ya estaba bloqueada.
   endSewer() {
     this.restoreFromSewer();
-    const p = this.player, sv = this.sewerRoute.service;
-    p.x = sv.x; p.y = sv.y; p.angle = -Math.PI / 2;
-    this.state = 'playing';
+    const p = this.player, sv = this.sewerRoute.service, ld = this.sewerRoute.ladder;
+    this.climb = null;
+    p.x = ld.x; p.y = ld.y; p.angle = 0;
+    this.state = 'emerge';
+    this.emerge = { t: 0, from: { x: ld.x, y: ld.y }, to: { x: sv.x, y: sv.y }, hole: { x: ld.x, y: ld.y }, sink: 1 };
     this.inside = true; this.entered = true;
-    p.putOnMask(this);
     this.entryWeapon = p.weapon ? { type: p.weapon.type, ammo: p.weapon.ammo } : null;
-    this.camera.snap(p.x, p.y);
+    this.camera.setBounds(this.map.pixelW, this.map.pixelH);
+    this.camera.snap(sv.x, sv.y);
     this.floatingTexts.length = 0; this.prints.clear(); this.particles.clear();
-    this.particles.dust(p.x, p.y, 10);
-    this.showCallout('¡ESTÁS DENTRO!', COLORS.blood, 2.4, 'SUBES POR LA ESCALERA DEL CUARTO DE SERVICIO');
-    this.sfx.setMusic('action');
+    this.sfx.play('manholeScrape', 0.4);
+  }
+
+  updateEmerge(dt) {
+    const E = this.emerge, p = this.player, ease = (k) => k * k * (3 - 2 * k);
+    const RISE = 0.7, STEP = 1.1;
+    E.t += dt;
+    for (const f of this.floatingTexts) f.t -= dt;
+    this.floatingTexts = this.floatingTexts.filter((f) => f.t > 0);
+    if (E.t < RISE) {                                            // asoma por la boca de la escalera
+      E.sink = 1 - ease(E.t / RISE);
+      if (E.t > 0.35 && !E.dust) { E.dust = true; this.particles.dust(E.hole.x, E.hole.y, 8); this.camera.addShake(3); }
+    } else if (E.t < STEP) {                                     // sale de la boca y se pone en el cuarto
+      E.sink = 0;
+      const k = ease((E.t - RISE) / (STEP - RISE));
+      p.x = E.from.x + (E.to.x - E.from.x) * k; p.y = E.from.y + (E.to.y - E.from.y) * k;
+      p.angle = -Math.PI / 2 * k;
+    } else {                                                     // arriba: máscara, combate y reloj
+      this.emerge = null;
+      this.state = 'playing';
+      p.x = E.to.x; p.y = E.to.y; p.angle = -Math.PI / 2;
+      p.putOnMask(this);
+      this.particles.dust(p.x, p.y, 6);
+      this.showCallout('¡ESTÁS DENTRO!', COLORS.blood, 2.4, 'SUBES POR LA ESCALERA DEL CUARTO DE SERVICIO');
+      this.sfx.setMusic('action');
+    }
+    this.particles.update(dt, this.map, (kind, pt) => this.bake(kind, pt));
+    this.camera.update(dt, p.x, p.y);
   }
 
   updateSewer(dt) {
@@ -2017,7 +2093,7 @@ export class Game {
     for (const q of this.pickups) q.draw(ctx, this.time);
     run.drawCroc(ctx);
     for (const b of this.bullets) b.draw(ctx);
-    if (this.player.alive) { if (this.state === 'sewer') this.player.drawAim(ctx, this); this.player.draw(ctx); }
+    if (this.player.alive) { if (this.state === 'sewer') this.player.drawAim(ctx, this); this.drawClimber(ctx); }
     this.particles.draw(ctx);
     ctx.globalCompositeOperation = 'lighter';
     ctx.globalAlpha = 0.55;
