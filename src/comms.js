@@ -14,7 +14,7 @@ const VOWELS = 'aeiouáéíóúüAEIOUÁÉÍÓÚ';
 
 // VOZ RETRO: un chirrido corto por letra tecleada (sfx `blip`). El tono depende de quién habla: máscaras rudas (oso, tiburón) más graves y ásperas, el guepardo agudo y rápido,
 // las mujeres un poco más agudas; CENTRAL (sin máscara) suena por walkie-talkie (banda estrecha y estática).
-const MASK_VOICE = { oso: { f: 105, rough: true }, tiburon: { f: 120, rough: true }, neon: { f: 165 }, guepardo: { f: 215, sharp: true, fast: true }, buho: { f: 145 } };
+const MASK_VOICE = { oso: { f: 105, rough: true }, tiburon: { f: 120, rough: true }, neon: { f: 165 }, guepardo: { f: 215, sharp: true, fast: true }, buho: { f: 145 }, aguila: { f: 130, rough: true } };
 export function voiceFor(mask, gender) {
   if (!mask) return { f: 185, radio: true };
   const m = MASK_VOICE[mask.id] || { f: 150 };

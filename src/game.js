@@ -403,20 +403,20 @@ export class Game {
   openMaskSelect() {
     this.state = 'masks';
     this.maskPhase = 'main'; // 'main' | 'support' (pisos con compañero: primero la tuya y luego la de apoyo)
-    this.maskIndex = MASKS.indexOf(this.mask);
+    this.maskIndex = this.maskList.indexOf(this.mask);
     // Posición inicial del ratón: solo un movimiento real cambia la selección.
     this.maskMouse = this.mouseInternal();
   }
 
   confirmMask() {
-    if (!this.isMaskUnlocked(MASKS[this.maskIndex])) this.maskIndex = MASKS.findIndex((m) => this.isMaskUnlocked(m));
+    if (!this.isMaskUnlocked(this.maskList[this.maskIndex])) this.maskIndex = this.maskList.findIndex((m) => this.isMaskUnlocked(m));
     // Piso con compañero (`duo`): tras elegir la tuya se elige la MÁSCARA DE APOYO (distinta, si hay más de una desbloqueada).
     if (LEVELS[this.levelIndex].duo) {
-      const free = MASKS.filter((m) => this.isMaskUnlocked(m)).length;
+      const free = this.maskList.filter((m) => this.isMaskUnlocked(m)).length;
       if (this.maskPhase !== 'support') {
         this.mainMaskIndex = this.maskIndex;
         this.maskPhase = 'support';
-        this.maskIndex = MASKS.findIndex((m, i) => i !== this.mainMaskIndex && this.isMaskUnlocked(m));
+        this.maskIndex = this.maskList.findIndex((m, i) => i !== this.mainMaskIndex && this.isMaskUnlocked(m));
         if (this.maskIndex < 0) this.maskIndex = this.mainMaskIndex;
         this.sfx.play('pickup');
         return;
@@ -426,7 +426,7 @@ export class Game {
       this.maskIndex = this.mainMaskIndex;
       this.maskPhase = 'main';
     }
-    this.mask = MASKS[this.maskIndex];
+    this.mask = this.maskList[this.maskIndex];
     this.reset({ arrival: true });
     this.beginArrival();
     this.player.cooldown = 0.3; // que el clic de confirmar no se convierta en un golpe
@@ -438,7 +438,7 @@ export class Game {
   // las 5 tarjetas de máscara · una franja con el visor de vista previa del agente a la izquierda y el nombre y la pasiva de la máscara a su
   // derecha · una sola línea de ayuda al pie. Las tarjetas se reducen lo justo para que quepa la franja (iconScale 2..5).
   maskLayout() {
-    const w = this.scene.width, h = this.scene.height, n = MASKS.length, gap = 6, sf = this.safe;
+    const w = this.scene.width, h = this.scene.height, n = this.maskList.length, gap = 6, sf = this.safe;
     const cardW = clamp(Math.floor((w - 16 - gap * (n - 1)) / n), 40, 78);
     const touch = this.input.touchMode;
     const bh = touch ? Math.max(16, Math.round(this.touch.px(36))) : 14, bw = 74;
@@ -449,7 +449,7 @@ export class Game {
     const iconScale = clamp(Math.min(Math.floor((cardW - 12) / 12), Math.floor((avail - 22) / 12)), 2, 5);
     const cardH = 12 * iconScale + 22;
     const x0 = Math.round((w - (n * cardW + (n - 1) * gap)) / 2);
-    const cards = MASKS.map((_, i) => ({ x: x0 + i * (cardW + gap), y: cardsTop, w: cardW, h: cardH }));
+    const cards = this.maskList.map((_, i) => ({ x: x0 + i * (cardW + gap), y: cardsTop, w: cardW, h: cardH }));
     const genders = [
       { id: 'male', x: Math.round(w / 2 - bw - 4), y: selY, w: bw, h: bh },
       { id: 'female', x: Math.round(w / 2 + 4), y: selY, w: bw, h: bh },
@@ -464,6 +464,9 @@ export class Game {
   isMaskUnlocked(mask) {
     return this.settings.isMaskUnlocked(mask.id);
   }
+
+  // Máscaras de la selección: las de siempre y las SECRETAS ya encontradas (RICK: ver lootRick).
+  get maskList() { return MASKS.filter((m) => !m.secret || this.settings.isMaskUnlocked(m.id)); }
 
   maskLockHint(mask) {
     return `BUSCA AL PORTADOR EN PISO ${mask.lockFloor}`;
@@ -484,7 +487,7 @@ export class Game {
   }
 
   updateMaskSelect() {
-    const input = this.input, n = MASKS.length;
+    const input = this.input, n = this.maskList.length;
     if (this.prologue && this.flow.updateMaskSkip(input)) return; // saltar exige MANTENER P (o el botón táctil): ver PrologueFlow
     const prev = this.maskIndex;
     if (input.wasPressed('ArrowLeft') || input.wasPressed('KeyA')) this.maskIndex = (this.maskIndex + n - 1) % n;
@@ -514,7 +517,7 @@ export class Game {
     if (input.wasPressed('Space') || input.wasPressed('Enter') || input.wasPressed('NumpadEnter')
       || (input.mousePressed.left && hovered >= 0)) {
       if (hovered >= 0 && input.mousePressed.left) this.maskIndex = hovered;
-      if (!this.isMaskUnlocked(MASKS[this.maskIndex])) { this.deniedMask(); return; } // bloqueada: se puede mirar pero no elegir
+      if (!this.isMaskUnlocked(this.maskList[this.maskIndex])) { this.deniedMask(); return; } // bloqueada: se puede mirar pero no elegir
       this.transition(() => this.confirmMask());
     }
   }
@@ -1205,6 +1208,7 @@ export class Game {
     }
 
     if (this.sewerRun && this.state === 'dead') { this.updateSewerDead(dt); return; } // muerto en el túnel: solo corre lo visual
+    if (this.state === 'sewer' && this.comms.cur) { this.comms.step(dt, confirm || input.mousePressed.left); return; } // diálogo en el túnel (RICK)
     if (this.state === 'descend') { this.updateDescend(dt); return; }
     if (this.state === 'ascend') { this.updateAscend(dt); return; }
     if (this.state === 'emerge') { this.updateEmerge(dt); return; }
@@ -1308,20 +1312,9 @@ export class Game {
     if (this.player.alive) {
       // Se adelanta hacia donde apuntas, pero con tope: con la vista más cerrada el
       // jugador debe seguir siendo el centro de la acción.
-      let lx, ly;
-      if (this.input.touchMode) {
-        // En táctil no hay ratón: se adelanta en la dirección en la que mira el jugador.
-        lx = Math.cos(this.player.angle) * TOUCH_LOOKAHEAD;
-        ly = Math.sin(this.player.angle) * TOUCH_LOOKAHEAD;
-      } else {
-        const m = this.mouseWorld();
-        lx = (m.x - tx) * CAMERA_LOOKAHEAD;
-        ly = (m.y - ty) * CAMERA_LOOKAHEAD;
-      }
-      const len = Math.hypot(lx, ly);
-      if (len > MAX_LOOKAHEAD) { lx *= MAX_LOOKAHEAD / len; ly *= MAX_LOOKAHEAD / len; }
-      tx += lx;
-      ty += ly;
+      const o = this.lookOffset(dt);
+      tx += o.x;
+      ty += o.y;
     }
     if (this.asphyx && this.trap && this.trap.victim) { tx = this.trap.victim.x; ty = this.trap.victim.y; } // la cámara viaja al agente que se asfixia
     if (this.prologue) [tx, ty] = this.flow.cameraFocus(tx, ty); // instrucción nueva: la cámara se desplaza suave hacia el objetivo
@@ -1706,7 +1699,7 @@ export class Game {
   touchAction() {
     const p = this.player;
     if (!p.alive || p.exec) return { id: 'attack', label: 'ATACAR', ready: false };
-    if (this.sewerRun) return this.sewerRun.nearLadder ? { id: 'interact', label: 'SUBIR', ready: true } : { id: 'attack', label: 'ATACAR', ready: false }; // túnel: escalera o lanzar la palanca
+    if (this.sewerRun) return this.sewerRun.nearLadder ? { id: 'interact', label: 'SUBIR', ready: true } : this.sewerRun.lootNear ? { id: 'interact', label: 'REGISTRAR', ready: true } : { id: 'attack', label: 'ATACAR', ready: false }; // túnel: escalera, el cuerpo o lanzar la palanca
     if (p.executionTarget(this)) return { id: 'execute', label: 'REMATAR', ready: true };
     if (this.state === 'cleared' && this.bike) {
       const b = this.bike, m = MOUNT_MARGIN * 3;
@@ -1956,6 +1949,21 @@ export class Game {
     this.camera.setBounds(s.bw, s.bh);
   }
 
+  // La máscara secreta de RICK, en el cuerpo que devoraba el cocodrilo (alcantarilla del piso 3): al registrarlo (el cocodrilo ya no está encima: se fue tras ti, está ciego o aturdido)
+  // se desbloquea (`settings.unlockMask`, se guarda) y habla el agente. Una sola vez por visita.
+  lootRick() {
+    const run = this.sewerRun;
+    if (!run || run.looted) return;
+    run.looted = true;
+    const isNew = this.settings.unlockMask('aguila'), mask = MASKS.find((m) => m.id === 'aguila'), p = this.player;
+    this.sfx.play('clear'); this.sfx.play('pickup');
+    this.particles.neon(p.x, p.y, 0, 16, Math.PI * 2);
+    this.camera.addShake(5);
+    if (isNew) this.addFloat(p.x, p.y - 30, `¡MÁSCARA ${mask.name} DESBLOQUEADA!`, '#e0a82a', 2, 3);
+    const me = { name: AGENTS[this.gender].name, color: AGENTS[this.gender].color, portrait: { mask: this.mask, gender: this.gender, level: this.goreOn ? p.bloodLevel : 0, bits: this.maskBits || [] } };
+    if (this.comms.say('rick', [{ speaker: me, text: 'Ahí terminó Rick… pobre hombre, hizo un gran trabajo.' }], { urgent: true })) this.comms.begin(this.comms.queue.shift());
+  }
+
   // Animación de subir (estado 'ascend', ~1,7 s sin control e invulnerable; el cocodrilo se queda quieto): el agente se pega a la escalera, sube peldaño a peldaño (el sprite se
   // acerca a la cámara y se funde en la luz del pozo, con un destello) y fundido al cuarto de servicio, donde sale por la boca de la escalera (`updateEmerge`).
   climbLadder() {
@@ -2072,12 +2080,42 @@ export class Game {
 
   // Cámara del jugador con el adelanto hacia donde apunta (la misma lógica que el bucle normal).
   followCamera(dt) {
-    let tx = this.player.x, ty = this.player.y, lx, ly;
-    if (this.input.touchMode) { lx = Math.cos(this.player.angle) * TOUCH_LOOKAHEAD; ly = Math.sin(this.player.angle) * TOUCH_LOOKAHEAD; }
-    else { const m = this.mouseWorld(); lx = (m.x - tx) * CAMERA_LOOKAHEAD; ly = (m.y - ty) * CAMERA_LOOKAHEAD; }
+    const o = this.lookOffset(dt);
+    this.camera.update(dt, this.player.x + o.x, this.player.y + o.y);
+  }
+
+  // Desplazamiento de la cámara respecto al jugador (mirada adelantada). Normal: en PC una fracción de la distancia al cursor y en táctil un adelanto fijo hacia donde mira, con tope.
+  // Con la máscara RICK (`perks.lookAhead` > 1) el foco va MUCHO más lejos, SIN tocar el zoom ni el tamaño de los sprites: en PC hacia el cursor (×2,4, tope 168 u); en táctil hacia
+  // donde apuntas con el joystick derecho (125 u), o hacia donde empujas el izquierdo (95 u), o hacia donde mira en reposo (70 u). El desplazamiento se suaviza aparte (`lookS`,
+  // constante 0,16 s) y se limita a ~60 % de media pantalla, así el jugador nunca sale de un margen seguro; los límites del nivel los aplica `Camera.clampTarget`.
+  lookOffset(dt) {
+    const p = this.player, k = p.perks ? p.perks.lookAhead : 1, inp = this.input;
+    let lx, ly;
+    if (!(k > 1)) {                                                // el comportamiento de siempre
+      this.lookS = null;
+      if (inp.touchMode) { lx = Math.cos(p.angle) * TOUCH_LOOKAHEAD; ly = Math.sin(p.angle) * TOUCH_LOOKAHEAD; }
+      else { const m = this.mouseWorld(); lx = (m.x - p.x) * CAMERA_LOOKAHEAD; ly = (m.y - p.y) * CAMERA_LOOKAHEAD; }
+      const len = Math.hypot(lx, ly);
+      if (len > MAX_LOOKAHEAD) { lx *= MAX_LOOKAHEAD / len; ly *= MAX_LOOKAHEAD / len; }
+      return { x: lx, y: ly };
+    }
+    let cap = MAX_LOOKAHEAD * k;
+    if (inp.touchMode) {
+      const mv = inp.moveAxis, mm = Math.hypot(mv.x, mv.y);
+      if (inp.aimActive) { lx = Math.cos(inp.aimAngle) * TOUCH_LOOKAHEAD * 2.5; ly = Math.sin(inp.aimAngle) * TOUCH_LOOKAHEAD * 2.5; }
+      else if (mm > 0.2) { lx = (mv.x / mm) * TOUCH_LOOKAHEAD * 1.9; ly = (mv.y / mm) * TOUCH_LOOKAHEAD * 1.9; }
+      else { lx = Math.cos(p.angle) * TOUCH_LOOKAHEAD * 1.4; ly = Math.sin(p.angle) * TOUCH_LOOKAHEAD * 1.4; }
+    } else {
+      const m = this.mouseWorld();
+      lx = (m.x - p.x) * CAMERA_LOOKAHEAD * k; ly = (m.y - p.y) * CAMERA_LOOKAHEAD * k;
+    }
+    const cam = this.camera, safe = 0.6 * Math.min(cam.viewW, cam.viewH) / 2 / cam.zoom;   // el jugador siempre queda dentro del 60 % de media pantalla
+    cap = Math.min(cap, safe);
     const len = Math.hypot(lx, ly);
-    if (len > MAX_LOOKAHEAD) { lx *= MAX_LOOKAHEAD / len; ly *= MAX_LOOKAHEAD / len; }
-    this.camera.update(dt, tx + lx, ty + ly);
+    if (len > cap) { lx *= cap / len; ly *= cap / len; }
+    const s = this.lookS || (this.lookS = { x: 0, y: 0 }), a = 1 - Math.exp(-dt / 0.16);   // suavizado: sin saltos bruscos al mover el ratón o el stick
+    s.x += (lx - s.x) * a; s.y += (ly - s.y) * a;
+    return { x: s.x, y: s.y };
   }
 
   // Dibujo del túnel (misma tubería que `render`: capas con la cámara, HUD y efectos de pantalla).
@@ -2107,6 +2145,10 @@ export class Game {
     ctx.fillStyle = 'rgba(6, 40, 10, 0.26)';                     // ambiente: aire húmedo verde
     ctx.fillRect(0, 0, this.scene.width, this.scene.height);
     this.renderHud(ctx);
+    if (run.lootNear && this.state === 'sewer' && !this.panel && !this.comms.cur) {              // el cuerpo que devoraba el cocodrilo (RICK)
+      const b = run.amb.bodies.find((q) => q.feed), s = this.camera.worldToScreen(b.x, b.y - 26), txt = `${this.hint(this.keys.label('kick'), 'BOTA')} · REGISTRAR EL CUERPO`, q = this.keepOnScreen(s.x, s.y, measureText(txt), 8);
+      drawText(ctx, txt, q.x, q.y, { color: COLORS.text, align: 'center', shadow: COLORS.background });
+    }
     if (run.nearLadder && this.state === 'sewer' && !this.panel) {     // aviso de la escalera
       const l = run.map.ladder, s = this.camera.worldToScreen(l.x, l.y - 26), txt = `${this.hint(this.keys.label('kick'), 'BOTA')} · SUBIR`, q = this.keepOnScreen(s.x, s.y, measureText(txt), 8);
       drawText(ctx, txt, q.x, q.y, { color: COLORS.text, align: 'center', shadow: COLORS.background });
@@ -2608,14 +2650,14 @@ export class Game {
   // `player` es el agente activo y `partner` el otro: queda quieto, visible y vulnerable (los enemigos lo ven y lo atacan). `swapControl` los intercambia (también
   // su máscara y su sangre). R vuelve a empezar con el primer agente al mando y el compañero donde estaba.
   defaultPartnerMask() {
-    const cur = MASKS.indexOf(this.mask);
-    const i = MASKS.findIndex((m, k) => k !== cur && this.isMaskUnlocked(m));
+    const cur = this.maskList.indexOf(this.mask);
+    const i = this.maskList.findIndex((m, k) => k !== cur && this.isMaskUnlocked(m));
     return i >= 0 ? i : cur;
   }
 
   makePartner(start) {
     if (this.partnerMaskIndex == null) this.partnerMaskIndex = this.defaultPartnerMask();
-    this.partnerMask = MASKS[this.partnerMaskIndex];
+    this.partnerMask = this.maskList[this.partnerMaskIndex];
     const pos = this.partnerPos || { x: start.x + 26, y: start.y };
     const t = new Player(pos.x, pos.y, maskEffects(this.partnerMask), this.partnerMask.id, true);
     t.agentId = 'support';
@@ -4330,7 +4372,7 @@ export class Game {
 
     const { cards, iconScale, bottom, preview, descCx, genders } = this.maskLayout();
     const bob = Math.floor(performance.now() / 300) % 2;
-    MASKS.forEach((mask, i) => {
+    this.maskList.forEach((mask, i) => {
       const c = cards[i];
       const sel = i === this.maskIndex;
       const y = c.y - (sel ? bob : 0);
@@ -4380,7 +4422,7 @@ export class Game {
     }
 
     // Vista previa en vivo (agente + máscara elegidos) y la ficha de la máscara a su derecha.
-    const mask = MASKS[this.maskIndex], now = performance.now() / 1000;
+    const mask = this.maskList[this.maskIndex], now = performance.now() / 1000;
     drawAgentPreview(ctx, preview, mask.id, shown, now);
     if (!this.isMaskUnlocked(mask)) {
       ctx.fillStyle = 'rgba(5, 0, 15, 0.7)';

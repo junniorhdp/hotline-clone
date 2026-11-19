@@ -284,6 +284,15 @@ const MASK_HEADS = {
     'NMMQQMK.',
     '.MRK....',
   ],
+  // ÁGUILA (RICK, secreta): plumas oscuras con la cresta dorada, ojos de oro a los lados y el pico de hueso afilado al frente.
+  aguila: [
+    '.NRK....',
+    'NMMQMKK.',
+    'NMMMKOOK',
+    'NMMMKOOK',
+    'NMMQMKK.',
+    '.NRK....',
+  ],
 };
 
 // Color de cada máscara: los mismos tonos que su retrato del menú, pero un punto más claros
@@ -296,6 +305,7 @@ const MASK_SKINS = {
   guepardo: { K: '#0a0a0f', R: '#ffd089', M: '#ffb23f', N: '#c47a1a', O: '#fff1d0', Q: '#3a2006' },
   tiburon:  { K: '#0a0a0f', R: '#9fb0d6', M: '#7b8fb8', N: '#45557a', O: '#f5f3ff', Q: '#141a2c' },
   buho:     { K: '#0a0a0f', R: '#9b74c4', M: '#7a53a0', N: '#4a3066', O: '#ff8a3d', Q: '#ffd166' },
+  aguila:   { K: '#0a0a0f', R: '#e0a82a', M: '#454558', N: '#1c1c28', O: '#ece4c8', Q: '#f2c230' },
 };
 
 // Ropa de cada máscara. La cazadora cian es la identidad del protagonista y el contraste contra
@@ -310,6 +320,7 @@ const OUTFITS = {
   guepardo: { ...HOOD, x: '#ff9d2e' },
   tiburon:  { ...HOOD, x: '#9fb0d6' },
   buho:     { ...HOOD, x: '#9b74c4' },
+  aguila:   { ...HOOD, x: '#e0a82a' },
 };
 
 // Sin máscara y femenina: la misma cabeza que `bare` con el pelo violeta.

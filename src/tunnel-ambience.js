@@ -155,6 +155,7 @@ export class Ambience {
     this.bodies.forEach((b, i) => {
       const tug = b.feed && croc.mode === 'feed' ? Math.sin(t * 9) * 1.4 : 0;               // el que se está comiendo, a tirones
       drawSprite(ctx, b.kind, b.x + tug + Math.sin(t * 0.7 + i) * 1.2, b.y + Math.sin(t * 1.3 + i * 2) * 1.5, b.a + Math.sin(t * 0.5 + i) * 0.06, { alpha: 0.95 });
+      if (b.feed && Math.sin(t * 0.8) > 0.985) { ctx.fillStyle = '#ffe9a0'; ctx.globalAlpha = 0.8; pixelRect(ctx, b.x + 4, b.y - 5, 1, 1); } // un destello dorado muy leve (la máscara)
       ctx.fillStyle = '#9bff5a'; ctx.globalAlpha = 0.35;                                    // espuma pegada al cuerpo
       pixelRect(ctx, b.x - 12 + Math.sin(t * 1.1 + i) * 2, b.y + 11, 3, 1); pixelRect(ctx, b.x + 8, b.y - 12 + Math.sin(t + i) * 2, 2, 1);
       ctx.globalAlpha = 1;

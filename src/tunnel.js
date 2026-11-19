@@ -252,6 +252,7 @@ export class SewerRun {
     this.map = buildTunnelMap();
     this.clock = 0;
     this.nearLadder = false;
+    this.lootNear = false; this.looted = false;  // el cuerpo con la máscara secreta de RICK
     this.hinted = false;                       // el aviso de «lánzale el arma» sale una sola vez
     this.croc = new Croc(this.map);
     this.amb = new Ambience(this.map, this.map.crocStart);
@@ -324,7 +325,12 @@ export class SewerRun {
     this.amb.update(dt, game);
     const l = this.map.ladder;
     this.nearLadder = p.alive && Math.hypot(p.x - l.x, p.y - l.y) < LADDER_REACH;
+    // El cuerpo que devoraba el cocodrilo (con la máscara secreta de RICK): solo se puede registrar si el cocodrilo ya no está comiendo ni pegado a él (se fue a por ti, está ciego o aturdido).
+    const body = this.amb.bodies.find((b) => b.feed);
+    const away = c.mode !== 'feed' && (c.mode === 'blind' || c.mode === 'crash' || Math.hypot(c.x - body.x, c.y - body.y) > 75);
+    this.lootNear = p.alive && !this.looted && away && Math.hypot(p.x - body.x, p.y - body.y) < 44;
     if (this.nearLadder && (game.keys.pressed('kick') || game.keys.pressed('execute'))) game.climbLadder();
+    else if (this.lootNear && (game.keys.pressed('kick') || game.keys.pressed('execute'))) game.lootRick();
   }
 
   // Capas bajo los personajes: reflejos del agua y la luz que cae por el pozo de la escalera de subida.

@@ -15,7 +15,7 @@ import { MASKS } from './masks.js';
 export const SETTINGS_KEY = 'neonrush.settings.v1';
 // Máscaras desbloqueadas (`unlockedMasks` dentro de neonrush.settings.v1): NEON y BRUTE de serie; STRIKE, BLADE y GHOST se ganan
 // abatiendo a su portador (pisos 2, 3 y 4). Nunca se pierden (ni con RESTAURAR). Lectura defensiva: solo ids válidos y las de serie siempre.
-export const DEFAULT_UNLOCKED = MASKS.filter((m) => !m.lockFloor).map((m) => m.id);
+export const DEFAULT_UNLOCKED = MASKS.filter((m) => !m.lockFloor && !m.secret).map((m) => m.id); // (las secretas se encuentran: ver Game.lootRick)
 
 export const OPTIONS = [
   // --- Audio: se conectan a los buses de audio.js (el mute rápido M sigue funcionando por encima) ---
