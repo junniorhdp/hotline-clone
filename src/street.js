@@ -74,6 +74,13 @@ export class StreetLife {
       kind: 'dumpster', x: (p.x + p.w / 2) * TILE, y: (p.y + p.h / 2) * TILE, w: p.w * TILE, h: p.h * TILE, open: false,
       loot: i === 0 || rnd() < 0.45 ? weighted(STREET_LOOT, rnd()) : null,
     }));
+    // Piso 3 (`sewerRoute`): un contenedor guarda SIEMPRE la palanca y la primera tapa de alcantarilla (`entrance`) es la entrada real al túnel; sin palanca no se abre.
+    this.crowbarDump = null; this.manhole = null;
+    if (game.sewerRoute && !game.entered) {
+      if (this.dumpsters.length) { const d = this.dumpsters[Math.floor(rnd() * this.dumpsters.length)]; d.loot = 'crowbar'; d.crowbar = true; this.crowbarDump = d; }
+      const en = (m.sewers || []).find((c) => c.entrance);
+      if (en) this.manhole = { kind: 'manhole', x: en.x, y: en.y, w: TILE, h: TILE };
+    }
     const box = (c) => (c ? { x: c.x, y: c.y, w: TILE, h: TILE } : null);
     this.vending = st.vending ? { kind: 'vending', ...box(st.vending) } : null;
     this.phone = st.phone ? { kind: 'phone', ...box(st.phone) } : null;
@@ -95,7 +102,7 @@ export class StreetLife {
 
   // Objetivos de interacción: contenedores, máquina, cabina y, si llevas una moneda, los vagabundos a los que se les puede dar.
   targets() {
-    const t = [...this.dumpsters, this.vending, this.phone].filter(Boolean);
+    const t = [...this.dumpsters, this.vending, this.phone, this.manhole].filter(Boolean);
     if (this.run.coins > 0) {
       for (const n of this.npcs) {
         if (!n.alive || !n.canGift) continue;
@@ -151,6 +158,24 @@ export class StreetLife {
     }
   }
 
+  // Piso 3, fuera del edificio: qué señala el marcador de objetivo y qué dice el panel. Sin palanca: la que esté suelta o el contenedor que la guarda; con ella, la tapa de la entrada.
+  hasCrowbar() { const w = this.game.player.weapon; return !!(w && w.type === 'crowbar'); }
+  loosePick() { return this.game.pickups.find((q) => q.type === 'crowbar' && q.alive && !q.flying) || null; }
+  guide() {
+    const at = (o, label) => ({ x: o.x - TILE / 2, y: o.y - TILE / 2, w: TILE, h: TILE, label, below: true });
+    if (this.hasCrowbar()) return this.manhole ? at(this.manhole, 'ALCANTARILLA') : null;
+    const loose = this.loosePick();
+    if (loose) return at(loose, 'PALANCA');
+    const d = this.crowbarDump;
+    if (d && !d.open) return { x: d.x - d.w / 2, y: d.y - d.h / 2, w: d.w, h: d.h, label: 'BASURA', below: true };
+    return this.manhole ? at(this.manhole, 'ALCANTARILLA') : null;
+  }
+  goalText() {
+    if (this.hasCrowbar()) return 'FUERZA LA ALCANTARILLA · ES LA ENTRADA';
+    if (this.loosePick()) return 'RECOGE LA PALANCA · CLIC DERECHO';
+    return 'PUERTA CERRADA · BUSCA UNA PALANCA EN LA BASURA';
+  }
+
   // Ruido (disparo, golpe, patada) en (x, y): si viene del interior del edificio, los civiles de la calle que no ven al jugador lo oyen y sueltan una
   // línea de alerta indirecta (ver Vagrant.hearNoise).
   noise(x, y, radius) {
@@ -172,7 +197,11 @@ export class StreetLife {
       g.sfx.play('knock');
       g.camera.addShake(3);
       g.particles.dust(t.x, t.y, 8);
-      if (t.loot) {
+      if (t.crowbar && !p.weapon) {                 // con las manos libres, la palanca ya queda en la mano
+        p.weapon = { type: 'crowbar', ammo: 0 };
+        g.sfx.play('pickup');
+        g.addFloat(t.x, t.y - 14, '¡PALANCA! LA LLEVAS EN LA MANO', '#c2682a', 1, 1.8);
+      } else if (t.loot) {
         const ang = Math.atan2(p.y - t.y, p.x - t.x);
         const reach = (t.w > t.h ? t.h : t.w) / 2 + 10;
         const pk = new Pickup(t.loot, t.x + Math.cos(ang) * reach, t.y + Math.sin(ang) * reach, 0);
@@ -180,6 +209,13 @@ export class StreetLife {
         g.pickups.push(pk);
         g.addFloat(t.x, t.y - 14, `¡${WEAPON_DEFS[t.loot].name}!`, '#c2682a', 1, 1.4);
       } else g.addFloat(t.x, t.y - 14, 'SOLO BASURA', '#9d8fb8', 1, 1.1);
+    } else if (t.kind === 'manhole') {
+      if (!(p.weapon && p.weapon.type === 'crowbar')) {
+        g.addFloat(t.x, t.y - 26, 'NECESITAS UNA PALANCA', COLORS.blood, 1, 1.7);
+        g.sfx.play('doorThud'); g.camera.addShake(2);
+        return;
+      }
+      g.descendSewer();
     } else if (t.kind === 'vending') {
       if (this.run.coins <= 0) { g.addFloat(t.x, t.y - 38, 'NECESITAS UNA MONEDA', COLORS.blood, 1, 1.3); g.sfx.play('empty'); return; }
       this.run.coins--;
@@ -362,6 +398,7 @@ export class StreetLife {
       let txt;
       if (t.kind === 'dumpster') txt = t.open ? null : `${key} · REGISTRAR`;
       else if (t.kind === 'npc') txt = `${key} · DAR MONEDA`;
+      else if (t.kind === 'manhole') txt = g.player.weapon && g.player.weapon.type === 'crowbar' ? `${key} · FORZAR LA TAPA` : 'NECESITAS UNA PALANCA';
       else if (t.kind === 'vending') txt = this.run.coins > 0 ? `${key} · USAR MONEDA` : 'MÁQUINA · FALTA UNA MONEDA';
       else txt = this.ringing ? `${key} · CONTESTAR` : `${key} · TELÉFONO`;
       if (txt) label(txt, t.x, t.kind === 'npc' ? t.y + 14 : t.y - t.h / 2 - 12, t.kind === 'phone' && this.ringing ? COLORS.player : COLORS.text);

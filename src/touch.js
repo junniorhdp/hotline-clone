@@ -53,7 +53,7 @@ const ASSIST_LEVELS = {
   high: { cone: 0.7, pull: 0.9, range: 440 },
 };
 const MARGIN = 6;
-const GAMEPLAY = new Set(['playing', 'cleared', 'scuffle']);
+const GAMEPLAY = new Set(['playing', 'cleared', 'scuffle', 'sewer']);
 
 const ICON_COLOR = '#ff2e55'; // rojo neón (el blanco va fijo en las 'o')
 const inside = (r, p) => p.x >= r.x && p.x < r.x + r.w && p.y >= r.y && p.y < r.y + r.h;

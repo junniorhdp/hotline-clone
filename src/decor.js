@@ -157,6 +157,27 @@ export const FLOORS = {
     if (rnd() < 0.2) crack(ctx, '#1c182c', x0 + 2 + Math.floor(rnd() * 11), y0 + 1, 6 + Math.floor(rnd() * 8), rnd);
     if (rnd() < 0.08) rect(ctx, '#8a4a6a', x0 + 3 + Math.floor(rnd() * 9), y0 + 3 + Math.floor(rnd() * 9), 2, 1); // chicle
   },
+  // Piedra húmeda de la alcantarilla: adoquines oscuros con verdín y charcos.
+  sewerStone(ctx, tx, ty, rnd) {
+    const x0 = tx * PX, y0 = ty * PX;
+    rect(ctx, '#151a24', x0, y0, PX, PX);
+    for (let r = 0; r < 4; r++) {
+      const off = (r + ty) % 2 ? 0 : 4;
+      rect(ctx, '#0d1119', x0, y0 + r * 4 + 3, PX, 1);
+      for (let x = off; x < PX; x += 8) rect(ctx, '#0d1119', x0 + x, y0 + r * 4, 1, 3);
+    }
+    dots(ctx, '#1d2733', x0, y0, PX, PX, 14, rnd);
+    dots(ctx, '#1f4a3a', x0, y0, PX, PX, 5, rnd); // verdín
+    if (rnd() < 0.12) { ctx.globalAlpha = 0.45; ctx.fillStyle = '#0b3a44'; pixelDisc(ctx, x0 + 4 + rnd() * 8, y0 + 4 + rnd() * 8, 2 + rnd() * 3); ctx.globalAlpha = 1; }
+  },
+  // Agua del canal: verde azulada oscura con vetas de luz (el brillo animado lo pone el túnel).
+  water(ctx, tx, ty, rnd) {
+    const x0 = tx * PX, y0 = ty * PX;
+    rect(ctx, '#0a2a33', x0, y0, PX, PX);
+    dots(ctx, '#0e3a45', x0, y0, PX, PX, 22, rnd);
+    dots(ctx, '#06181f', x0, y0, PX, PX, 14, rnd);
+    for (let i = 0; i < 2; i++) rect(ctx, '#1a6a78', x0 + Math.floor(rnd() * 11), y0 + 2 + Math.floor(rnd() * 11), 3 + Math.floor(rnd() * 3), 1);
+  },
   // Chapa metálica antideslizante (almacenes, servidores): marcas en diagonal y óxido.
   metal(ctx, tx, ty, rnd) {
     const x0 = tx * PX, y0 = ty * PX;
@@ -383,12 +404,30 @@ const DECO_ART = {
     ctx.fillStyle = 'rgba(255, 224, 138, 0.10)'; pixelDisc(ctx, cx, cy, 7);
   },
   // Base de la alcantarilla: el agujero oscuro con su marco (la tapa la dibuja sewer.js y se desliza).
+  // Pozo de la escalera (cuarto de servicio y final del túnel): boca oscura con dos largueros y peldaños.
+  ladder(ctx, x, y, w, h) {
+    rect(ctx, K, x + 2, y + 1, w - 4, h - 2);
+    rect(ctx, '#05030a', x + 3, y + 2, w - 6, h - 4);
+    rect(ctx, '#9aa0b8', x + 4, y + 2, 1, h - 4);
+    rect(ctx, '#9aa0b8', x + w - 5, y + 2, 1, h - 4);
+    for (let yy = y + 4; yy < y + h - 3; yy += 3) rect(ctx, '#c9c3e6', x + 4, yy, w - 8, 1);
+    rect(ctx, '#ffbe0b', x + 2, y + 1, w - 4, 1); // marco de aviso
+    rect(ctx, '#ffbe0b', x + 2, y + h - 2, w - 4, 1);
+  },
   sewer(ctx, x, y, w, h) {
     const cx = x + w / 2, cy = y + h / 2;
     ctx.fillStyle = '#0a0712'; pixelDisc(ctx, cx, cy, 11);
     ctx.fillStyle = '#2a2540'; pixelDisc(ctx, cx, cy, 10);
     ctx.fillStyle = '#04030a'; pixelDisc(ctx, cx, cy, 8);
     ctx.fillStyle = '#0b2a2a'; pixelDisc(ctx, cx, cy + 1, 5);
+  },
+  // Pilar de piedra del túnel (2×2): bloque con juntas y musgo; sirve de cobertura y de cebo para la embestida del cocodrilo.
+  pillar(ctx, x, y, w, h, rnd) {
+    box(ctx, '#3a4658', x + 1, y + 1, w - 2, h - 2);
+    rect(ctx, '#556377', x + 2, y + 2, w - 4, 2);
+    rect(ctx, '#2a3342', x + 2, y + h - 5, w - 4, 3);
+    for (let i = 1; i < 3; i++) rect(ctx, '#2a3342', x + 2, y + Math.floor((h * i) / 3), w - 4, 1);
+    dots(ctx, '#2f6a4a', x + 2, y + 2, w - 4, h - 4, 8, rnd);
   },
   debris(ctx, x, y, w, h, rnd) {
     for (let i = 0; i < 6; i++) {

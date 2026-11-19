@@ -23,6 +23,7 @@ const PALETTE = {
   p: '#7a2f8f', P: '#4d1a63', t: '#ff4fa3',   // pelo violeta (cola de caballo) y goma
   q: '#ff4fa3',                              // raya rosa de la bomber femenina
   r: COLORS.blood,                           // huella de sangre (footMid y footDark la recolorean)
+  1: '#2f8f4a', 2: '#1b5a30', 3: '#63d47a', 4: '#e8e6b0', 5: '#ffd23a', 7: '#ffffff', // cocodrilo
 };
 
 // Cuerpo del jugador (plantilla): vista cenital, hombros perpendiculares a la mirada, mangas
@@ -175,7 +176,38 @@ const DEFS = {
   door: ['dddddddddddddddd', 'dDDDDDDDDDDDDDDd', 'kkkkkkkkkkkkkkkk'],
   muzzle: ['..w..', '.wow.', 'wooow', '.wow.', '..w..'],
   arrow: ['j....', 'jj...', 'jjj..', 'jj...', 'j....'],
+  // Llave de la puerta principal (piso 3): anilla y paletón dorados con dientes.
+  key: ['.kkk.........', 'kyuyk........', 'ky.ykkkkkkkk.', 'kyyykyyyyyyyk', '.kkkkkkkkykyk', '.........kkk.'],
+  croc: crocGrid(),
 };
+
+// Cocodrilo del tramo de alcantarilla (piso 3), mirando a +X: cola, cuerpo con patas, cabeza con ojos y hocico dentado. Se genera por perfil de ancho
+// (simétrico arriba-abajo) para no escribir 36×13 píxeles a mano. 1 verde · 2 oscuro · 3 lomo · 4 vientre · 5 ojo · 7 dientes.
+function crocGrid() {
+  const cols = 36, rows = 13, cy = 6;
+  const hw = [0, 0, 1, 1, 1, 2, 2, 2, 3, 3,                       // cola
+    4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,                      // cuerpo
+    3, 3, 3, 3, 3, 3, 2, 2, 2, 2, 2, 1];                           // cabeza y hocico
+  const g = Array.from({ length: rows }, () => Array(cols).fill('.'));
+  const legs = new Set([11, 12, 13, 19, 20, 21]);
+  for (let c = 0; c < cols; c++) {
+    for (let r = cy - hw[c]; r <= cy + hw[c]; r++) {
+      const d = Math.abs(r - cy);
+      const edge = d === hw[c] || c === 0 || c === cols - 1 || (hw[c - 1] ?? -1) < d || (hw[c + 1] ?? -1) < d;
+      let ch = edge ? 'k' : '1';
+      if (!edge) {
+        if (r === cy && c >= 2 && c <= 27) ch = '3';                                 // lomo
+        else if (d === 2 && c % 3 === 0 && c > 8 && c < 24) ch = '2';                // escudos
+        else if (d >= hw[c] - 1 && c > 9) ch = '2';                                  // flancos en sombra
+      }
+      if (edge && c >= 30 && c <= 34 && d === hw[c]) ch = c % 2 ? '7' : 'k';        // dientes
+      g[r][c] = ch;
+    }
+  }
+  for (const c of legs) for (const s of [-1, 1]) { g[cy + s * 5][c] = '2'; g[cy + s * 6][c] = 'k'; g[cy + s * 4][c] = '1'; }
+  for (const s of [-1, 1]) { g[cy + s * 2][27] = '5'; g[cy + s * 2][28] = 'k'; g[cy + s][34] = '2'; } // ojos y fosas nasales
+  return g.map((row) => row.join(''));
+}
 
 // --- Cabezas de las máscaras (vista cenital) ------------------------------------------------
 // Cada máscara pinta SOLO la cabeza del jugador; el cuerpo (sprite `player`) es el mismo para

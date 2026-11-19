@@ -494,8 +494,8 @@ export class Player {
         }
       }
       // Los civiles de la calle también reciben el golpe (huyen y penalizan al final del piso: ver StreetLife.meleeHit).
-      if (game.street.meleeHit(this, def)) hit = true;
-      if (game.hostages.meleeHit(this, def)) hit = true; // rehén: el primer golpe lo tumba (aviso), el segundo lo mata
+      if (!game.sewerRun && game.street.meleeHit(this, def)) hit = true; // (en el túnel de la alcantarilla no hay civiles ni rehenes: sus posiciones son las de la calle)
+      if (!game.sewerRun && game.hostages.meleeHit(this, def)) hit = true; // rehén: el primer golpe lo tumba (aviso), el segundo lo mata
       // Si no hay a quién pegar pero hay una puerta delante, el golpe es una patada.
       const kicked = !hit && game.kickDoor(this);
       if (!kicked) game.recordAttack(this.weapon ? this.weapon.type : 'fists', hit); // estadísticas: golpe y si conectó

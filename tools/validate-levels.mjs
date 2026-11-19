@@ -7,6 +7,7 @@
 // Uso: `npm run check:levels` (sale con error si algo falla).
 import { LEVELS, loadLevel, isWallTile, TILE, findPath } from '../src/map.js';
 import { PROLOGUE_DEF } from '../src/prologue.js';
+import { buildTunnelMap, TUNNEL_PILLARS } from '../src/tunnel-map.js';
 let bad = 0;
 let prevEnemies = 0;
 const fail = (m) => { bad++; console.log('  ✗ ' + m); };
@@ -177,6 +178,34 @@ for (let n = 0; n <= LEVELS.length; n++) {
     else if (!findPath(map, T.center.x, T.center.y, M.x - 14, M.y)) fail('el punto de encuentro es inalcanzable desde el despacho');
     else if (!findPath(map, T.ext.x, T.ext.y, M.x + 14, M.y)) fail('el punto de encuentro es inalcanzable desde la calle');
     else console.log('  final: detonador y punto de encuentro alcanzables');
+  }
+  // 5j) entrada por la alcantarilla (piso 3): el cuarto de servicio (donde se sale por la escalera y se reaparece con R) es suelo libre, está apartado de los enemigos (≥ 6 casillas) y se llega
+  // desde él a todos los enemigos, a la puerta principal y a la moto; la boca de la escalera existe; exactamente un enemigo corriente lleva la llave; y el tramo de túnel (tunnel-map.js) tiene
+  // la escalera de subida alcanzable desde el punto de aparición, la ronda del cocodrilo libre y el punto de aparición fuera de su vista.
+  if (L.sewerRoute) {
+    const S = L.sewerRoute.service, fr = (p) => !isWallTile(map, Math.floor(p.x / TILE), Math.floor(p.y / TILE));
+    if (!fr(S)) fail('el cuarto de servicio está tapado');
+    const near = L.enemies.filter((e) => Math.hypot(e.x - S.x, e.y - S.y) < 6 * TILE);
+    if (near.length) fail(`${near.length} enemigos a menos de 6 casillas del cuarto de servicio`);
+    const lost = L.enemies.filter((e) => !findPath(map, S.x, S.y, e.x, e.y));
+    if (lost.length) fail(`${lost.length} enemigos inalcanzables desde el cuarto de servicio`);
+    if (!findPath(map, S.x, S.y, L.mainDoor.x, L.mainDoor.y - TILE)) fail('no hay camino del cuarto de servicio a la puerta principal');
+    if (!map.props.some((p) => p.type === 'ladder' && p.x === L.sewerRoute.ladder.tx && p.y === L.sewerRoute.ladder.ty)) fail('falta la boca de la escalera en el cuarto de servicio');
+    if (L.key && L.enemies.filter((e) => e.keyCarrier).length !== 1) fail('tiene que haber exactamente un enemigo con la llave');
+    if (L.enemies.some((e) => e.keyCarrier && e.carrier)) fail('el enemigo de la llave no puede ser también el portador de máscara');
+    const T = buildTunnelMap(), tf = (tx, ty) => !isWallTile(T, tx, ty);
+    const tseen = new Set([`${Math.floor(T.spawn.x / TILE)},${Math.floor(T.spawn.y / TILE)}`]), tq = [[Math.floor(T.spawn.x / TILE), Math.floor(T.spawn.y / TILE)]];
+    while (tq.length) { const [x, y] = tq.shift(); for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const k = `${x + dx},${y + dy}`; if (!tseen.has(k) && tf(x + dx, y + dy)) { tseen.add(k); tq.push([x + dx, y + dy]); } } }
+    if (!tseen.has(`${T.ladder.tx},${T.ladder.ty}`)) fail('túnel: la escalera de subida es inalcanzable desde el punto de aparición');
+    for (const r of T.route) if (!tf(Math.floor(r.x / TILE), Math.floor(r.y / TILE)) || !tseen.has(`${Math.floor(r.x / TILE)},${Math.floor(r.y / TILE)}`)) fail('túnel: un punto de la ronda del cocodrilo está tapado');
+    for (let i = 1; i < T.route.length; i++) { // la ronda por línea recta: sin pilares de por medio
+      const a = T.route[i - 1], b = T.route[i];
+      for (let k = 0; k <= 20; k++) if (!tf(Math.floor((a.x + (b.x - a.x) * k / 20) / TILE), Math.floor((a.y + (b.y - a.y) * k / 20) / TILE))) { fail('túnel: un pilar corta la ronda del cocodrilo'); break; }
+    }
+    const closest = Math.min(...T.route.map((r) => Math.hypot(r.x - T.spawn.x, r.y - T.spawn.y)));
+    if (closest < 260) fail(`túnel: el punto de aparición está a ${(closest / TILE).toFixed(1)} casillas de la ronda (el cocodrilo te vería al bajar)`);
+    if (TUNNEL_PILLARS.length < 4) fail('túnel: pocos pilares (sin cobertura)');
+    console.log(`  alcantarilla: cuarto de servicio libre y apartado · llave en 1 enemigo · túnel con escalera alcanzable, ronda libre y ${TUNNEL_PILLARS.length} pilares`);
   }
   // 6) cada enemigo puede llegar al jugador y a la salida (pathfinding)
   const pEntry = L.entry;
