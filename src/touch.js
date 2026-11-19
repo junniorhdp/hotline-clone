@@ -325,7 +325,7 @@ export class TouchControls {
     for (const id in this.flash) this.flash[id] = Math.max(0, this.flash[id] - dt);
     if (!input.touchMode) { if (this.move || this.aim) this.reset(); return; }
 
-    if (!GAMEPLAY.has(g.state) || g.panel) {
+    if (!GAMEPLAY.has(g.state) || g.panel || g.comms.cur) {   // con una línea de comunicación en pantalla un toque es un clic (sin joysticks)
       if (this.move || this.aim || this.roles.size) this.reset();
       // Pantallas fuera de la partida: primero los botones táctiles de la pantalla (VOLVER,
       // TERMINAR…), que "pulsan" la tecla equivalente. Si no se toca ninguno: con el panel de
@@ -360,10 +360,7 @@ export class TouchControls {
       const p = g.toInternal(t.x, t.y);
       if (t.isNew && !this.roles.has(t.id)) {
         const button = L.buttons.find((b) => inside(b, p));
-        if (g.comms.hit(p)) {                         // tocar la caja de comunicación la salta (sin disparar ni mover)
-          this.roles.set(t.id, 'ignored');
-          g.comms.skip();
-        } else if (button) {
+        if (button) {
           this.roles.set(t.id, `button:${button.id}`);
           this.press(button.id, t.id);
         } else if (p.x < half && !this.move) {

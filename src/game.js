@@ -918,12 +918,6 @@ export class Game {
 
   updatePrologue(dt) {
     const input = this.input, c = this.comms;
-    // Saltar la línea visible con Espacio o clic: se consume la pulsación para que no patee ni ataque en falso (en táctil, tocar la caja: ver touch.js).
-    if (c.shown && (input.wasPressed('Space') || input.mousePressed.left)) {
-      c.skip();
-      input.pressed.delete('Space'); input.mousePressed.left = false;
-      this.player.cooldown = Math.max(this.player.cooldown, 0.3);
-    }
     if (this.state === 'playing') this.prologueT += dt;
     if (this.state === 'playing' && !this.inside && this.prologueT > 1.5) this.prologueLine('intro');
     if (this.state === 'playing' && this.inside && this.time > 2.5) this.prologueLine('enter');
@@ -1215,6 +1209,7 @@ export class Game {
       return;
     }
 
+    if (this.comms.cur) { this.comms.step(dt, confirm || input.mousePressed.left); return; } // línea de comunicación del prólogo: el mundo se congela (como la radio del piso 10)
     if (this.state === 'ambush') { this.updateAmbush(dt); return; }
     if (this.state === 'ending') { this.updateEnding(dt, input.down('Enter')); return; }
     if (this.state === 'radio') { this.updateRadio(dt, confirm || input.mousePressed.left); return; }
@@ -1728,7 +1723,7 @@ export class Game {
     this.hostages.refresh(true); // repartir con los rehenes rescatados AHORA: 1 → moto, 2 o más → auto (ninguno en la moto)
     // Extracción de rehenes: la fuga espera a que el rehén esté junto a la moto o a que los rehenes estén en el auto (ver Hostages.extractionBusy).
     if (this.hostages.extractionBusy()) {
-      if (performance.now() - (this.waitHintAt || 0) > 1500) { this.waitHintAt = performance.now(); this.addFloat(this.player.x, this.player.y - 22, '¡ESPERA A LOS REHENES!', '#9be32a', 1, 1.4); }
+      if (performance.now() - (this.waitHintAt || 0) > 1500) { this.waitHintAt = performance.now(); const pw = this.prologue && this.hostages.list.find((x) => x.partner && x.state !== 'dead'); this.addFloat(this.player.x, this.player.y - 22, pw ? `¡ESPERA A ${AGENTS[pw.agent].name}!` : '¡ESPERA A LOS REHENES!', '#9be32a', 1, 1.4); }
       return;
     }
     this.hostages.boardBike(); // un solo rehén liberado: se sube a la moto detrás del protagonista
@@ -4243,7 +4238,6 @@ export class Game {
     this.drawFloatingTexts(ctx);
     this.street.drawHud(ctx, w, h);
     this.hostages.drawHud(ctx, w, h);
-    this.comms.draw(ctx, w);
     this.hostages.drawLeaveAsk(ctx, w, h);
     this.drawTrapHud(ctx, w, h);
     this.drawFinalHud(ctx, w, h);
@@ -4349,7 +4343,8 @@ export class Game {
       else { const ss = this.statsSummary(); this.drawStatsPanel(ctx, Math.round(cx - this.statsPanelWidth(ss) / 2), Math.min(Math.round(h / 2) - 26 + bandH + 6, h - this.safe.b - 6 - 53), ss); } // sin pasar de la zona segura inferior
       this.touch.drawScreenButtons(ctx);
     }
-    this.touch.draw(ctx);
+    this.comms.draw(ctx, w, h); // encima de todo el HUD (ayuda de controles incluida)
+    if (!this.comms.cur) this.touch.draw(ctx);
     if (this.state === 'results') this.drawResults(ctx, w, h);
     this.drawToast(ctx);
 
