@@ -244,6 +244,7 @@ export class Game {
     this.levelIndex = 0;
     this.comms = new Comms(this); // líneas cortas de lore no modales (prólogo)
     this.skipHold = 0; this.skipAsk = 0; this.prologueT = 0;
+    this.cineK = 0; // 0..1: cuánto están puestas las barras de cine de llegada / fuga (anima las barras y el fundido del HUD)
     this.tut = { done: new Set(), seen: new Set(), cur: null }; this.tutFocus = null; // instrucciones contextuales del prólogo (ver updateTutorial)
     this.prologue = false; // tutorial aparte del piso 1 (ver prologue.js): sin resultados, récords ni estadísticas de campaña
     this.debug = false;
@@ -907,6 +908,26 @@ export class Game {
     this.floorStats.record(this.levelIndex + 1, this.results.rank, this.results.levelScore);
   }
 
+  // Dibuja `fn(ctx)` con el HUD atenuado según las barras de cine (`cineK`): visible del todo sin ellas, nada con ellas, y a medias mientras se deslizan
+  // (en una capa aparte, porque el HUD asigna `globalAlpha` por su cuenta).
+  fadeHud(ctx, w, h, fn) {
+    const a = 1 - this.cineK;
+    if (a >= 0.995) { fn(ctx); return; }
+    if (a <= 0.005) return;
+    if (!this._hudLayer || this._hudLayer.width !== w || this._hudLayer.height !== h) {
+      this._hudLayer = document.createElement('canvas');
+      this._hudLayer.width = w; this._hudLayer.height = h;
+    }
+    const hc = this._hudLayer.getContext('2d');
+    hc.imageSmoothingEnabled = false;
+    hc.clearRect(0, 0, w, h);
+    fn(hc);
+    ctx.save();
+    ctx.globalAlpha = a;
+    ctx.drawImage(this._hudLayer, 0, 0);
+    ctx.restore();
+  }
+
   // ¿Animación del agente al cerrar / abrir la puerta principal? (opción ANIMACIÓN DE LA PUERTA)
   get doorAnimOn() { return this.settings.get('doorAnim') !== false; }
 
@@ -1211,6 +1232,9 @@ export class Game {
 
   update(dt) {
     const input = this.input;
+    const cineTo = this.state === 'arriving' || this.state === 'leaving' ? 1 : 0;   // barras de cine: se deslizan y el HUD se desvanece / reaparece
+    this.cineK += (cineTo - this.cineK) * (1 - Math.exp(-7 * dt));
+    if (Math.abs(cineTo - this.cineK) < 0.01) this.cineK = cineTo;
     // Primero los controles táctiles: traducen los dedos a teclas/clics que se leen abajo.
     this.touch.update(dt);
     // Filtro VS: entra y sale con suavidad (también al resolverse el forcejeo o reiniciar).
@@ -4328,6 +4352,8 @@ export class Game {
 
     // Márgenes del HUD: separación fija + zona segura (muesca / esquinas redondeadas).
     const L = 6 + this.safe.l, R = w - 6 - this.safe.r, T = this.safe.t;
+    // El HUD de debajo de las barras de cine (arma, máscara, puntos, combo, ayuda de controles) aparece y desaparece con ellas (`cineK`).
+    this.fadeHud(ctx, w, h, (ctx) => {
     const def = p.def;
     let weaponText = def.name;
     if (p.weapon && def.maxAmmo) weaponText += `  ${p.weapon.ammo}/${def.maxAmmo}`;
@@ -4374,6 +4400,7 @@ export class Game {
       drawText(ctx, `${k.label('kick')} PATEAR · ${k.label('execute')} REMATAR · R REINICIAR · ESC PAUSA · M SONIDO`, 6, h - 13, { color: '#7d6f98' });
     }
 
+    });
     if (this.debug) {
       drawText(ctx, `DEBUG · ${this.fps} FPS · BALAS ${this.bullets.length} · PART ${this.particles.list.length} · CASQ ${this.particles.shells.length}`, L, 54 + T, { color: COLORS.debug });
       drawText(ctx, `ESCENA ${w}X${h} · ESCALA ${this.view.scale} · MÁSCARA ${this.mask.id} · MANCHAS ${this.stains} · SANGRE ${this.player.bloodLevel} (${this.gore.toFixed(1)}) · PISADAS ${this.prints.list.length} · SUELAS ${this.player.soles} · CIVILES ${this.civilianRecord.hurt}/${this.civilianRecord.killed}/${this.civilianRecord.gifts} ${this.civiliansHelp()} · ${this.inside ? 'DENTRO' : 'FUERA'} PUERTA ${this.mainDoor.locked ? 'BLOQUEADA' : this.mainDoor.closing ? 'CERRANDO' : 'LIBRE'}`, L, 65 + T, { color: COLORS.debug });
@@ -4393,12 +4420,20 @@ export class Game {
     }
     this.drawCallout(ctx, w, h);
     this.drawGoalPanel(ctx, w, h);
-    // Cinemáticas: barras negras arriba y abajo y cómo saltarlas.
-    if (this.state === 'arriving' || this.state === 'leaving') {
+    // Cinemáticas (llegada y fuga): barras negras arriba y abajo que se deslizan al entrar y al salir (`cineK`), con un filo de neón en el borde interior;
+    // mientras están, el HUD de debajo se desvanece (fadeHud) y vuelve al irse.
+    if (this.cineK > 0.01 && ['arriving', 'leaving', 'playing', 'cleared'].includes(this.state)) {
+      const k = this.cineK, bh = Math.round(CINE_BAR * k);
       ctx.fillStyle = '#05000f';
-      ctx.fillRect(0, 0, w, CINE_BAR);
-      ctx.fillRect(0, h - CINE_BAR, w, CINE_BAR);
-      if (!this.endingRide) drawText(ctx, this.hint('ESPACIO · CLIC: SALTAR', 'TOCA: SALTAR'), cx, h - CINE_BAR + 4, { color: '#9d8fb8', align: 'center' }); // la salida del final no se salta
+      ctx.fillRect(0, 0, w, bh);
+      ctx.fillRect(0, h - bh, w, bh);
+      if (bh > 1) {
+        ctx.globalAlpha = 0.85 * k;
+        ctx.fillStyle = COLORS.wall; ctx.fillRect(0, bh - 1, w, 1);          // filo rosa bajo la barra de arriba
+        ctx.fillStyle = COLORS.player; ctx.fillRect(0, h - bh, w, 1);        // filo cian sobre la barra de abajo
+        ctx.globalAlpha = 1;
+      }
+      if (k > 0.9 && (this.state === 'arriving' || this.state === 'leaving') && !this.endingRide) drawText(ctx, this.hint('ESPACIO · CLIC: SALTAR', 'TOCA: SALTAR'), cx, h - CINE_BAR + 4, { color: '#9d8fb8', align: 'center' }); // la salida del final no se salta
     }
     if (this.state === 'dead') this.drawRunover(ctx, w, h);
     if (this.state === 'dead' && !(this.asphyx && this.asphyx.t < 2.6)) { // (con la cinemática de asfixia, la franja sale al final)
@@ -4418,7 +4453,7 @@ export class Game {
       this.touch.drawScreenButtons(ctx);
     }
     this.comms.draw(ctx, w, h); // encima de todo el HUD (ayuda de controles incluida)
-    if (!this.comms.cur) this.touch.draw(ctx);
+    if (!this.comms.cur) this.fadeHud(ctx, w, h, (c) => this.touch.draw(c));
     if (this.state === 'results') this.drawResults(ctx, w, h);
     this.drawToast(ctx);
 

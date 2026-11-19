@@ -1129,6 +1129,9 @@ Colores centralizados en `COLORS` (`src/utils.js`) y `PALETTE` (`src/sprites.js`
 - **Avisos de pantalla dinámicos**: el marcador de remate (`E · CLIC IZQ`), el `¡APORREA …!` del forcejeo y la ayuda de controles de la esquina inferior (`WASD MOVER · … ATACAR · … RECOGER/LANZAR`,
   `… PATEAR · … REMATAR`) usan `keys.label(acción)` y muestran las teclas actuales.
 
+## Barras de cine de llegada y fuga (`cineK`)
+En `arriving` y `leaving` (la fuga del final incluida) las barras negras de arriba y abajo **se deslizan al entrar y al salir** (`game.cineK` 0..1, suavizado en `update`; alto `CINE_BAR` × `cineK`) con un **filo de neón** en el borde interior (rosa arriba, cian abajo), y el **HUD que queda debajo se desvanece al entrar y reaparece al salir** (`fadeHud`: lo dibuja en una capa aparte y la compone con alfa `1 − cineK`, porque el HUD asigna `globalAlpha` por su cuenta; sin barras se dibuja directo, sin coste). Se atenúan: arma, miniatura de la máscara y sangre, compañero, puntos y avisos, medidor de combo, ayuda de controles (PC) y los **botones táctiles**. Siguen visibles los carteles (`FIN`, `¡SALTO ÉPICO!`), los textos flotantes y `ESPACIO · CLIC: SALTAR` (dentro de la barra, con las barras ya puestas). Las barras de reencuentro, radio, emboscada y final (`ending`) no cambian.
+
 ## HUD de la partida (arriba a la derecha)
 Solo los **puntos** (`NNNN PTS`, texto doble) y, debajo, los avisos raros (`SONIDO OFF`, `EFECTOS LIGEROS`...). **Ya no hay contador de enemigos, récord ni nombre del piso** en la partida (tapaban demasiado en móvil; el récord sale en resultados y el menú). Lo que se coloca respecto a ese HUD se ajustó: `keepOnScreen` baja los textos solo hasta y 22 (31 si hay avisos: `flagsOn`), el botón de pausa táctil queda en y 32 (justo bajo los puntos) y el cuadro del teléfono en y 36. El medidor de combo del centro no cambia.
 
