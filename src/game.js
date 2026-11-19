@@ -1070,7 +1070,7 @@ export class Game {
     this.bullets = [];
     this.particles.clear();
     this.prints.clear();
-    this.sewer = new Sewer(this.map.sewers.filter((c) => !c.entrance)); // easter egg: cocodrilo en la alcantarilla (la tapa de la entrada real no lo lleva)
+    this.sewer = new Sewer(this.map.sewers); // easter egg: cocodrilo en la alcantarilla (la tapa de la entrada real se dibuja cerrada y nunca lo suelta: ver Sewer.update)
     this.sewer.bind(this);
     this.guilt = null;
     this.street = new StreetLife(this); // contenedores, moneda, máquina, cabina y vagabundo de la calle
@@ -1846,6 +1846,8 @@ export class Game {
     if (this.fade || this.state !== 'playing') return;
     this.sfx.play('manholeScrape'); this.sfx.play('knock');
     this.camera.addShake(5);
+    const lid = this.sewer.covers.find((c) => c.entrance);
+    if (lid) { lid.face = 0; lid.dir = this.sewer.pickDir(lid, this); lid.slide = 1; } // la tapa se desliza al forzarla con la palanca
     this.transition(() => this.beginSewer(), 0.4);
   }
 
@@ -1956,7 +1958,7 @@ export class Game {
     if (this.wallBloodDirty && this.goreOn) ctx.drawImage(this.wallBloodLayer, 0, 0, pixelW, pixelH);
     this.drawObjectiveMarker(ctx); // sobre las paredes: la escalera está pegada al muro este y su rótulo no se corta
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.fillStyle = 'rgba(0, 24, 30, 0.22)';                     // ambiente: aire húmedo verde azulado
+    ctx.fillStyle = 'rgba(6, 40, 10, 0.26)';                     // ambiente: aire húmedo verde
     ctx.fillRect(0, 0, this.scene.width, this.scene.height);
     this.renderHud(ctx);
     if (run.nearLadder && this.state === 'sewer' && !this.panel) {     // aviso de la escalera
@@ -3460,6 +3462,7 @@ export class Game {
     // Un ruido hecho por el jugador (disparo, golpe, patada) delata su posición 0,8 s aunque esté en la sombra (ver Enemy.canSee).
     if (this.map.dark && Math.hypot(x - this.player.x, y - this.player.y) < 6) this.map.reveal = 0.8;
     if (this.sewer) this.sewer.heard(x, y, radius);
+    if (this.sewerRun) this.sewerRun.croc.hear(x, y, radius); // el cocodrilo del túnel oye los ruidos
     if (this.street) this.street.noise(x, y, radius); // los civiles de la calle oyen lo que pasa dentro (alerta indirecta)
     // Los enemigos investigan el origen del ruido; tras una pared o una puerta cerrada se oye más apagado (radio ×0,6).
     for (const e of this.enemies) {
@@ -4341,7 +4344,7 @@ export class Game {
   // flecha parpadeante y borde que late). Solo sale cuando el cartel grande ya se ha ido.
   drawGoalPanel(ctx, w, h) {
     if (this.callout) return;
-    const outside = this.state === 'playing' && !this.inside && !!this.sewerRoute && this.bannerTimer <= 0, tunnel = this.state === 'sewer';
+    const outside = this.state === 'playing' && !this.inside && !!this.sewerRoute && this.bannerTimer <= 0 && !this.street.dialog, tunnel = this.state === 'sewer'; // (con el cuadro del teléfono abierto no se pisan)
     if (this.state !== 'cleared' && !outside && !tunnel) return;
     // Con la puerta aún por abrir, el objetivo es abrirla (ámbar); al abrirse sale «REGRESA A LA MOTO». Piso 10: el objetivo es detonar.
     const pend = this.doorPending && !this.trap, col = pend || outside ? '#ffbe0b' : COLORS.player;

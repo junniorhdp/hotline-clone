@@ -23,7 +23,7 @@ const PALETTE = {
   p: '#7a2f8f', P: '#4d1a63', t: '#ff4fa3',   // pelo violeta (cola de caballo) y goma
   q: '#ff4fa3',                              // raya rosa de la bomber femenina
   r: COLORS.blood,                           // huella de sangre (footMid y footDark la recolorean)
-  1: '#2f8f4a', 2: '#1b5a30', 3: '#63d47a', 4: '#e8e6b0', 5: '#ffd23a', 7: '#ffffff', // cocodrilo
+  1: '#4fbf4a', 2: '#2a7a3a', 3: '#a8f08a', 4: '#e8e6b0', 5: '#ffd23a', 7: '#ffffff', // cocodrilo
 };
 
 // Cuerpo del jugador (plantilla): vista cenital, hombros perpendiculares a la mirada, mangas
