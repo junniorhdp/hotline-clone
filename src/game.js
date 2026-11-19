@@ -2815,7 +2815,7 @@ export class Game {
     const ease = (k) => k * k * (3 - 2 * k), clamp01 = (v) => Math.max(0, Math.min(1, v));
     const CUT1 = 1.0, CUT2 = 2.7, END = 5.0;
     X.t += dt;
-    if (skip && X.t > 0.8 && X.t < END) X.t = END;
+    if (X.t < END && this.holdSkip(X, dt)) X.t = END;
     if (this.callout && (this.callout.t -= dt) <= 0) this.callout = null;
     for (const f of this.floatingTexts) f.t -= dt;
     this.floatingTexts = this.floatingTexts.filter((f) => f.t > 0);
@@ -3104,6 +3104,7 @@ export class Game {
       }
     }
     if (this.flashT > 0) { ctx.fillStyle = `rgba(255,255,255,${0.2 * (this.flashT / 0.08)})`; ctx.fillRect(0, 0, w, h); }
+    if (this.state === 'exit' && this.finalExit && this.finalExit.t > 0.8) this.drawSkipHint(ctx, w, h - CINE_BAR + 4, this.finalExit); // salida del agente de apoyo
     // Pista para saltar la cinemática (mantener ENTER) con su barra
     const E = this.ending;
     if (E && this.state === 'ending') {
@@ -3352,6 +3353,23 @@ export class Game {
     this.touch.haptic([60, 40, 60]);
   }
 
+  // SALTO DELIBERADO de una cinemática (radio de la trampa y salida del rol): hay que MANTENER Espacio / Enter (en táctil, mantener el dedo) 1,2 s, y solo cuenta si se empieza a apretar
+  // DESPUÉS de que arrancó (el clic o el toque con el que venías peleando, o un dedo que ya estaba en los joysticks, no la salta por accidente). `C.skipHold` alimenta la barra.
+  holdSkip(C, dt) {
+    const inp = this.input, held = inp.down('Space') || inp.down('Enter') || inp.down('NumpadEnter') || (inp.touchMode && inp.touches && inp.touches.size > 0);
+    if (!held) { C.skipArm = true; C.skipHold = 0; return false; }
+    if (!C.skipArm) return false;                      // sigue apretando lo que ya apretaba al empezar
+    C.skipHold = (C.skipHold || 0) + dt;
+    return C.skipHold >= 1.2;
+  }
+
+  // Pista y barra de «mantén para saltar» (abajo, sobre la barra de cine).
+  drawSkipHint(ctx, w, y, C) {
+    const txt = this.hint('MANTÉN ESPACIO: SALTAR', 'MANTÉN EL DEDO: SALTAR'), cx = Math.round(w / 2);
+    drawText(ctx, txt, cx, y, { color: '#9d8fb8', align: 'center' });
+    if (C.skipHold > 0) { ctx.fillStyle = '#05000f'; ctx.fillRect(cx - 41, y + 10, 82, 4); ctx.fillStyle = COLORS.player; ctx.fillRect(cx - 40, y + 11, Math.round(80 * Math.min(1, C.skipHold / 1.2)), 2); }
+  }
+
   // Cinemática de radio: el mundo congelado (salvo las puertas, que acaban de sellarse), cámara en el atrapado y luego en el compañero; Espacio/Enter/clic la salta.
   updateRadio(dt, skip) {
     const R = this.radioCine, a = this.trap.victim, b = this.partner;
@@ -3428,7 +3446,7 @@ export class Game {
     }
     const f = R.cut ? b : a;
     this.camera.update(dt, f.x, f.y + (R.st && !R.inside ? 110 : 0)); // en la calle, el encuadre queda por encima de la caja de radio
-    if (skip && R.t > 0.8) R.t = R.end;
+    if (this.holdSkip(R, dt)) R.t = R.end;
     if (R.t >= R.end) this.endRadio();
   }
 
@@ -3488,7 +3506,7 @@ export class Game {
     ctx.fillStyle = '#6b6b85'; ctx.fillRect(wx + 1, wy + 6, 6, 12);
     ctx.fillStyle = '#14141e'; ctx.fillRect(wx + 5, wy, 1, 6);
     ctx.fillStyle = Math.floor(R.t * 6) % 2 ? '#ff2a4a' : '#7d3a4a'; ctx.fillRect(wx + 4, wy - 1, 3, 2);
-    if (R.t > 0.8) drawText(ctx, this.hint('ESPACIO: SALTAR', 'TOCA: SALTAR'), bx + bw - 6, by + bh - 20, { color: '#7d6f98', align: 'right' });
+    if (R.t > 0.8) { drawText(ctx, this.hint('MANTÉN ESPACIO: SALTAR', 'MANTÉN EL DEDO: SALTAR'), bx + bw - 6, by + bh - 20, { color: '#7d6f98', align: 'right' }); if (R.skipHold > 0) { ctx.fillStyle = '#05000f'; ctx.fillRect(bx + bw - 86, by + bh - 9, 80, 3); ctx.fillStyle = COLORS.player; ctx.fillRect(bx + bw - 86, by + bh - 9, Math.round(80 * Math.min(1, R.skipHold / 1.2)), 3); } }
   }
 
   updateTrap(dt) {
