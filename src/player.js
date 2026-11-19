@@ -291,7 +291,7 @@ export class Player {
   // Cerrar la puerta principal al entrar (`close`: se gira, da un paso hacia ella y tira de la hoja; se cierra y se bloquea a mitad de la animación) y abrirla al despejar
   // el piso (`open`: al llegar a ella). ~0,9 s sin control; el arma se guarda un momento. La hoja se mueve en `fired` (0,5 s): ver Door.lock / unlock.
   startDoorAnim(game, kind, door) {
-    if (this.doorAnim || !this.alive) { if (kind === 'close') door.lock(); else door.unlock(); return; } // (si no se puede animar, el efecto se aplica igual)
+    if (!game.doorAnimOn || this.doorAnim || !this.alive) { if (kind === 'close') door.lock(); else door.unlock(); return; } // (sin animación —opción— o si no se puede, el efecto se aplica igual)
     this.doorAnim = { kind, t: 0, dur: 0.9, door, fired: false };
     this.moving = false; this.swing = 0; this.recoil = 0; this.muzzle = 0;
   }
@@ -315,7 +315,7 @@ export class Player {
       else {
         d.unlock();
         game.sfx.play('unlock');
-        game.addFloat(this.x, this.y - 24, `${AGENTS[this.gender].name} ABRE LA PUERTA`, '#9be32a', 1, 1.5);
+        game.showCallout('SALIDA ABIERTA', COLORS.player, 1.8, `${AGENTS[this.gender].name} ABRE LA PUERTA`); // el objetivo «REGRESA A LA MOTO» sale al apagarse
       }
     }
     if (a.t >= a.dur) { this.doorAnim = null; this.cooldown = Math.max(this.cooldown, 0.15); }

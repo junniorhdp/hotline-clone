@@ -904,6 +904,9 @@ export class Game {
     this.floorStats.record(this.levelIndex + 1, this.results.rank, this.results.levelScore);
   }
 
+  // ¿Animación del agente al cerrar / abrir la puerta principal? (opción ANIMACIÓN DE LA PUERTA)
+  get doorAnimOn() { return this.settings.get('doorAnim') !== false; }
+
   // --- Prólogo: líneas de lore (comms.js) y salto -----------------------------------------------------
   agentInfo(gender) { return { name: AGENTS[gender].name, color: AGENTS[gender].color }; }
 
@@ -1332,6 +1335,7 @@ export class Game {
     // (la calle de arriba y de los lados también tiene y < lockY, y ahí no se bloquea nada).
     if (this.state === 'playing' && !this.inside && this.player.alive && this.inBuilding(this.player)) this.beginLockdown();
     if (this.trap) this.updateTrap(dt);
+    if (this.doorPending && !this.doorAnimOn) { this.doorPending = false; this.mainDoor.unlock(); this.sfx.play('unlock'); } // (se desactivó la animación con la puerta pendiente)
     if (this.state === 'cleared' && this.doorPending && this.player.alive && !this.player.doorAnim && !this.player.vomit && !this.player.exec
       && Math.hypot(this.player.x - this.mainDoor.cx, this.player.y - this.mainDoor.cy) < 84) { this.doorPending = false; this.player.startDoorAnim(this, 'open', this.mainDoor); }
     if (this.state === 'playing' && this.inside && this.enemies.every((e) => !e.alive) && (!this.trap || (this.trap.state === 'done' && this.final && this.final.done))) { // con trampa: resolverla, reencontrarse y ganar la fase final antes de dar el piso por despejado
@@ -1340,7 +1344,7 @@ export class Game {
       // abre el ambiente del edificio vacío, que acompaña hasta la moto. La puerta se desbloquea.
       this.sfx.setMusic('empty');
       // La puerta principal la abre el agente al llegar a ella (animación; `doorPending`). En el piso 10 (trampa y final con la carrera de los dos agentes y el rehén de la IA) se abre sola.
-      if (this.trap) { this.mainDoor.unlock(); this.sfx.play('unlock'); } else this.doorPending = true;
+      if (this.trap || !this.doorAnimOn) { this.mainDoor.unlock(); this.sfx.play('unlock'); } else this.doorPending = true;
       this.showCallout('PISO COMPLETADO', COLORS.player, 2.8, '¡EDIFICIO LIMPIO!'); // el objetivo (REGRESA A LA MOTO) sale al apagarse
     }
     // Junto a la moto con el piso despejado: si no quedan rehenes atados, la fuga arranca sola; si quedan, solo se AVISA (el rescate es opcional) y el jugador decide:
@@ -4192,7 +4196,9 @@ export class Game {
   // flecha parpadeante y borde que late). Solo sale cuando el cartel grande ya se ha ido.
   drawGoalPanel(ctx, w, h) {
     if (this.state !== 'cleared' || this.callout) return;
-    const text = this.trap ? (this.final && this.final.role === 'limpieza' ? 'ACTIVA EL DETONADOR · DESPACHO' : null) : 'REGRESA A LA MOTO'; // piso 10: el objetivo es detonar
+    // Con la puerta aún por abrir, el objetivo es abrirla (ámbar); al abrirse sale «REGRESA A LA MOTO». Piso 10: el objetivo es detonar.
+    const pend = this.doorPending && !this.trap, col = pend ? '#ffbe0b' : COLORS.player;
+    const text = this.trap ? (this.final && this.final.role === 'limpieza' ? 'ACTIVA EL DETONADOR · DESPACHO' : null) : pend ? 'ABRE LA SALIDA · ACÉRCATE A LA PUERTA' : 'REGRESA A LA MOTO';
     if (!text) return;
     const e = 1 - Math.pow(1 - clamp(this.goalAge / 0.3, 0, 1), 3);
     const colX = this.input.touchMode ? this.touch.rightColumn().x : w; // en táctil, el panel se queda a la izquierda de la columna de botones
@@ -4209,7 +4215,7 @@ export class Game {
     ctx.fillStyle = '#0a0418';
     ctx.fillRect(x, y, pw, ph);
     ctx.globalAlpha = (0.5 + 0.5 * pulse) * e;
-    ctx.fillStyle = COLORS.player;
+    ctx.fillStyle = col;
     ctx.fillRect(x, y, pw, 1);
     ctx.fillRect(x, y + ph - 1, pw, 1);
     ctx.fillRect(x, y, 1, ph);
@@ -4219,7 +4225,7 @@ export class Game {
     if (Math.floor(performance.now() / 250) % 2 === 0) {
       for (let i = 0; i < 4; i++) ctx.fillRect(x + 8 + i, y + Math.round(ph / 2) - 4 + i, 1, 8 - 2 * i);
     }
-    drawText(ctx, text, x + 20 + Math.round(tw / 2), y + 6, { color: COLORS.player, scale, align: 'center' });
+    drawText(ctx, text, x + 20 + Math.round(tw / 2), y + 6, { color: col, scale, align: 'center' });
     ctx.restore();
   }
 
