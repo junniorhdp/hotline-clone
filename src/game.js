@@ -12,6 +12,7 @@ import { Boss, drawBossBar } from './boss.js';
 import { bloodyMaskPortrait, PORTRAIT_PAD, BLOOD_DROPS, villainPortrait, villainDef, AGENTS, drawGenderIcon, drawAgentPreview, drawPadlock } from './portraits.js';
 import { Ads } from './ads.js';
 import { Sewer } from './sewer.js';
+import { SewerRun } from './tunnel.js';
 import { BikeExit, EXIT_EXTRA } from './exits.js';
 import { StreetLife, newStreetRun } from './street.js';
 import { Hostages } from './hostages.js';
@@ -21,7 +22,7 @@ import { Comms, drawTalkingMask, voiceFor, talkBlips } from './comms.js';
 import { weaponCategory } from './weapons.js';
 import { buildOptionsMenu, buildPauseMenu } from './options-menu.js';
 import { Player, bloodLevelFor, FINISH_RANGE } from './player.js';
-import { Enemy, resetAiBudget } from './enemy.js';
+import { Enemy, resetAiBudget, AI, setAiLevel } from './enemy.js';
 import { SecurityCams } from './cameras.js';
 import { ShieldGuard } from './shield.js';
 const GAS_TIME = 60;        // s hasta que el gas mata al agente atrapado en el despacho (piso 10)
@@ -218,6 +219,7 @@ export class Game {
     this.prints = new Footprints(); // huellas de sangre (se desvanecen; ver Footprints)
     this.pools = [];                // charcos de baja: { x, y, r } en unidades del mundo
     this.sfx = new Sfx();
+    this.sfx.isLite = () => this.fx && this.fx.lite; // la música omite sus capas extra en móviles flojos (efectos ligeros)
     this.fx = new ScreenFx();
     this.history = new ScoreHistory();
     this.score = new Score(this.history.best());
@@ -244,6 +246,7 @@ export class Game {
     this.levelIndex = 0;
     this.comms = new Comms(this); // líneas cortas de lore no modales (prólogo)
     this.flow = new PrologueFlow(this); // lógica y estado del prólogo / tutorial (instrucciones, salto, fin): prologue-flow.js
+    this.climb = null; this.emerge = null; this.descent = null; this.sewerRun = null; this.sewerStash = null; this.sewerRoute = null; this.keyRoute = false; this.hasKey = false; this.keyDrop = null; this.keyHintAt = 0; this.shutAt = 0; // piso 3: entrada por la alcantarilla y llave de salida
     this.cineK = 0; // 0..1: cuánto están puestas las barras de cine de llegada / fuga (anima las barras y el fundido del HUD)
     this.prologue = false; // tutorial aparte del piso 1 (ver prologue.js): sin resultados, récords ni estadísticas de campaña
     this.debug = false;
@@ -380,6 +383,7 @@ export class Game {
   // Entra en un piso nuevo (el total de puntos acumulado se conserva) pasando antes por la
   // selección de máscara.
   goToLevel(index) {
+    this.sfx.pickTrack(); // pista de combate del piso nuevo (sin repetir la última); con R se conserva
     this.levelIndex = index;
     this.streetRun = newStreetRun();
     this.civilianBase = { ...this.civilianRecord }; // el registro al entrar al piso (R lo restaura)
@@ -399,20 +403,20 @@ export class Game {
   openMaskSelect() {
     this.state = 'masks';
     this.maskPhase = 'main'; // 'main' | 'support' (pisos con compañero: primero la tuya y luego la de apoyo)
-    this.maskIndex = MASKS.indexOf(this.mask);
+    this.maskIndex = this.maskList.indexOf(this.mask);
     // Posición inicial del ratón: solo un movimiento real cambia la selección.
     this.maskMouse = this.mouseInternal();
   }
 
   confirmMask() {
-    if (!this.isMaskUnlocked(MASKS[this.maskIndex])) this.maskIndex = MASKS.findIndex((m) => this.isMaskUnlocked(m));
+    if (!this.isMaskUnlocked(this.maskList[this.maskIndex])) this.maskIndex = this.maskList.findIndex((m) => this.isMaskUnlocked(m));
     // Piso con compañero (`duo`): tras elegir la tuya se elige la MÁSCARA DE APOYO (distinta, si hay más de una desbloqueada).
     if (LEVELS[this.levelIndex].duo) {
-      const free = MASKS.filter((m) => this.isMaskUnlocked(m)).length;
+      const free = this.maskList.filter((m) => this.isMaskUnlocked(m)).length;
       if (this.maskPhase !== 'support') {
         this.mainMaskIndex = this.maskIndex;
         this.maskPhase = 'support';
-        this.maskIndex = MASKS.findIndex((m, i) => i !== this.mainMaskIndex && this.isMaskUnlocked(m));
+        this.maskIndex = this.maskList.findIndex((m, i) => i !== this.mainMaskIndex && this.isMaskUnlocked(m));
         if (this.maskIndex < 0) this.maskIndex = this.mainMaskIndex;
         this.sfx.play('pickup');
         return;
@@ -422,7 +426,7 @@ export class Game {
       this.maskIndex = this.mainMaskIndex;
       this.maskPhase = 'main';
     }
-    this.mask = MASKS[this.maskIndex];
+    this.mask = this.maskList[this.maskIndex];
     this.reset({ arrival: true });
     this.beginArrival();
     this.player.cooldown = 0.3; // que el clic de confirmar no se convierta en un golpe
@@ -434,7 +438,7 @@ export class Game {
   // las 5 tarjetas de máscara · una franja con el visor de vista previa del agente a la izquierda y el nombre y la pasiva de la máscara a su
   // derecha · una sola línea de ayuda al pie. Las tarjetas se reducen lo justo para que quepa la franja (iconScale 2..5).
   maskLayout() {
-    const w = this.scene.width, h = this.scene.height, n = MASKS.length, gap = 6, sf = this.safe;
+    const w = this.scene.width, h = this.scene.height, n = this.maskList.length, gap = 6, sf = this.safe;
     const cardW = clamp(Math.floor((w - 16 - gap * (n - 1)) / n), 40, 78);
     const touch = this.input.touchMode;
     const bh = touch ? Math.max(16, Math.round(this.touch.px(36))) : 14, bw = 74;
@@ -445,7 +449,7 @@ export class Game {
     const iconScale = clamp(Math.min(Math.floor((cardW - 12) / 12), Math.floor((avail - 22) / 12)), 2, 5);
     const cardH = 12 * iconScale + 22;
     const x0 = Math.round((w - (n * cardW + (n - 1) * gap)) / 2);
-    const cards = MASKS.map((_, i) => ({ x: x0 + i * (cardW + gap), y: cardsTop, w: cardW, h: cardH }));
+    const cards = this.maskList.map((_, i) => ({ x: x0 + i * (cardW + gap), y: cardsTop, w: cardW, h: cardH }));
     const genders = [
       { id: 'male', x: Math.round(w / 2 - bw - 4), y: selY, w: bw, h: bh },
       { id: 'female', x: Math.round(w / 2 + 4), y: selY, w: bw, h: bh },
@@ -460,6 +464,9 @@ export class Game {
   isMaskUnlocked(mask) {
     return this.settings.isMaskUnlocked(mask.id);
   }
+
+  // Máscaras de la selección: las de siempre y las SECRETAS ya encontradas (RICK: ver lootRick).
+  get maskList() { return MASKS.filter((m) => !m.secret || this.settings.isMaskUnlocked(m.id)); }
 
   maskLockHint(mask) {
     return `BUSCA AL PORTADOR EN PISO ${mask.lockFloor}`;
@@ -480,7 +487,7 @@ export class Game {
   }
 
   updateMaskSelect() {
-    const input = this.input, n = MASKS.length;
+    const input = this.input, n = this.maskList.length;
     if (this.prologue && this.flow.updateMaskSkip(input)) return; // saltar exige MANTENER P (o el botón táctil): ver PrologueFlow
     const prev = this.maskIndex;
     if (input.wasPressed('ArrowLeft') || input.wasPressed('KeyA')) this.maskIndex = (this.maskIndex + n - 1) % n;
@@ -510,7 +517,7 @@ export class Game {
     if (input.wasPressed('Space') || input.wasPressed('Enter') || input.wasPressed('NumpadEnter')
       || (input.mousePressed.left && hovered >= 0)) {
       if (hovered >= 0 && input.mousePressed.left) this.maskIndex = hovered;
-      if (!this.isMaskUnlocked(MASKS[this.maskIndex])) { this.deniedMask(); return; } // bloqueada: se puede mirar pero no elegir
+      if (!this.isMaskUnlocked(this.maskList[this.maskIndex])) { this.deniedMask(); return; } // bloqueada: se puede mirar pero no elegir
       this.transition(() => this.confirmMask());
     }
   }
@@ -609,6 +616,7 @@ export class Game {
     const en = e.kind === 'shield' ? new ShieldGuard(e.x, e.y, e.patrol, weapon, e.melee) : new Enemy(e.x, e.y, e.patrol, weapon, e.kind, e.melee);
     // Portador: solo si su máscara aún no está desbloqueada (si no, es un enemigo normal).
     if (e.carrier && !this.settings.isMaskUnlocked(e.carrier)) en.setCarrier(e.carrier);
+    if (e.keyCarrier) en.hasKey = true; // lleva la llave de la puerta principal (piso 3): la suelta al caer
     if (e.scared) en.scared = true; // asustado: se paraliza al verte (prólogo; ver Enemy.freeze)
     if (e.activity && e.activity !== 'patrol') en.setActivity(e.activity, e.seatAngle ?? null); // fumando, sentado o vigilando (ver placeActivities en map.js)
     return en;
@@ -691,6 +699,10 @@ export class Game {
       // Entra en la tabla: antes de enseñarla, se pide la firma (iniciales de arcade).
       this.startInitials(position);
       this.sfx.play('clear');
+    } else if (!completed) {
+      // Abandonar tras morir SIN entrar al Top 5: directo al menú con un aviso breve (la tabla de récords es para quien bate algo o termina el edificio).
+      this.openMenu();
+      this.showToast(`FIN DE PARTIDA · PISO ${this.levelIndex + 1} · ${this.score.total.toLocaleString('es')} PTS`, 3);
     } else {
       this.state = 'gameover';
     }
@@ -922,6 +934,9 @@ export class Game {
     ctx.restore();
   }
 
+  // Nivel de IA enemiga (opción IA ENEMIGA): TONTOS / PROMEDIO / GENIOS; ver AI en enemy.js.
+  setAiLevel(v) { setAiLevel(v); }
+
   // ¿Animación del agente al cerrar / abrir la puerta principal? (opción ANIMACIÓN DE LA PUERTA)
   get doorAnimOn() { return this.settings.get('doorAnim') !== false; }
 
@@ -934,6 +949,7 @@ export class Game {
 
   // Partida nueva empezando en el piso `index` (desde el menú o el selector de pisos).
   startRunAt(index, prologue = false) {
+    this.sfx.pickTrack(); // pista de combate de la partida nueva (sin repetir la última)
     this.runId = newRunId();
     this.prologue = prologue;
     this.comms.forget(); this.flow.forget();
@@ -952,6 +968,7 @@ export class Game {
   }
 
   openMenu(screen = 'title') {
+    if (this.sewerRun) this.restoreFromSewer();
     this.state = 'menu';
     this.prologue = false;
     this.showRecords = false;
@@ -1006,6 +1023,8 @@ export class Game {
   //    la que cruzó el umbral y la puerta ya bloqueada. R no repite la llegada: tiene que ser instantáneo.
   //  - Reintento sin haber entrado todavía: otra vez en la acera, sin cinemática.
   reset({ arrival = false } = {}) {
+    this.descent = null; this.climb = null; this.emerge = null;
+    if (this.sewerRun) this.restoreFromSewer(); // R dentro del túnel: se vuelve a la calle (aún no se había entrado al edificio)
     if (this.swapped) { this.swapBundles(); this.swapped = false; } // R: vuelve a controlar al primer agente con su máscara y su sangre
     // Armas aleatorias con semilla por partida y piso: al reintentar (R) todo sigue en su sitio;
     // en una partida nueva cambian.
@@ -1018,8 +1037,9 @@ export class Game {
     this.hasBoss = level.boss;
     this.par = level.par;
     this.map = level.map;
+    this.sewerRoute = level.sewerRoute; this.keyRoute = !!level.key; this.hasKey = false; this.keyDrop = null; // piso 3: ver beginSewer / dropKey
     const retryInside = !arrival && this.entered;
-    const start = retryInside ? level.entry : level.player;
+    const start = retryInside ? (level.sewerRoute ? level.sewerRoute.service : level.entry) : level.player; // con la ruta de la alcantarilla, R reaparece en el cuarto de servicio
     this.player = new Player(start.x, start.y, maskEffects(this.mask), this.mask.id, retryInside);
     this.player.gender = this.gender;
     this.player.agentId = 'main';
@@ -1049,12 +1069,12 @@ export class Game {
     this.pickups = level.weapons.map((w) => new Pickup(w.type, w.x, w.y));
     this.doors = level.doors.map((d) => new Door(d.tx, d.ty, d.horizontal, d.main));
     this.mainDoor = this.doors.find((d) => d.main);
-    if (retryInside) this.mainDoor.locked = true;
+    if (retryInside || level.sewerRoute) this.mainDoor.locked = true; // (piso 3: la puerta principal está cerrada por dentro desde el principio)
     this.map.doors = this.doors;
     this.bullets = [];
     this.particles.clear();
     this.prints.clear();
-    this.sewer = new Sewer(this.map.sewers); // easter egg: cocodrilo en la alcantarilla
+    this.sewer = new Sewer(this.map.sewers); // easter egg: cocodrilo en la alcantarilla (la tapa de la entrada real se dibuja cerrada y nunca lo suelta: ver Sewer.update)
     this.sewer.bind(this);
     this.guilt = null;
     this.street = new StreetLife(this); // contenedores, moneda, máquina, cabina y vagabundo de la calle
@@ -1170,7 +1190,7 @@ export class Game {
       return;
     }
     // Esc (o el icono de pausa en táctil): PAUSA. Solo con el piso en juego, fuera o dentro del edificio.
-    if ((this.state === 'playing' || this.state === 'cleared') && back) { this.openPause(); return; }
+    if ((this.state === 'playing' || this.state === 'cleared' || this.state === 'sewer') && back) { this.openPause(); return; }
     // R es instantáneo a propósito (sin fundido): reintentar debe ser inmediato.
     if (input.wasPressed('KeyR')) { this.restartLevel(); return; }
     // Terminar la partida tras morir: ESC (lejos de Espacio y Enter, que se pulsan sin querer) y hay que pulsarlo DOS veces en 3 s: así no se pierde el progreso del piso por error. R reintenta.
@@ -1187,6 +1207,12 @@ export class Game {
       return;
     }
 
+    if (this.sewerRun && this.state === 'dead') { this.updateSewerDead(dt); return; } // muerto en el túnel: solo corre lo visual
+    if (this.state === 'sewer' && this.comms.cur) { this.comms.step(dt, confirm || input.mousePressed.left); return; } // diálogo en el túnel (RICK)
+    if (this.state === 'descend') { this.updateDescend(dt); return; }
+    if (this.state === 'ascend') { this.updateAscend(dt); return; }
+    if (this.state === 'emerge') { this.updateEmerge(dt); return; }
+    if (this.state === 'sewer') { this.updateSewer(dt); return; }
     if (this.comms.cur) { this.comms.step(dt, confirm || input.mousePressed.left); return; } // línea de comunicación del prólogo: el mundo se congela (como la radio del piso 10)
     if (this.state === 'ambush') { this.updateAmbush(dt); return; }
     if (this.state === 'ending') { this.updateEnding(dt, input.down('Enter')); return; }
@@ -1254,10 +1280,11 @@ export class Game {
     // activa el combate: no hay salida hasta despejar el edificio.
     // El bloqueo solo salta al cruzar el umbral HACIA DENTRO: y por encima del umbral Y dentro de la huella del edificio
     // (la calle de arriba y de los lados también tiene y < lockY, y ahí no se bloquea nada).
-    if (this.state === 'playing' && !this.inside && this.player.alive && this.inBuilding(this.player)) this.beginLockdown();
+    this.updateKey(dt);
+    if (this.state === 'playing' && !this.inside && this.player.alive && this.inBuilding(this.player) && !this.sewerRoute) this.beginLockdown(); // (con la ruta de la alcantarilla se entra por la escalera: ver endSewer)
     if (this.trap) this.updateTrap(dt);
-    if (this.doorPending && !this.doorAnimOn) { this.doorPending = false; this.mainDoor.unlock(); this.sfx.play('unlock'); } // (se desactivó la animación con la puerta pendiente)
-    if (this.state === 'cleared' && this.doorPending && this.player.alive && !this.player.doorAnim && !this.player.vomit && !this.player.exec
+    if (this.doorPending && !this.doorAnimOn && this.keyOk()) { this.doorPending = false; this.mainDoor.unlock(); this.sfx.play('unlock'); } // (se desactivó la animación con la puerta pendiente)
+    if (this.state === 'cleared' && this.doorPending && this.keyOk() && this.player.alive && !this.player.doorAnim && !this.player.vomit && !this.player.exec
       && Math.hypot(this.player.x - this.mainDoor.cx, this.player.y - this.mainDoor.cy) < 84) { this.doorPending = false; this.player.startDoorAnim(this, 'open', this.mainDoor); }
     if (this.state === 'playing' && this.inside && this.enemies.every((e) => !e.alive) && (!this.trap || (this.trap.state === 'done' && this.final && this.final.done))) { // con trampa: resolverla, reencontrarse y ganar la fase final antes de dar el piso por despejado
       this.state = 'cleared';
@@ -1265,7 +1292,7 @@ export class Game {
       // abre el ambiente del edificio vacío, que acompaña hasta la moto. La puerta se desbloquea.
       this.sfx.setMusic('empty');
       // La puerta principal la abre el agente al llegar a ella (animación; `doorPending`). En el piso 10 (trampa y final con la carrera de los dos agentes y el rehén de la IA) se abre sola.
-      if (this.trap || !this.doorAnimOn) { this.mainDoor.unlock(); this.sfx.play('unlock'); } else this.doorPending = true;
+      if (this.trap || (!this.doorAnimOn && this.keyOk())) { this.mainDoor.unlock(); this.sfx.play('unlock'); } else this.doorPending = true; // (con llave por recoger la puerta sigue cerrada)
       this.showCallout('PISO COMPLETADO', COLORS.player, 2.8, '¡EDIFICIO LIMPIO!'); // el objetivo (REGRESA A LA MOTO) sale al apagarse
     }
     // Junto a la moto con el piso despejado: si no quedan rehenes atados, la fuga arranca sola; si quedan, solo se AVISA (el rescate es opcional) y el jugador decide:
@@ -1285,20 +1312,9 @@ export class Game {
     if (this.player.alive) {
       // Se adelanta hacia donde apuntas, pero con tope: con la vista más cerrada el
       // jugador debe seguir siendo el centro de la acción.
-      let lx, ly;
-      if (this.input.touchMode) {
-        // En táctil no hay ratón: se adelanta en la dirección en la que mira el jugador.
-        lx = Math.cos(this.player.angle) * TOUCH_LOOKAHEAD;
-        ly = Math.sin(this.player.angle) * TOUCH_LOOKAHEAD;
-      } else {
-        const m = this.mouseWorld();
-        lx = (m.x - tx) * CAMERA_LOOKAHEAD;
-        ly = (m.y - ty) * CAMERA_LOOKAHEAD;
-      }
-      const len = Math.hypot(lx, ly);
-      if (len > MAX_LOOKAHEAD) { lx *= MAX_LOOKAHEAD / len; ly *= MAX_LOOKAHEAD / len; }
-      tx += lx;
-      ty += ly;
+      const o = this.lookOffset(dt);
+      tx += o.x;
+      ty += o.y;
     }
     if (this.asphyx && this.trap && this.trap.victim) { tx = this.trap.victim.x; ty = this.trap.victim.y; } // la cámara viaja al agente que se asfixia
     if (this.prologue) [tx, ty] = this.flow.cameraFocus(tx, ty); // instrucción nueva: la cámara se desplaza suave hacia el objetivo
@@ -1683,6 +1699,7 @@ export class Game {
   touchAction() {
     const p = this.player;
     if (!p.alive || p.exec) return { id: 'attack', label: 'ATACAR', ready: false };
+    if (this.sewerRun) return this.sewerRun.nearLadder ? { id: 'interact', label: 'SUBIR', ready: true } : this.sewerRun.lootNear ? { id: 'interact', label: 'REGISTRAR', ready: true } : { id: 'attack', label: 'ATACAR', ready: false }; // túnel: escalera, el cuerpo o lanzar la palanca
     if (p.executionTarget(this)) return { id: 'execute', label: 'REMATAR', ready: true };
     if (this.state === 'cleared' && this.bike) {
       const b = this.bike, m = MOUNT_MARGIN * 3;
@@ -1758,6 +1775,388 @@ export class Game {
     if (door.main) this.showCallout('PUERTA CERRADA', COLORS.blood, 2.4, `${AGENTS[this.gender].name} CIERRA: QUE NO SALGA NADIE`);
   }
 
+  // --- Piso 3: entrada por la alcantarilla y llave de salida ----------------------------------------------------------------------------------
+  // La puerta principal está cerrada por dentro. Hay que sacar una palanca de la basura (la lleva el contenedor marcado), forzar la tapa de la alcantarilla de la calle que es la
+  // entrada real, cruzar un túnel con un cocodrilo (estado 'sewer', ver tunnel.js) y subir por una escalera al cuarto de servicio del edificio, donde empieza el combate. Para salir
+  // hay que recoger la llave que lleva uno de los enemigos (brilla en el suelo al caer): sin ella la puerta no se abre (`FALTA LA LLAVE`).
+  keyOk() { return !this.keyRoute || this.hasKey; }
+
+  // Aviso al empujar o patear la puerta principal cerrada (con enfriamiento): al principio «cerrada por dentro»; al despejar, sin la llave, «falta la llave».
+  doorShut(door) {
+    const now = performance.now();
+    if (now - this.shutAt < 1400) return;
+    if (!this.sewerRoute) return;
+    if (!this.entered) { this.shutAt = now; this.addFloat(door.cx, door.cy - 30, 'PUERTA CERRADA POR DENTRO', COLORS.blood, 1, 1.8); } // (el golpe sordo lo da kickDoor)
+    else if (this.state === 'cleared' && !this.keyOk()) this.keyMissing();
+  }
+
+  // Solo al intentar abrir o patear la puerta (kickDoor): acercarse o rozarla no avisa; el panel y el marcador ya guían.
+  keyMissing() {
+    const now = performance.now();
+    if (now - this.keyHintAt < 1800) return;
+    this.keyHintAt = now;
+    this.addFloat(this.mainDoor.cx, this.mainDoor.cy - 30, 'FALTA LA LLAVE', COLORS.blood, 1, 1.8);
+  }
+
+  // El enemigo que llevaba la llave cae: queda en el suelo con un brillo llamativo hasta recogerla.
+  dropKey(e) {
+    this.keyDrop = { x: e.x, y: e.y, t: 0 };
+    this.addFloat(e.x, e.y - 22, '¡LLAVE!', '#ffd23a', 2, 1.6);
+    this.particles.neon(e.x, e.y, 0, 12, Math.PI * 2);
+    this.sfx.play('pickup', 0.8);
+  }
+
+  updateKey(dt) {
+    const k = this.keyDrop;
+    if (!k) return;
+    k.t += dt;
+    const p = this.player;
+    if (!p.alive || (this.state !== 'playing' && this.state !== 'cleared') || Math.hypot(p.x - k.x, p.y - k.y) > 20) return;
+    this.keyDrop = null;
+    this.hasKey = true;
+    this.addFloat(p.x, p.y - 22, '¡TIENES LA LLAVE!', '#ffd23a', 2, 1.8);
+    this.sfx.play('pickup'); this.sfx.play('unlock', 0.5);
+    this.particles.neon(p.x, p.y, 0, 14, Math.PI * 2);
+  }
+
+  drawKey(ctx) {
+    const t = performance.now() / 1000;
+    const k = this.keyDrop;
+    if (k) {                                                   // la llave caída: anillos de luz que laten, destellos y la llave flotando
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.fillStyle = '#ffd23a';
+      for (const [r, a] of [[30, 0.07], [20, 0.1], [12, 0.14]]) { ctx.globalAlpha = a * (0.7 + 0.3 * Math.sin(t * 6)); pixelDisc(ctx, k.x / WORLD_PX, k.y / WORLD_PX, r, WORLD_PX); }
+      ctx.restore();
+      ctx.fillStyle = '#ffffff';
+      for (let i = 0; i < 4; i++) { const ph = (t * 1.3 + i * 0.25) % 1; pixelRect(ctx, k.x + Math.cos(i * 1.7 + t) * 16, k.y - 6 - ph * 22, 1, 1); }
+      drawSprite(ctx, 'key', k.x, k.y - 4 + Math.round(Math.sin(t * 4) * 2), 0);
+    }
+    for (const e of this.enemies) {                           // el que la lleva: una llavecita sobre la cabeza
+      if (e.alive && e.hasKey && e.state !== 'down') drawSprite(ctx, 'key', e.x, e.y - 22, 0, { scale: 1 });
+    }
+  }
+
+  // --- Tramo de alcantarilla (estado 'sewer') -------------------------------------------------------------------------------------------------
+  // Animación de bajar (estado 'descend', ~2,6 s sin control): el agente se coloca al borde de la tapa, clava la palanca y hace fuerza TRES veces (la tapa se desliza a tirones, con
+  // chispas, polvo y sacudida), da un paso sobre la abertura y se hunde en ella; después, fundido al túnel. Es invulnerable (no es 'playing') y la palanca se guarda mientras
+  // tanto (se ve clavada bajo la tapa) y se le devuelve al llegar (`beginSewer`).
+  descendSewer() {
+    if (this.fade || this.state !== 'playing' || this.descent) return;
+    const lid = this.sewer.covers.find((c) => c.entrance), p = this.player;
+    if (!lid) { this.transition(() => this.beginSewer(), 0.4); return; }
+    lid.face = 0; lid.dir = this.sewer.pickDir(lid, this);
+    const side = (d) => !isSolidAt(this.map, lid.x - d * 26, lid.y + 2) && !isSolidAt(this.map, lid.x - d * 40, lid.y + 2);
+    if (!side(lid.dir) && side(-lid.dir)) lid.dir = -lid.dir; // el agente se pone en el lado con sitio
+    const d = lid.dir;
+    this.descent = { t: 0, lid, d, from: { x: p.x, y: p.y }, stand: { x: lid.x - d * 26, y: lid.y + 2 }, weapon: p.weapon, heaves: -1, sink: 0 };
+    p.weapon = null;
+    this.state = 'descend';
+    this.callout = null; this.floatingTexts.length = 0;
+  }
+
+  updateDescend(dt) {
+    const D = this.descent, p = this.player, lid = D.lid, d = D.d;
+    const PRY0 = 0.4, PRY1 = 1.6, WALK1 = 2.0, SINK1 = 2.65;
+    const ease = (k) => k * k * (3 - 2 * k);
+    D.t += dt;
+    for (const f of this.floatingTexts) f.t -= dt;
+    this.floatingTexts = this.floatingTexts.filter((f) => f.t > 0);
+    p.angle = d > 0 ? 0 : Math.PI;
+    if (D.t < PRY0) {                                                          // se coloca al borde de la tapa
+      const k = ease(D.t / PRY0);
+      p.x = D.from.x + (D.stand.x - D.from.x) * k; p.y = D.from.y + (D.stand.y - D.from.y) * k;
+    } else if (D.t < PRY1) {                                                   // palanca: tres tirones
+      const k = (D.t - PRY0) / (PRY1 - PRY0), h = Math.min(2, Math.floor(k * 3)), f = k * 3 - h;
+      if (h > D.heaves) {                                                      // arranque de cada tirón
+        D.heaves = h;
+        this.sfx.play(h === 2 ? 'manholeScrape' : 'knock', 0.9);
+        this.camera.addShake(4 + h * 2);
+        this.particles.dust(lid.x - d * 14, lid.y, 6);
+        this.particles.sparks(lid.x - d * 20, lid.y, d > 0 ? Math.PI : 0, 6, 0.5);
+        this.addFloat(lid.x, lid.y - 26, h === 0 ? '¡ARGH!' : h === 1 ? '¡MÁS!' : '¡CEDE!', '#ffffff', 1, 0.8);
+      }
+      p.x = D.stand.x - d * 4 * Math.sin(Math.min(1, f * 1.4) * Math.PI); p.y = D.stand.y; // el cuerpo se echa atrás al tirar
+      lid.slide = (h + ease(Math.min(1, f * 1.6))) / 3;                         // la tapa avanza a tirones
+    } else if (D.t < WALK1) {                                                  // la tapa queda abierta y da un paso sobre el hueco
+      lid.slide = 1;
+      const k = ease((D.t - PRY1) / (WALK1 - PRY1));
+      p.x = D.stand.x + (lid.x - D.stand.x) * k; p.y = D.stand.y + (lid.y - 6 - D.stand.y) * k;
+    } else if (D.t < SINK1) {                                                  // se hunde en la abertura
+      lid.slide = 1;
+      D.sink = ease((D.t - WALK1) / (SINK1 - WALK1));
+      p.x = lid.x; p.y = lid.y - 6;
+      if (D.sink > 0.5 && !D.splash) { D.splash = true; this.sfx.play('crocDown', 0.5); this.particles.dust(lid.x, lid.y, 8); }
+    } else if (!this.fade) this.transition(() => this.beginSewer(), 0.3);
+    this.particles.update(dt, this.map, (kind, pt) => this.bake(kind, pt));
+    this.camera.update(dt, p.x, p.y);
+  }
+
+  // El agente que se hunde: se dibuja desplazado hacia abajo y recortado por el borde de la abertura (solo se ve lo que queda por encima).
+  drawPlayerBody(ctx) {
+    const D = this.descent, E = this.emerge;
+    if (this.state === 'emerge' && E && E.sink > 0) {          // asoma de la boca de la escalera: desplazado hacia abajo y recortado por su borde
+      ctx.save();
+      ctx.beginPath(); ctx.rect(E.hole.x - 120, E.hole.y - 160, 240, 160 + 10); ctx.clip();
+      ctx.translate(0, E.sink * 34);
+      this.player.draw(ctx);
+      ctx.restore();
+    } else if (this.state === 'descend' && D && D.sink > 0) {
+      ctx.save();
+      ctx.beginPath(); ctx.rect(D.lid.x - 120, D.lid.y - 160, 240, 160 + 12); ctx.clip();
+      ctx.translate(0, D.sink * 34);
+      this.player.draw(ctx);
+      ctx.restore();
+    } else this.player.draw(ctx);
+  }
+
+  // La palanca clavada bajo el borde de la tapa, que cabecea con cada tirón.
+  drawDescent(ctx) {
+    const D = this.descent;
+    if (this.state !== 'descend' || !D || D.t < 0.3 || D.t > 1.9) return;
+    const lid = D.lid, p = this.player, d = D.d;
+    const edge = lid.x + d * lid.slide * 32 - d * 22;
+    const tip = { x: edge, y: lid.y + 1 }, hand = { x: p.x + d * 10, y: p.y + 3 };
+    const rock = D.t < 1.6 ? Math.sin(D.t * 22) * 0.07 : 0;
+    drawSprite(ctx, 'crowbar', hand.x, hand.y, Math.atan2(tip.y - hand.y, tip.x - hand.x) + rock, { ox: 0, oy: 1 });
+  }
+
+  // Cambia el mundo por el túnel: mapa, puertas, enemigos, armas del suelo, balas y capas de sangre se guardan en `sewerStash` y se restauran al subir (o en reset / openMenu).
+  beginSewer() {
+    const run = new SewerRun(this), p = this.player;
+    if (this.descent) { p.weapon = this.descent.weapon; this.descent = null; } // la palanca vuelve a la mano
+    this.sewerRun = run;
+    this.sewerStash = { map: this.map, doors: this.doors, enemies: this.enemies, pickups: this.pickups, bullets: this.bullets, pools: this.pools,
+      bloodLayer: this.bloodLayer, bloodCtx: this.bloodCtx, wallBloodLayer: this.wallBloodLayer, wallBloodCtx: this.wallBloodCtx, wallBloodDirty: this.wallBloodDirty,
+      bw: this.map.pixelW, bh: this.map.pixelH };
+    this.map = run.map; this.doors = []; this.enemies = []; this.pickups = []; this.bullets = []; this.pools = [];
+    this.bloodLayer = run.bloodLayer; this.bloodCtx = run.bloodCtx; this.wallBloodLayer = run.wallBloodLayer; this.wallBloodCtx = run.wallBloodCtx; this.wallBloodDirty = false;
+    p.x = run.map.spawn.x; p.y = run.map.spawn.y; p.angle = 0;
+    this.state = 'sewer';
+    this.camera.setBounds(run.map.pixelW, run.map.pixelH);
+    this.camera.snap(p.x, p.y);
+    this.floatingTexts.length = 0; this.prints.clear(); this.particles.clear(); // (nada de la calle se arrastra al túnel)
+    this.showCallout('ALCANTARILLA', COLORS.player, 2.2, 'CUIDADO CON EL COCODRILO');
+    this.sfx.setMusic('menu');
+  }
+
+  restoreFromSewer() {
+    const s = this.sewerStash;
+    this.sewerRun = null; this.sewerStash = null;
+    if (!s) return;
+    this.map = s.map; this.doors = s.doors; this.enemies = s.enemies; this.pickups = s.pickups; this.bullets = s.bullets; this.pools = s.pools;
+    this.bloodLayer = s.bloodLayer; this.bloodCtx = s.bloodCtx; this.wallBloodLayer = s.wallBloodLayer; this.wallBloodCtx = s.wallBloodCtx; this.wallBloodDirty = s.wallBloodDirty;
+    this.camera.setBounds(s.bw, s.bh);
+  }
+
+  // La máscara secreta de RICK, en el cuerpo que devoraba el cocodrilo (alcantarilla del piso 3): al registrarlo (el cocodrilo ya no está encima: se fue tras ti, está ciego o aturdido)
+  // se desbloquea (`settings.unlockMask`, se guarda) y habla el agente. Una sola vez por visita.
+  lootRick() {
+    const run = this.sewerRun;
+    if (!run || run.looted) return;
+    run.looted = true;
+    const isNew = this.settings.unlockMask('aguila'), mask = MASKS.find((m) => m.id === 'aguila'), p = this.player;
+    this.sfx.play('clear'); this.sfx.play('pickup');
+    this.particles.neon(p.x, p.y, 0, 16, Math.PI * 2);
+    this.camera.addShake(5);
+    if (isNew) this.addFloat(p.x, p.y - 30, `¡MÁSCARA ${mask.name} DESBLOQUEADA!`, '#e0a82a', 2, 3);
+    const me = { name: AGENTS[this.gender].name, color: AGENTS[this.gender].color, portrait: { mask: this.mask, gender: this.gender, level: this.goreOn ? p.bloodLevel : 0, bits: this.maskBits || [] } };
+    if (this.comms.say('rick', [{ speaker: me, text: 'Ahí terminó Rick… pobre hombre, hizo un gran trabajo.' }], { urgent: true })) this.comms.begin(this.comms.queue.shift());
+  }
+
+  // Animación de subir (estado 'ascend', ~1,7 s sin control e invulnerable; el cocodrilo se queda quieto): el agente se pega a la escalera, sube peldaño a peldaño (el sprite se
+  // acerca a la cámara y se funde en la luz del pozo, con un destello) y fundido al cuarto de servicio, donde sale por la boca de la escalera (`updateEmerge`).
+  climbLadder() {
+    if (this.fade || this.state !== 'sewer') return;
+    const l = this.sewerRun.map.ladder, p = this.player;
+    this.climb = { t: 0, from: { x: p.x, y: p.y }, to: { x: l.x - 4, y: l.y }, rungs: -1 };
+    this.state = 'ascend';
+    this.callout = null; this.floatingTexts.length = 0;
+    p.angle = -Math.PI / 2;
+  }
+
+  updateAscend(dt) {
+    const C = this.climb, p = this.player, ease = (k) => k * k * (3 - 2 * k);
+    const REACH = 0.4, UP = 1.5;
+    C.t += dt;
+    p.angle = -Math.PI / 2;
+    this.sewerRun.amb.update(dt, this); this.sewerRun.clock += dt; // el túnel sigue vivo (goteras, ratas); el cocodrilo, quieto
+    if (C.t < REACH) {                                           // se pega a la escalera
+      const k = ease(C.t / REACH);
+      p.x = C.from.x + (C.to.x - C.from.x) * k; p.y = C.from.y + (C.to.y - C.from.y) * k;
+    } else if (C.t < UP) {                                       // sube: un peldaño cada 0,22 s
+      p.x = C.to.x; p.y = C.to.y;
+      const r = Math.floor((C.t - REACH) / 0.22);
+      if (r > C.rungs) { C.rungs = r; this.sfx.play('knock', 0.3); this.particles.dust(p.x, p.y, 1); }
+    } else if (!this.fade) { this.sfx.play('pickup'); this.sfx.play('manholeScrape', 0.5); this.transition(() => this.endSewer(), 0.3); }
+    this.particles.update(dt, this.map, (kind, pt) => this.bake(kind, pt));
+    this.camera.update(dt, p.x, p.y);
+  }
+
+  // El agente en el túnel: normal, o subiendo por la escalera (se agranda hacia la cámara y se desvanece en la luz).
+  drawClimber(ctx) {
+    const C = this.climb, p = this.player;
+    if (this.state !== 'ascend' || !C || C.t < 0.4) { p.draw(ctx); return; }
+    const k = Math.min(1, (C.t - 0.4) / 1.1), s = 1 + 0.45 * k * k, bob = Math.sin((C.t - 0.4) * 14.3) * 1.5;
+    ctx.save();
+    ctx.translate(p.x, p.y + bob - k * 8); ctx.scale(s, s); ctx.translate(-p.x, -p.y);
+    ctx.globalAlpha = 1 - 0.85 * k * k;
+    p.draw(ctx);
+    ctx.restore();
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter'; ctx.fillStyle = '#ffffff';
+    ctx.globalAlpha = 0.35 * k * k;                              // destello del pozo al llegar arriba
+    pixelDisc(ctx, p.x / WORLD_PX, p.y / WORLD_PX, 16, WORLD_PX);
+    ctx.restore();
+  }
+
+  // Sube al cuarto de servicio: se restaura el edificio y el agente sale por la boca de la escalera (`emerge`, ~1,3 s: asoma, sale y se pone la máscara). `inside`/`entered` y el
+  // arma de entrada se fijan ya, así que R durante la salida reaparece en el cuarto de servicio. La puerta principal ya estaba bloqueada.
+  endSewer() {
+    this.restoreFromSewer();
+    const p = this.player, sv = this.sewerRoute.service, ld = this.sewerRoute.ladder;
+    this.climb = null;
+    p.x = ld.x; p.y = ld.y; p.angle = 0;
+    this.state = 'emerge';
+    this.emerge = { t: 0, from: { x: ld.x, y: ld.y }, to: { x: sv.x, y: sv.y }, hole: { x: ld.x, y: ld.y }, sink: 1 };
+    this.inside = true; this.entered = true;
+    this.entryWeapon = p.weapon ? { type: p.weapon.type, ammo: p.weapon.ammo } : null;
+    this.camera.setBounds(this.map.pixelW, this.map.pixelH);
+    this.camera.snap(sv.x, sv.y);
+    this.floatingTexts.length = 0; this.prints.clear(); this.particles.clear();
+    this.sfx.play('manholeScrape', 0.4);
+  }
+
+  updateEmerge(dt) {
+    const E = this.emerge, p = this.player, ease = (k) => k * k * (3 - 2 * k);
+    const RISE = 0.7, STEP = 1.1;
+    E.t += dt;
+    for (const f of this.floatingTexts) f.t -= dt;
+    this.floatingTexts = this.floatingTexts.filter((f) => f.t > 0);
+    if (E.t < RISE) {                                            // asoma por la boca de la escalera
+      E.sink = 1 - ease(E.t / RISE);
+      if (E.t > 0.35 && !E.dust) { E.dust = true; this.particles.dust(E.hole.x, E.hole.y, 8); this.camera.addShake(3); }
+    } else if (E.t < STEP) {                                     // sale de la boca y se pone en el cuarto
+      E.sink = 0;
+      const k = ease((E.t - RISE) / (STEP - RISE));
+      p.x = E.from.x + (E.to.x - E.from.x) * k; p.y = E.from.y + (E.to.y - E.from.y) * k;
+      p.angle = -Math.PI / 2 * k;
+    } else {                                                     // arriba: máscara, combate y reloj
+      this.emerge = null;
+      this.state = 'playing';
+      p.x = E.to.x; p.y = E.to.y; p.angle = -Math.PI / 2;
+      p.putOnMask(this);
+      this.particles.dust(p.x, p.y, 6);
+      this.showCallout('¡ESTÁS DENTRO!', COLORS.blood, 2.4, 'SUBES POR LA ESCALERA DEL CUARTO DE SERVICIO');
+      this.sfx.setMusic('action');
+    }
+    this.particles.update(dt, this.map, (kind, pt) => this.bake(kind, pt));
+    this.camera.update(dt, p.x, p.y);
+  }
+
+  updateSewer(dt) {
+    const p = this.player, run = this.sewerRun;
+    if (this.callout && (this.callout.t -= dt) <= 0) this.callout = null;
+    for (const f of this.floatingTexts) f.t -= dt;
+    this.floatingTexts = this.floatingTexts.filter((f) => f.t > 0);
+    this.barkCd = Math.max(0, (this.barkCd || 0) - dt);
+    if (p.alive) p.update(dt, this);
+    this.updatePickups(dt);
+    this.updateBullets(dt);
+    this.particles.update(dt, this.map, (kind, pt) => this.bake(kind, pt));
+    this.prints.update(dt);
+    run.update(dt, this);
+    this.bullets = this.bullets.filter((b) => b.alive);
+    this.pickups = this.pickups.filter((q) => q.alive);
+    this.followCamera(dt);
+  }
+
+  updateSewerDead(dt) {
+    for (const f of this.floatingTexts) f.t -= dt;
+    this.floatingTexts = this.floatingTexts.filter((f) => f.t > 0);
+    this.particles.update(dt, this.map, (kind, pt) => this.bake(kind, pt));
+    this.camera.update(dt, this.player.x, this.player.y);
+  }
+
+  // Cámara del jugador con el adelanto hacia donde apunta (la misma lógica que el bucle normal).
+  followCamera(dt) {
+    const o = this.lookOffset(dt);
+    this.camera.update(dt, this.player.x + o.x, this.player.y + o.y);
+  }
+
+  // Desplazamiento de la cámara respecto al jugador (mirada adelantada). Normal: en PC una fracción de la distancia al cursor y en táctil un adelanto fijo hacia donde mira, con tope.
+  // Con la máscara RICK (`perks.lookAhead` > 1) el foco va MUCHO más lejos, SIN tocar el zoom ni el tamaño de los sprites: en PC hacia el cursor (×2,4, tope 168 u); en táctil hacia
+  // donde apuntas con el joystick derecho (125 u), o hacia donde empujas el izquierdo (95 u), o hacia donde mira en reposo (70 u). El desplazamiento se suaviza aparte (`lookS`,
+  // constante 0,16 s) y se limita a ~60 % de media pantalla, así el jugador nunca sale de un margen seguro; los límites del nivel los aplica `Camera.clampTarget`.
+  lookOffset(dt) {
+    const p = this.player, k = p.perks ? p.perks.lookAhead : 1, inp = this.input;
+    let lx, ly;
+    if (!(k > 1)) {                                                // el comportamiento de siempre
+      this.lookS = null;
+      if (inp.touchMode) { lx = Math.cos(p.angle) * TOUCH_LOOKAHEAD; ly = Math.sin(p.angle) * TOUCH_LOOKAHEAD; }
+      else { const m = this.mouseWorld(); lx = (m.x - p.x) * CAMERA_LOOKAHEAD; ly = (m.y - p.y) * CAMERA_LOOKAHEAD; }
+      const len = Math.hypot(lx, ly);
+      if (len > MAX_LOOKAHEAD) { lx *= MAX_LOOKAHEAD / len; ly *= MAX_LOOKAHEAD / len; }
+      return { x: lx, y: ly };
+    }
+    let cap = MAX_LOOKAHEAD * k;
+    if (inp.touchMode) {
+      const mv = inp.moveAxis, mm = Math.hypot(mv.x, mv.y);
+      if (inp.aimActive) { lx = Math.cos(inp.aimAngle) * TOUCH_LOOKAHEAD * 2.5; ly = Math.sin(inp.aimAngle) * TOUCH_LOOKAHEAD * 2.5; }
+      else if (mm > 0.2) { lx = (mv.x / mm) * TOUCH_LOOKAHEAD * 1.9; ly = (mv.y / mm) * TOUCH_LOOKAHEAD * 1.9; }
+      else { lx = Math.cos(p.angle) * TOUCH_LOOKAHEAD * 1.4; ly = Math.sin(p.angle) * TOUCH_LOOKAHEAD * 1.4; }
+    } else {
+      const m = this.mouseWorld();
+      lx = (m.x - p.x) * CAMERA_LOOKAHEAD * k; ly = (m.y - p.y) * CAMERA_LOOKAHEAD * k;
+    }
+    const cam = this.camera, safe = 0.6 * Math.min(cam.viewW, cam.viewH) / 2 / cam.zoom;   // el jugador siempre queda dentro del 60 % de media pantalla
+    cap = Math.min(cap, safe);
+    const len = Math.hypot(lx, ly);
+    if (len > cap) { lx *= cap / len; ly *= cap / len; }
+    const s = this.lookS || (this.lookS = { x: 0, y: 0 }), a = 1 - Math.exp(-dt / 0.16);   // suavizado: sin saltos bruscos al mover el ratón o el stick
+    s.x += (lx - s.x) * a; s.y += (ly - s.y) * a;
+    return { x: s.x, y: s.y };
+  }
+
+  // Dibujo del túnel (misma tubería que `render`: capas con la cámara, HUD y efectos de pantalla).
+  renderSewer(ctx) {
+    const run = this.sewerRun, { pixelW, pixelH } = this.map;
+    this.camera.apply(ctx);
+    ctx.drawImage(run.floorLayer, 0, 0, pixelW, pixelH);
+    run.drawBelow(ctx);
+    ctx.drawImage(this.bloodLayer, 0, 0, pixelW, pixelH);
+    if (this.goreOn) this.prints.draw(ctx);
+    this.particles.drawGround(ctx);
+    ctx.drawImage(run.propsLayer, 0, 0, pixelW, pixelH);
+    for (const q of this.pickups) q.draw(ctx, this.time);
+    run.drawCroc(ctx);
+    for (const b of this.bullets) b.draw(ctx);
+    if (this.player.alive) { if (this.state === 'sewer') this.player.drawAim(ctx, this); this.drawClimber(ctx); }
+    this.particles.draw(ctx);
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.globalAlpha = 0.55;
+    ctx.drawImage(run.glowLayer, 0, 0, pixelW, pixelH);
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.globalAlpha = 1;
+    ctx.drawImage(run.wallLayer, 0, 0, pixelW, pixelH);
+    if (this.wallBloodDirty && this.goreOn) ctx.drawImage(this.wallBloodLayer, 0, 0, pixelW, pixelH);
+    this.drawObjectiveMarker(ctx); // sobre las paredes: la escalera está pegada al muro este y su rótulo no se corta
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.fillStyle = 'rgba(6, 40, 10, 0.26)';                     // ambiente: aire húmedo verde
+    ctx.fillRect(0, 0, this.scene.width, this.scene.height);
+    this.renderHud(ctx);
+    if (run.lootNear && this.state === 'sewer' && !this.panel && !this.comms.cur) {              // el cuerpo que devoraba el cocodrilo (RICK)
+      const b = run.amb.bodies.find((q) => q.feed), s = this.camera.worldToScreen(b.x, b.y - 26), txt = `${this.hint(this.keys.label('kick'), 'BOTA')} · REGISTRAR EL CUERPO`, q = this.keepOnScreen(s.x, s.y, measureText(txt), 8);
+      drawText(ctx, txt, q.x, q.y, { color: COLORS.text, align: 'center', shadow: COLORS.background });
+    }
+    if (run.nearLadder && this.state === 'sewer' && !this.panel) {     // aviso de la escalera
+      const l = run.map.ladder, s = this.camera.worldToScreen(l.x, l.y - 26), txt = `${this.hint(this.keys.label('kick'), 'BOTA')} · SUBIR`, q = this.keepOnScreen(s.x, s.y, measureText(txt), 8);
+      drawText(ctx, txt, q.x, q.y, { color: COLORS.text, align: 'center', shadow: COLORS.background });
+    }
+    this.drawFade(ctx);
+    this.fx.compose(this.ctx, this.scene, this.frameDt);
+  }
+
   showCallout(text, color, seconds = 2.4, sub = null) {
     this.callout = { text, color, t: seconds, max: seconds, sub };
   }
@@ -1776,7 +2175,8 @@ export class Game {
       }
       if (!this.player.alive) continue;
       const wasClosed = Math.abs(door.offset) < 0.5 && !door.fast;
-      if (door.collide(this.player, this.map, { player: true }) === 'push' && wasClosed && door.creakCd <= 0) {
+      const hitDoor = door.collide(this.player, this.map, { player: true });
+      if (hitDoor === 'push' && wasClosed && door.creakCd <= 0) {
         // Empujón del jugador: la puerta se abre de golpe (y derriba a quien esté detrás).
         this.playAt('doorSoft', door.cx, door.cy, 0.8);
         this.particles.dust(door.cx, door.cy, 5);
@@ -1814,8 +2214,8 @@ export class Game {
       }
 
       if (b.owner === 'player') {
-        if (this.street.bulletHit(b)) { b.alive = false; b.hitWall = false; continue; } // civil de la calle: la bala se detiene en él
-        if (this.hostages.bulletHit(b)) { b.alive = false; b.hitWall = false; continue; } // rehén: la bala lo mata (penalización y culpa)
+        if (!this.sewerRun && this.street.bulletHit(b)) { b.alive = false; b.hitWall = false; continue; } // civil de la calle: la bala se detiene en él
+        if (!this.sewerRun && this.hostages.bulletHit(b)) { b.alive = false; b.hitWall = false; continue; } // rehén: la bala lo mata (penalización y culpa)
         for (const e of this.enemies) {
           if (!e.alive) continue;
           if (segmentPointDistance(b.px, b.py, b.x, b.y, e.x, e.y) < e.r + b.r) {
@@ -1958,6 +2358,7 @@ export class Game {
     this.addScore(cause, e);
     this.dropWeapon(e);
     if (e.carrier) this.dropMask(e);
+    if (e.hasKey) this.dropKey(e);
     e.corpse = { x: e.x + Math.cos(angle) * 8, y: e.y + Math.sin(angle) * 8 }; // donde se estampa el cadáver
     const tox = this.isToxicKill(e, cause);
     this.bleed(e.x, e.y, angle, feel.power, feel.wide, tox);
@@ -2249,14 +2650,14 @@ export class Game {
   // `player` es el agente activo y `partner` el otro: queda quieto, visible y vulnerable (los enemigos lo ven y lo atacan). `swapControl` los intercambia (también
   // su máscara y su sangre). R vuelve a empezar con el primer agente al mando y el compañero donde estaba.
   defaultPartnerMask() {
-    const cur = MASKS.indexOf(this.mask);
-    const i = MASKS.findIndex((m, k) => k !== cur && this.isMaskUnlocked(m));
+    const cur = this.maskList.indexOf(this.mask);
+    const i = this.maskList.findIndex((m, k) => k !== cur && this.isMaskUnlocked(m));
     return i >= 0 ? i : cur;
   }
 
   makePartner(start) {
     if (this.partnerMaskIndex == null) this.partnerMaskIndex = this.defaultPartnerMask();
-    this.partnerMask = MASKS[this.partnerMaskIndex];
+    this.partnerMask = this.maskList[this.partnerMaskIndex];
     const pos = this.partnerPos || { x: start.x + 26, y: start.y };
     const t = new Player(pos.x, pos.y, maskEffects(this.partnerMask), this.partnerMask.id, true);
     t.agentId = 'support';
@@ -3101,7 +3502,7 @@ export class Game {
   }
 
   killPlayer(angle) {
-    if (this.state !== 'playing' || !this.player.alive || this.player.doorAnim) return; // (el agente es intocable mientras cierra / abre la puerta: ~0,8 s sin control; ver Player.startDoorAnim)
+    if ((this.state !== 'playing' && this.state !== 'sewer') || !this.player.alive || this.player.doorAnim) return; // (el agente es intocable mientras cierra / abre la puerta: ~0,8 s sin control; ver Player.startDoorAnim)
     const p = this.player;
     p.alive = false;
     p.cancelExecution(); // si lo matan a mitad de un remate, el derribado no se queda congelado
@@ -3213,6 +3614,7 @@ export class Game {
     if (!best) return false;
     if (best.locked || best.closing) {
       // Bloqueada: no cede. Un golpe sordo y nada más.
+      if (best.main) this.doorShut(best);
       this.camera.addShake(1.5);
       this.particles.dust(best.cx, best.cy, 4);
       this.sfx.play('doorThud');
@@ -3232,7 +3634,8 @@ export class Game {
     const def = e.gunDef;
     const pellets = def.pellets || 1;
     for (let i = 0; i < pellets; i++) {
-      const angle = e.angle + (pellets > 1 ? rand(-def.fan, def.fan) : rand(-def.spread, def.spread));
+      const sp = def.spread * AI.spread; // puntería según el nivel de IA enemiga (TONTOS dispersan más, GENIOS menos)
+      const angle = e.angle + (pellets > 1 ? rand(-def.fan, def.fan) : rand(-sp, sp));
       const speed = def.bulletSpeed * (pellets > 1 ? 0.85 + Math.random() * 0.3 : 1);
       this.bullets.push(new Bullet(bx, by, angle, speed, 'enemy', def.bulletRange || Infinity));
     }
@@ -3246,6 +3649,7 @@ export class Game {
     // Un ruido hecho por el jugador (disparo, golpe, patada) delata su posición 0,8 s aunque esté en la sombra (ver Enemy.canSee).
     if (this.map.dark && Math.hypot(x - this.player.x, y - this.player.y) < 6) this.map.reveal = 0.8;
     if (this.sewer) this.sewer.heard(x, y, radius);
+    if (this.sewerRun) this.sewerRun.croc.hear(x, y, radius); // el cocodrilo del túnel oye los ruidos
     if (this.street) this.street.noise(x, y, radius); // los civiles de la calle oyen lo que pasa dentro (alerta indirecta)
     // Los enemigos investigan el origen del ruido; tras una pared o una puerta cerrada se oye más apagado (radio ×0,6).
     for (const e of this.enemies) {
@@ -3486,6 +3890,7 @@ export class Game {
       return;
     }
 
+    if (this.sewerRun) { this.renderSewer(ctx); return; } // túnel de la alcantarilla (piso 3): su propio mundo
     this.camera.apply(ctx);
     ctx.drawImage(this.floorLayer, 0, 0, pixelW, pixelH);
     const over = this.state === 'leaving' || this.state === 'arriving'; // moto y jugador se dibujan DESPUÉS de las paredes (pasan por la abertura de la valla)
@@ -3505,6 +3910,7 @@ export class Game {
     for (const e of this.enemies) if (e.alive && e.state === 'down') e.draw(ctx, this.time, this);
     this.drawExecuteMarks(ctx);
     this.drawLockMark(ctx);
+    this.drawKey(ctx); // llave de la puerta principal (piso 3)
     for (const p of this.pickups) p.draw(ctx, this.time);
     this.drawMaskDrops(ctx);
     for (const b of this.bullets) b.draw(ctx);
@@ -3514,8 +3920,9 @@ export class Game {
     this.drawPartner(ctx); // penumbra: atenúa enemigos y objetos; el jugador se dibuja encima (siempre se ve)
     if (this.player.alive) {
       if (this.state === 'playing' || this.state === 'cleared') this.player.drawAim(ctx, this);
-      if (!over) this.player.draw(ctx);
+      if (!over) this.drawPlayerBody(ctx);
     }
+    this.drawDescent(ctx); // palanca clavada bajo la tapa (animación de bajar a la alcantarilla)
     this.particles.draw(ctx);
     for (const d of this.doors) d.draw(ctx);
     // Glow neón sumado antes de las paredes: el halo se derrama sobre suelo y personajes.
@@ -3608,12 +4015,21 @@ export class Game {
     const p = this.player;
     if (!p.alive || !this.mainDoor) return;
     let r = null;
-    if (this.state === 'playing' && !this.inside) {
+    if (this.state === 'sewer' && this.sewerRun) {
+      const l = this.sewerRun.map.ladder;
+      r = { x: l.x - TILE / 2, y: l.y - TILE / 2, w: TILE, h: TILE, label: 'ESCALERA', below: true };
+    } else if (this.state === 'playing' && !this.inside && this.sewerRoute) {
+      r = this.street.guide(); // puerta cerrada por dentro: palanca → alcantarilla
+    } else if (this.state === 'playing' && !this.inside) {
       const d = this.mainDoor;
       r = { x: d.cx - TILE / 2, y: d.cy - TILE / 2, w: TILE, h: TILE, label: 'ENTRADA', below: true };
     } else if (this.state === 'cleared' && this.trap) {
       const d = this.trap.detonator;
       if (d && this.final && this.final.role === 'limpieza' && !this.endingDone && !this.detNear) r = { x: d.x - TILE / 2, y: d.y - TILE / 2, w: TILE, h: TILE, label: 'DETONADOR', below: true };
+    } else if (this.state === 'cleared' && this.doorPending && !this.keyOk()) {   // falta la llave: el marcador la señala a ella
+      const k = this.keyDrop;
+      const d = this.mainDoor;
+      r = k ? { x: k.x - TILE / 2, y: k.y - TILE / 2, w: TILE, h: TILE, label: 'LLAVE', below: true } : { x: d.cx - TILE / 2, y: d.cy - TILE / 2, w: TILE, h: TILE, label: 'SALIDA', below: false };
     } else if (this.state === 'cleared' && this.doorPending) {   // la puerta sigue bloqueada hasta que el agente llega a ella: el marcador la señala a ella, no a la moto
       const d = this.mainDoor;
       r = { x: d.cx - TILE / 2, y: d.cy - TILE / 2, w: TILE, h: TILE, label: 'SALIDA', below: false };
@@ -3956,7 +4372,7 @@ export class Game {
 
     const { cards, iconScale, bottom, preview, descCx, genders } = this.maskLayout();
     const bob = Math.floor(performance.now() / 300) % 2;
-    MASKS.forEach((mask, i) => {
+    this.maskList.forEach((mask, i) => {
       const c = cards[i];
       const sel = i === this.maskIndex;
       const y = c.y - (sel ? bob : 0);
@@ -4006,7 +4422,7 @@ export class Game {
     }
 
     // Vista previa en vivo (agente + máscara elegidos) y la ficha de la máscara a su derecha.
-    const mask = MASKS[this.maskIndex], now = performance.now() / 1000;
+    const mask = this.maskList[this.maskIndex], now = performance.now() / 1000;
     drawAgentPreview(ctx, preview, mask.id, shown, now);
     if (!this.isMaskUnlocked(mask)) {
       ctx.fillStyle = 'rgba(5, 0, 15, 0.7)';
@@ -4115,12 +4531,14 @@ export class Game {
   // Objetivo de piso despejado: un panel abajo en el centro (desliza hacia arriba al aparecer, con
   // flecha parpadeante y borde que late). Solo sale cuando el cartel grande ya se ha ido.
   drawGoalPanel(ctx, w, h) {
-    if (this.state !== 'cleared' || this.callout) return;
+    if (this.callout) return;
+    const outside = this.state === 'playing' && !this.inside && !!this.sewerRoute && this.bannerTimer <= 0 && !this.street.dialog, tunnel = this.state === 'sewer'; // (con el cuadro del teléfono abierto no se pisan)
+    if (this.state !== 'cleared' && !outside && !tunnel) return;
     // Con la puerta aún por abrir, el objetivo es abrirla (ámbar); al abrirse sale «REGRESA A LA MOTO». Piso 10: el objetivo es detonar.
-    const pend = this.doorPending && !this.trap, col = pend ? '#ffbe0b' : COLORS.player;
-    const text = this.trap ? (this.final && this.final.role === 'limpieza' ? 'ACTIVA EL DETONADOR · DESPACHO' : null) : pend ? 'ABRE LA SALIDA · ACÉRCATE A LA PUERTA' : 'REGRESA A LA MOTO';
+    const pend = this.doorPending && !this.trap, col = pend || outside ? '#ffbe0b' : COLORS.player;
+    const text = outside ? this.street.goalText() : tunnel ? 'CRUZA EL TÚNEL · SUBE POR LA ESCALERA' : this.doorPending && !this.keyOk() ? 'RECOGE LA LLAVE · BRILLA EN EL SUELO' : this.trap ? (this.final && this.final.role === 'limpieza' ? 'ACTIVA EL DETONADOR · DESPACHO' : null) : pend ? 'ABRE LA SALIDA · ACÉRCATE A LA PUERTA' : 'REGRESA A LA MOTO';
     if (!text) return;
-    const e = 1 - Math.pow(1 - clamp(this.goalAge / 0.3, 0, 1), 3);
+    const e = outside || tunnel ? 1 : 1 - Math.pow(1 - clamp(this.goalAge / 0.3, 0, 1), 3);
     const colX = this.input.touchMode ? this.touch.rightColumn().x : w; // en táctil, el panel se queda a la izquierda de la columna de botones
     const scale = this.fitScale(text, colX - 60, 2);
     const tw = measureText(text) * scale, th = CELL_H * scale;
@@ -4296,7 +4714,7 @@ export class Game {
       ctx.globalAlpha = 1;
     }
     // Objetivo de cada fase (parpadea): entrar y, despejado el edificio, volver a la moto.
-    const goal = this.state === 'playing' && !this.inside && this.bannerTimer <= 0 ? 'ENTRA AL EDIFICIO' : null;
+    const goal = this.state === 'playing' && !this.inside && !this.sewerRoute && this.bannerTimer <= 0 ? 'ENTRA AL EDIFICIO' : null;
     if (goal && Math.floor(performance.now() / 300) % 3 !== 0) {
       // Debajo del bloque de puntuación (termina en y≈67) para no solaparse con él.
       drawText(ctx, goal, cx, 72 + T, { color: COLORS.player, scale: this.fitScale(goal, w - 12), align: 'center' });

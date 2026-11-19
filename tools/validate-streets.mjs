@@ -43,6 +43,13 @@ for (let n = 0; n <= LEVELS.length; n++) {
     for (const p of map.props) {
       if (p.type === 'dumpster' && !touchable({ x: (p.x + p.w / 2) * TILE, y: (p.y + p.h / 2) * TILE }, p.w * TILE, p.h * TILE)) fail(`${tag}: contenedor (${p.x},${p.y}) inaccesible`);
     }
+    // Entrada por la alcantarilla (piso 3): exactamente una tapa es la entrada, alcanzable y que se puede tocar; hay al menos un contenedor (guarda la palanca).
+    if (L.sewerRoute) {
+      const en = map.sewers.filter((c) => c.entrance);
+      if (en.length !== 1) fail(`${tag}: tiene que haber una única tapa de entrada (hay ${en.length})`);
+      else if (!touchable(en[0], TILE, TILE)) fail(`${tag}: la tapa de entrada no se puede tocar`);
+      if (!map.props.some((p) => p.type === 'dumpster')) fail(`${tag}: no hay contenedor para la palanca`);
+    }
     if (st.coins.length < 2) fail(`${tag}: faltan monedas`);
     for (const c of st.coins) {
       if (!reach(c) || solid(c.tx, c.ty)) fail(`${tag}: moneda (${c.tx},${c.ty}) inaccesible`);

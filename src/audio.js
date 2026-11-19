@@ -15,7 +15,10 @@ const TICK_MS = 25;               // cada cuánto revisa el planificador
 const CUT_TIME = 0.09;            // corte seco de la música al limpiar el piso
 const AMBIENT_FADE = 0.9;         // lo que tarda en abrirse el ambiente vacío
 
-// Modo acción: Am - F - G - Em (menor, más oscuro que el I-IV-V clásico)
+// Modo acción: PISTAS (`TRACKS`, data-driven). Cada pista es un conjunto de datos que lee `actionStep`: tempo, raíces y acordes por compás, patrones de bombo / caja / charles / bajo /
+// arpegio y los extras opcionales (caja fantasma, redoble, riser, caída de energía, acordes cortos, impacto). `CLASSIC` es la de siempre y reproduce el comportamiento anterior al
+// pie de la letra; `A` es frenética. Se sortea una al entrar a un piso nuevo (`pickTrack`, sin repetir la última) y se conserva al reintentar con R.
+// Modo acción CLASSIC: Am - F - G - Em (menor, más oscuro que el I-IV-V clásico)
 const ACTION_ROOTS = [55.0, 43.65, 49.0, 41.2];
 const ACTION_CHORDS = [
   [220.0, 261.63, 329.63],
@@ -30,6 +33,81 @@ const ARP_PATTERN = [0, 2, 1, 2, 0, 1, 2, 1, 0, 2, 1, 2, 2, 1, 2, 0];
 const ARP_OCTAVE = [0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0, 1, 0];
 // Bombo: a negras + dos síncopas que empujan el compás.
 const KICK_STEPS = [0, 4, 7, 8, 10, 12];
+// Pista A (~168 BPM): Dm - Bb - C - Am. Bajo a semicorcheas SIN huecos y saturado, bombo a negras + dos empujes, caja con notas fantasma, charles a 16avos con abierto en 6 y 14,
+// arpegio más grande, acordes cortos a contratiempo y en el 4.º compás una CAÍDA (sin bombo ni bajo) con riser y redoble de caja que revienta en el primer tiempo (impacto).
+const TRACK_A_ROOTS = [73.42, 58.27, 65.41, 55.0];
+const TRACK_A_CHORDS = [
+  [293.66, 349.23, 440.0],
+  [233.08, 293.66, 349.23],
+  [261.63, 329.63, 392.0],
+  [220.0, 261.63, 329.63],
+];
+const TRACKS = {
+  classic: {
+    id: 'classic', name: 'CLASSIC', bpm: BPM, stepTime: STEP_TIME,
+    roots: ACTION_ROOTS, chords: ACTION_CHORDS, bass: BASS_PATTERN, bassSat: false,
+    arp: ARP_PATTERN, arpOct: ARP_OCTAVE, arpGain: 0.04, arpDur: 0.08,
+    kicks: KICK_STEPS, snares: [4, 12],
+    hat: { freq: 8200, gain: [0.055, 0.11], open: [14], openDur: 0.14 },
+    crashEvery: 2, padGain: 0.03, padCut: 1800,
+  },
+  a: {
+    id: 'a', name: 'A', bpm: 168, stepTime: 60 / 168 / 4, restart: true,
+    roots: TRACK_A_ROOTS, chords: TRACK_A_CHORDS,
+    bass: [1, 1, 2, 1, 1, 1, 2, 1, 1, 2, 1, 1, 2, 1, 2, 1], bassSat: true,
+    arp: [0, 1, 2, 1, 0, 2, 1, 2, 0, 1, 2, 1, 2, 1, 2, 0], arpOct: [0, 0, 1, 0, 0, 1, 0, 1, 0, 0, 1, 0, 1, 0, 1, 1], arpGain: 0.068, arpDur: 0.07,
+    kicks: [0, 4, 8, 10, 12, 14], snares: [4, 12], ghost: [7, 15],
+    hat: { freq: 9000, gain: [0.05, 0.095], open: [6, 14], openDur: 0.12 },
+    crashEvery: 1, padGain: 0.05, padCut: 2200,
+    stab: { steps: [2, 6, 10, 14], gain: 0.028 },
+    dip: { bar: 3, from: 8 },                 // última mitad del 4.º compás: sin bombo ni bajo (caída suave de energía)
+    fill: { bar: 3, from: 12 },               // redoble de caja con crescendo en los 4 últimos pasos
+    riser: { bar: 3, from: 8 },               // barrido de ruido que sube durante la caída
+    impact: true,                             // al volver al primer tiempo: bombo grande + platillo
+  },
+  // Pista B (~160 BPM): Cm - Ab - Bb - G. Percusión firme (bombo sincopado, caja en 4 y 12, charles con abierto en 2 y 10), bajo RÍTMICO y marcado (con silencios, sin saturar), acordes cortos
+  // de tres notas a contratiempo y un LEAD (cuadrada) con eco de dos repeticiones. Sin caída: un redoble corto al final del ciclo.
+  b: {
+    id: 'b', name: 'B', bpm: 160, stepTime: 60 / 160 / 4, restart: true,
+    roots: [65.41, 51.91, 58.27, 49.0],
+    chords: [[261.63, 311.13, 392.0], [207.65, 261.63, 311.13], [233.08, 293.66, 349.23], [196.0, 246.94, 293.66]],
+    bass: [1, 0, 1, 0, 1, 2, 0, 1, 1, 0, 1, 0, 2, 1, 0, 2], bassSat: false,
+    arp: [0, 1, 2, 1, 0, 1, 2, 1, 0, 1, 2, 1, 0, 1, 2, 1], arpOct: [0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1], arpGain: 0.034, arpDur: 0.07,
+    kicks: [0, 3, 4, 8, 11, 12], snares: [4, 12],
+    hat: { freq: 8600, gain: [0.05, 0.1], open: [2, 10], openDur: 0.1 },
+    crashEvery: 2, padGain: 0.04, padCut: 1600,
+    stab: { steps: [3, 6, 11, 14], gain: 0.03, notes: 3, dur: 0.09 },
+    fill: { bar: 3, from: 14 },
+    // Lead: por compás, 16 pasos con el índice del acorde (0-2 → octava `oct[0]`, 3-5 → `oct[1]`) o null (silencio); `echo` = repeticiones (pasos de retardo y ganancia relativa).
+    lead: {
+      type: 'square', gain: 0.042, dur: 0.11, oct: [2, 4], echo: [{ steps: 3, gain: 0.45 }, { steps: 6, gain: 0.2 }],
+      pattern: [
+        [2, null, null, 1, null, 0, null, null, 2, null, 1, null, 0, null, null, null],
+        [2, null, null, 1, null, 0, null, null, 1, null, 0, null, 2, null, null, null],
+        [1, null, null, 2, null, 3, null, null, 2, null, 1, null, 0, null, null, null],
+        [2, null, 3, null, 2, null, 1, null, 0, null, null, null, 4, null, null, null],
+      ],
+    },
+  },
+  // Pista C (~178 BPM): Gm - Eb - F - D. Rítmica ROTA y cortada (bombo y caja a destiempo con notas fantasma, charles con abiertos en 3 y 11), bajo saturado y con huecos, arpegio rápido,
+  // acordes picados y CORTES de energía periódicos: parada con redoble en el 2.º compás y gran caída con riser en el 4.º; al volver, impacto (también en el 3.er compás).
+  c: {
+    id: 'c', name: 'C', bpm: 178, stepTime: 60 / 178 / 4, restart: true,
+    roots: [49.0, 77.78, 87.31, 73.42],
+    chords: [[196.0, 233.08, 293.66], [155.56, 196.0, 233.08], [174.61, 220.0, 261.63], [146.83, 185.0, 220.0]],
+    bass: [1, 0, 1, 2, 0, 1, 0, 2, 1, 0, 2, 1, 0, 1, 2, 0], bassSat: true,
+    arp: [0, 2, 1, 2, 0, 2, 1, 0, 2, 1, 2, 0, 1, 2, 0, 1], arpOct: [0, 1, 0, 1, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0, 1, 1], arpGain: 0.06, arpDur: 0.06,
+    kicks: [0, 3, 6, 8, 11, 14], snares: [4, 10, 12], ghost: [2, 7, 15],
+    hat: { freq: 9500, gain: [0.05, 0.1], open: [3, 11], openDur: 0.1 },
+    crashEvery: 2, padGain: 0.045, padCut: 2000,
+    stab: { steps: [3, 7, 11, 15], gain: 0.025, dur: 0.05 },
+    dip: [{ bar: 1, from: 12 }, { bar: 3, from: 6 }],
+    fill: [{ bar: 1, from: 12 }, { bar: 3, from: 12 }],
+    riser: { bar: 3, from: 6 },
+    impact: [0, 2],
+  },
+};
+const TRACK_IDS = Object.keys(TRACKS);
 // Modo menú: Fmaj7 - Em7 - Dm7 - Cmaj7, pads lentos y campanas
 const MENU_CHORDS = [
   [174.61, 220.0, 261.63, 329.63],
@@ -311,6 +389,8 @@ export class Sfx {
     this.musicVol = 1;      // 0..1, ajuste del jugador (settings.js): música y ambiente
     this.sfxVol = 1;        // 0..1: todos los efectos, incluida la moto
     this.musicMode = 'action';  // 'action' | 'empty' | 'menu'
+    this.track = TRACKS.classic; this.trackId = null; // pista de combate en curso y la última sorteada (null hasta el primer sorteo); ver pickTrack
+    this.isLite = null;     // () => ¿efectos ligeros? (lo pone Game: en móviles flojos se omiten las capas extra de la música)
     this.musicTimer = null;
     this.droneUntil = 0;
     this.staticUntil = 0;
@@ -341,6 +421,15 @@ export class Sfx {
       this.musicBus = this.ctx.createGain();
       this.musicBus.gain.value = Math.max(MUSIC_VOLUME * this.musicVol, 0.0001);
       this.musicBus.connect(this.master);
+      // Bus de saturación para el bajo de las pistas frenéticas (UN WaveShaper compartido, no uno por nota): ganancia de entrada → tanh (la misma curva de la moto) → salida.
+      this.bassSat = this.ctx.createGain();
+      this.bassSat.gain.value = 2.2;
+      const sat = this.ctx.createWaveShaper();
+      sat.curve = this.saturationCurve();
+      sat.oversample = '2x';
+      const satOut = this.ctx.createGain();
+      satOut.gain.value = 0.55;
+      this.bassSat.connect(sat).connect(satOut).connect(this.musicBus);
       // El ambiente vacío va por su propio bus: así la música se corta en seco sin tocarlo y
       // el ambiente se abre y se cierra con sus propios tiempos.
       this.ambientBus = this.ctx.createGain();
@@ -406,10 +495,19 @@ export class Sfx {
     if (mode === this.musicMode) return;
     const wasPlaying = this.musicMode !== 'empty';
     this.musicMode = mode;
+    if (mode === 'action' && this.track.restart) this.step = 0;   // las pistas con riser / caída empiezan en el primer compás (CLASSIC sigue donde estuviera)
     if (!this.ctx) return;              // aún no hay gesto del usuario: se aplicará en init()
     if (mode === 'empty') this.resetAmbient();
     this.applyMusicMode(false);
     if (mode === 'empty' && wasPlaying) this.play('tapeStop', 1);
+  }
+
+  // Sortea la pista de combate de un piso nuevo entre las disponibles, sin repetir la última si hay más de una. Con R (mismo piso) no se llama: se conserva la misma canción.
+  pickTrack() {
+    const pool = TRACK_IDS.length > 1 ? TRACK_IDS.filter((id) => id !== this.trackId) : TRACK_IDS;
+    this.trackId = pool[Math.floor(Math.random() * pool.length)];
+    this.track = TRACKS[this.trackId];
+    return this.track;
   }
 
   // Temporizadores del ambiente: a 0 para que el zumbido, el aire y el eco entren enseguida.
@@ -468,7 +566,7 @@ export class Sfx {
         else if (this.musicMode === 'menu') this.menuStep(this.step, this.nextNote);
         else this.actionStep(this.step, this.nextNote);
       }
-      this.nextNote += STEP_TIME / (1 - 0.5 * this.slow);
+      this.nextNote += (this.musicMode === 'action' ? this.track.stepTime : STEP_TIME) / (1 - 0.5 * this.slow);
       this.step = (this.step + 1) % STEPS;
     }
   }
@@ -476,22 +574,46 @@ export class Sfx {
   // Combate: cuatro por el suelo con síncopas, charles a semicorcheas, bajo pulsante sin
   // huecos y arpegio rápido. Todo por `musicBus`, que es lo que se corta al limpiar el piso.
   actionStep(step, t) {
-    const bar = step >> 4, s = step & 15;
-    const out = this.musicBus;
-    if (KICK_STEPS.includes(s)) this.kickDrum(t, s % 4 === 0 ? 1 : 0.65);
-    if (s === 4 || s === 12) {                                                      // caja/palmada
+    const tr = this.track, bar = step >> 4, s = step & 15, out = this.musicBus;
+    const lite = !!(this.isLite && this.isLite());                                  // móvil flojo: sin las capas extra (caja fantasma, acordes cortos)
+    const many = (x) => (x ? (Array.isArray(x) ? x : [x]) : []);                   // una entrada o varias (cada pista decide)
+    const dip = many(tr.dip).some((d) => d.bar === bar && s >= d.from && s <= (d.to ?? 15)); // caída / corte de energía: sin bombo ni bajo
+    if (tr.kicks.includes(s) && !dip) this.kickDrum(t, s % 4 === 0 ? 1 : 0.65);
+    if (tr.snares.includes(s)) {                                                   // caja/palmada
       this.noise({ dur: 0.18, gain: 0.45, filter: 'bandpass', freq: 1700, freqTo: 900, q: 0.7, at: t, dest: out });
       this.tone({ type: 'triangle', from: 320, to: 180, dur: 0.1, gain: 0.25, at: t, dest: out });
     }
-    // Charles a semicorcheas con acento en los contratiempos; abierto al final del compás.
-    this.noise({ dur: s === 14 ? 0.14 : 0.03, gain: s % 2 ? 0.11 : 0.055, filter: 'highpass', freq: 8200, at: t, dest: out });
-    if (s === 0 && bar % 2 === 0) this.noise({ dur: 0.5, gain: 0.1, filter: 'highpass', freq: 5200, at: t, dest: out }); // crash
-    const pat = BASS_PATTERN[s];
-    if (pat) this.bass(ACTION_ROOTS[bar] * pat, t);
-    const chord = ACTION_CHORDS[bar];
-    this.tone({ type: 'sawtooth', from: chord[ARP_PATTERN[s]] * (ARP_OCTAVE[s] ? 4 : 2),
-      dur: 0.08, gain: 0.04, at: t, dest: out });                                   // arpegio
-    if (s === 0) this.pad(chord, t, STEP_TIME * 16, 0.03, 1800);
+    if (tr.ghost && !lite && tr.ghost.includes(s)) this.noise({ dur: 0.07, gain: 0.14, filter: 'bandpass', freq: 1900, q: 0.8, at: t, dest: out }); // caja fantasma
+    const fill = many(tr.fill).find((f) => f.bar === bar && s >= f.from);
+    if (fill) {                                                                    // redoble con crescendo
+      this.noise({ dur: 0.09, gain: 0.22 + (s - fill.from) * 0.07, filter: 'bandpass', freq: 2100, freqTo: 1100, q: 0.7, at: t, dest: out });
+    }
+    // Charles con acento en los contratiempos; abierto en los pasos que marque la pista.
+    const hat = tr.hat;
+    this.noise({ dur: hat.open.includes(s) ? hat.openDur : 0.03, gain: s % 2 ? hat.gain[1] : hat.gain[0], filter: 'highpass', freq: hat.freq, at: t, dest: out });
+    if (s === 0 && bar % tr.crashEvery === 0) this.noise({ dur: 0.5, gain: 0.1, filter: 'highpass', freq: 5200, at: t, dest: out }); // crash
+    if (many(tr.riser).some((r) => r.bar === bar && s === r.from)) {              // barrido de ruido que sube hasta el primer tiempo
+      this.noise({ dur: (16 - s) * tr.stepTime, gain: 0.13, filter: 'bandpass', freq: 400, freqTo: 6500, q: 1.1, at: t, dest: out });
+    }
+    if (s === 0 && (tr.impact === true ? bar === 0 : many(tr.impact).includes(bar))) { // al volver: bombo grande + sub + platillo
+      this.kickDrum(t, 1.25);
+      this.noise({ dur: 0.7, gain: 0.16, filter: 'highpass', freq: 3800, at: t, dest: out });
+    }
+    const pat = tr.bass[s];
+    if (pat && !dip) this.bass(tr.roots[bar] * pat, t, tr.bassSat);
+    const chord = tr.chords[bar];
+    this.tone({ type: 'sawtooth', from: chord[tr.arp[s]] * (tr.arpOct[s] ? 4 : 2),
+      dur: tr.arpDur, gain: tr.arpGain, at: t, dest: out });                       // arpegio
+    if (tr.stab && !lite && !dip && tr.stab.steps.includes(s)) {                  // acordes cortos a contratiempo (2 notas, o 3 con `notes: 3`)
+      for (const n of tr.stab.notes === 3 ? [0, 1, 2] : [0, 2]) this.tone({ type: 'square', from: chord[n] * 2, dur: tr.stab.dur || 0.07, gain: tr.stab.gain, at: t, dest: out });
+    }
+    const lead = tr.lead && !dip ? tr.lead.pattern[bar][s] : null;                // lead con eco (las repeticiones se omiten en modo ligero)
+    if (lead !== null && lead !== undefined) {
+      const f = chord[lead % 3] * tr.lead.oct[lead >= 3 ? 1 : 0];
+      this.tone({ type: tr.lead.type, from: f, dur: tr.lead.dur, gain: tr.lead.gain, at: t, dest: out });
+      if (!lite) for (const e of tr.lead.echo) this.tone({ type: tr.lead.type, from: f, dur: tr.lead.dur * 0.9, gain: tr.lead.gain * e.gain, at: t + e.steps * tr.stepTime, dest: out });
+    }
+    if (s === 0) this.pad(chord, t, tr.stepTime * 16, tr.padGain, tr.padCut);
   }
 
   // Piso limpio: ni percusión ni armonía, solo el edificio. Sub-drone que apenas se mueve,
@@ -572,8 +694,8 @@ export class Sfx {
 
   // Bajo grueso y pulsante: dos sierras desafinadas + un sub de seno una octava por debajo,
   // todo por un paso-bajo resonante que se cierra de golpe. Es lo que empuja el combate.
-  bass(freq, t) {
-    const c = this.ctx;
+  bass(freq, t, sat = false) {
+    const c = this.ctx, dest = sat && this.bassSat ? this.bassSat : this.musicBus;   // `sat`: por el bus de saturación compartido
     const f = c.createBiquadFilter();
     const g = c.createGain();
     f.type = 'lowpass';
@@ -582,13 +704,16 @@ export class Sfx {
     f.frequency.exponentialRampToValueAtTime(220, t + 0.14);
     g.gain.setValueAtTime(0.3, t);
     g.gain.exponentialRampToValueAtTime(0.0001, t + 0.17);
-    f.connect(g).connect(this.musicBus);
+    f.connect(g).connect(dest);
+    let alive = 3;
+    const release = () => { if (--alive === 0) { f.disconnect(); g.disconnect(); } };   // se sueltan los nodos al acabar las notas (sin acumulación en móviles)
     for (const detune of [-11, 12]) {
       const osc = c.createOscillator();
       osc.type = 'sawtooth';
       osc.frequency.setValueAtTime(freq * this.pitch, t);
       osc.detune.value = detune;
       osc.connect(f);
+      osc.onended = () => { osc.disconnect(); release(); };
       osc.start(t);
       osc.stop(t + 0.19);
     }
@@ -599,6 +724,7 @@ export class Sfx {
     sg.gain.setValueAtTime(0.22, t);
     sg.gain.exponentialRampToValueAtTime(0.0001, t + 0.15);
     sub.connect(sg).connect(this.musicBus);
+    sub.onended = () => { sub.disconnect(); sg.disconnect(); release(); };
     sub.start(t);
     sub.stop(t + 0.17);
   }
@@ -615,6 +741,7 @@ export class Sfx {
     g.gain.setValueAtTime(gain, t + dur * 0.7);
     g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
     f.connect(g).connect(this.musicBus);
+    let alive = freqs.length * 2;
     for (const freq of freqs) {
       for (const detune of [-7, 7]) {
         const osc = c.createOscillator();
@@ -622,6 +749,7 @@ export class Sfx {
         osc.frequency.value = freq * this.pitch;
         osc.detune.value = detune;
         osc.connect(f);
+        osc.onended = () => { osc.disconnect(); if (--alive === 0) { f.disconnect(); g.disconnect(); } }; // sin acumulación de nodos
         osc.start(t);
         osc.stop(t + dur + 0.05);
       }

@@ -204,8 +204,8 @@ export const LEVELS = [
       '#.......B..#..#..................#..#..........#',
       '#..........#..#..................#..#..........#',
       '#####D######D###########D##########D######D#####',
-      '#..............................................#',
-      '#..................B...........................#',
+      '#...#..........................................#',
+      '#...D..............B...........................#',
       '########################N#######################',
       '.......P........................................',
       '................................................',
@@ -214,12 +214,16 @@ export const LEVELS = [
       '................................................',
       '################################################',
     ],
+    // Entrada por la alcantarilla: la puerta principal está cerrada por dentro. `service` = el cuarto de servicio (x 1..3, y 21..22, puerta en (4,22)) donde se sale por la
+    // escalera y se reaparece con R; `ladder` = la boca de la escalera. `key`: un enemigo lleva la llave de la puerta principal (hay que recogerla al despejar).
+    sewerRoute: { service: [2, 21], ladder: [1, 21] },
+    key: true,
     zones: [
       ['metal', 1, 1, 10, 6], ['bathTiles', 1, 8, 10, 12], ['wood', 1, 14, 10, 19],
       ['carpet', 15, 1, 32, 19], ['metal', 37, 1, 46, 6], ['bathTiles', 37, 8, 46, 12],
       ['brokenTiles', 37, 14, 46, 19],
       // Exterior: vestíbulo, calle (asfalto, rayas del carril) y plaza de la moto.
-      ['wood', 1, 21, 46, 22], ['asphalt', 0, 25, 47, 28], ['asphaltLine', 0, 27, 1, 27],
+      ['wood', 1, 21, 46, 22], ['metal', 1, 21, 3, 22], ['asphalt', 0, 25, 47, 28], ['asphaltLine', 0, 27, 1, 27],
       ['asphaltLine', 4, 27, 5, 27], ['asphaltLine', 8, 27, 9, 27], ['asphaltLine', 12, 27, 13, 27],
       ['asphaltLine', 16, 27, 17, 27], ['asphaltLine', 20, 27, 21, 27],
       ['asphaltLine', 24, 27, 25, 27], ['asphaltLine', 28, 27, 29, 27],
@@ -243,7 +247,7 @@ export const LEVELS = [
       ['trash', 12, 19, 1, 1],
       // Exterior: vestíbulo, calle y la moto (aparcada en la plaza, 2×1 casillas).
       ['counter', 7, 21, 4, 1], ['sofa', 27, 22, 3, 1], ['cabinet', 32, 21, 1, 1],
-      ['cabinet', 33, 21, 1, 1], ['barrel', 1, 21, 1, 1], ['crates', 1, 22, 1, 1],
+      ['cabinet', 33, 21, 1, 1], ['ladder', 1, 21, 1, 1], ['barrel', 3, 21, 1, 1], ['crates', 1, 22, 1, 1],
       ['shelf', 46, 21, 1, 2], ['rug', 16, 21, 4, 2], ['papers', 14, 22, 1, 1],
       ['trash', 37, 22, 1, 1], ['tv', 44, 21, 1, 1], ['stain', 40, 22, 1, 1],
       ['crates', 4, 28, 1, 1], ['crates', 5, 28, 1, 1], ['barrel', 13, 28, 1, 1],
@@ -313,7 +317,7 @@ export const LEVELS = [
       ['trash', 30, 10, 1, 1], ['sofa', 1, 1, 3, 1], ['tv', 7, 1, 1, 1], ['sofa', 1, 8, 3, 1],
       ['cardTable', 5, 8, 2, 2], ['sofa', 1, 15, 3, 1], ['tv', 7, 15, 1, 1], ['sofa', 44, 1, 3, 1],
       ['tv', 40, 1, 1, 1], ['sofa', 44, 8, 3, 1], ['cardTable', 40, 8, 2, 2], ['sofa', 44, 15, 3, 1],
-      ['tv', 40, 15, 1, 1], ['barrel', 9, 5, 1, 1], ['crates', 38, 14, 1, 1], ['debris', 9, 15, 1, 1],
+      ['tv', 40, 15, 1, 1], ['barrel', 7, 6, 1, 1], ['crates', 41, 13, 1, 1], ['debris', 9, 15, 1, 1],
       ['stain', 37, 4, 1, 1],
       // Exterior: vestíbulo, calle y la moto (aparcada en la plaza, 2×1 casillas).
       ['counter', 12, 21, 4, 1], ['sofa', 27, 22, 3, 1], ['cabinet', 32, 21, 1, 1],
@@ -779,8 +783,8 @@ export const LEVELS = [
 // IA los rodea con el pathfinding. El resto de tipos de `props` son decoración de suelo.
 // El arte de cada tipo está en decor.js.
 export const SOLID_PROPS = new Set(['desk', 'deskFlipped', 'counter', 'sofa', 'cashTable', 'shelf', 'tv',
-  'cabinet', 'crates', 'barrel', 'toilet', 'sink', 'cardTable', 'bed', 'bike', 'lamp', 'dumpster', 'vending', 'phone', 'firebarrel']);
-export const DECOR_PROPS = new Set(['rug', 'debris', 'trash', 'stain', 'papers', 'sewer', 'hatch', 'detonator']);
+  'cabinet', 'crates', 'barrel', 'toilet', 'sink', 'cardTable', 'bed', 'bike', 'lamp', 'dumpster', 'vending', 'phone', 'firebarrel', 'pillar']);
+export const DECOR_PROPS = new Set(['rug', 'debris', 'trash', 'stain', 'papers', 'sewer', 'hatch', 'detonator', 'ladder']);
 // Celdas de la cuadrícula: 0 suelo · 1 pared estructural · 2 mueble sólido.
 const CELL_WALL = 1;
 const CELL_PROP = 2;
@@ -1017,7 +1021,7 @@ function withOutskirts(def, index, rng) {
     if (free.has(x + ',' + y) || sewers.some((q) => Math.abs(q.tx - x) + Math.abs(q.ty - y) < 12)) continue;
     if (fire && Math.abs(fire.tx - x) + Math.abs(fire.ty - y) < 7) continue;            // lejos de la fogata y su grupo
     if (dumpsters.some((d) => Math.abs(d[0] - x) + Math.abs(d[1] - y) < 4)) continue;   // y de los contenedores
-    if (take(x, y)) { props.push(['sewer', x, y]); sewers.push({ tx: x, ty: y }); }
+    if (take(x, y)) { props.push(['sewer', x, y]); sewers.push({ tx: x, ty: y, entrance: !!def.sewerRoute && sewers.length === 0 }); } // con `sewerRoute`, la primera es la entrada al tramo de alcantarilla
   }
   const streetInfo = { vending: vs ? cell(vs[0], vs[1]) : null, phone: ps ? cell(ps[0], ps[1]) : null, npcs, fire, coins };
   return { rows, zones, props, sewers, street: streetInfo };
@@ -1156,6 +1160,19 @@ export function loadLevel(index = 0, rng = Math.random, override = null) {
       if (ghost) { e.armed = true; e.weapon = 'gun'; e.melee = null; }
     }
   }
+  // Llave de la puerta principal (`def.key`): la lleva un enemigo corriente (no el portador de máscara), el más alejado del cuarto de servicio por donde se entra. Sin azar: no altera el resto del sorteo.
+  let sewerRoute = null;
+  if (def.sewerRoute) {
+    const O = OUTSKIRT, c = (t) => t * TILE + TILE / 2, [sx, sy] = def.sewerRoute.service, [lx, ly] = def.sewerRoute.ladder;
+    sewerRoute = { service: { x: c(sx + O), y: c(sy + O) }, ladder: { tx: lx + O, ty: ly + O, x: c(lx + O), y: c(ly + O) } };
+  }
+  if (def.key && sewerRoute) {
+    const pool = enemies.filter((e) => (e.kind === 'grunt' || e.kind === 'runner') && !e.carrier);
+    if (pool.length) {
+      const far = (e) => Math.hypot(e.x - sewerRoute.service.x, e.y - sewerRoute.service.y);
+      pool.reduce((best, e) => (far(e) > far(best) ? e : best)).keyCarrier = true;
+    }
+  }
   // Huecos aleatorios barajados: los primeros reciben las armas garantizadas.
   for (let i = randomSlots.length - 1; i > 0; i--) {
     const j = Math.floor(rng() * (i + 1));
@@ -1199,7 +1216,7 @@ export function loadLevel(index = 0, rng = Math.random, override = null) {
   const fixedHostage = def.hostage ? [{ tx: def.hostage[0] + OUTSKIRT, ty: def.hostage[1] + OUTSKIRT, x: (def.hostage[0] + OUTSKIRT) * TILE + TILE / 2, y: (def.hostage[1] + OUTSKIRT) * TILE + TILE / 2,
     look: { shirt: '#05d9e8', hair: '#140a08', skin: '#d9a67a', gender: 'm' }, facing: Math.PI, partner: true }] : null;
   const hostages = fixedHostage || (def.noHostages ? [] : placeHostages(map, enemies, actRnd, doors, mainDoor.ty, entry, occupied, index));
-  return { name: def.name, par: def.par, trap: map.trap, noHostages: !!def.noHostages, duo: !!def.duo, cameras: map.cameras, dark: !!def.dark, strobe: !!def.strobe, boss: !!def.boss, map, player, bike, mainDoor, entry, enemies, weapons, doors, hostages };
+  return { name: def.name, par: def.par, sewerRoute, key: !!def.key, trap: map.trap, noHostages: !!def.noHostages, duo: !!def.duo, cameras: map.cameras, dark: !!def.dark, strobe: !!def.strobe, boss: !!def.boss, map, player, bike, mainDoor, entry, enemies, weapons, doors, hostages };
 }
 
 // Patrulla de ida y vuelta: en el eje más despejado, o en el vertical si se fuerza.

@@ -14,6 +14,7 @@ const MASK = {
   neon: ['¡UN GALLO!', '¿QUÉ ES ESO, UN POLLO?', '¡COCORICO, CABRÓN!', '¡ES UN GALLO LOCO!'],
   oso: ['¡UN OSO!', '¡ESE OSO PEGA DURO!', '¡CUIDADO, EL OSO!', '¡ES UN OSO ENORME!'],
   guepardo: ['¡ES MUY RÁPIDO!', '¡EL GUEPARDO!', '¡PARECE UN GATO GRANDE!', '¡NO LO DEJÉIS CORRER!'],
+  aguila: ['¡EL ÁGUILA!', '¡ESA MÁSCARA ES DE RICK!', '¡UN ÁGUILA CON UNA GRIETA!', '¡LLEVA LA MÁSCARA DE RICK!'],
   buho: ['¡EL BÚHO!', '¿QUIÉN SE DISFRAZA DE BÚHO?', '¡NOS VIGILA UN BÚHO!', '¡ESOS OJOS ME ASUSTAN!'],
 };
 

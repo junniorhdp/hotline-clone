@@ -14,12 +14,26 @@ const PATROL_SPEED = 84;     // (70)
 const PATROL_WAIT = 0.7;     // pausa mirando alrededor en cada punto de la ruta (1)
 const INVESTIGATE_SPEED = 144; // (120)
 const CHASE_SPEED = 192;     // (172)
+// NIVEL DE IA ENEMIGA (opción IA ENEMIGA de OPCIONES: TONTOS / PROMEDIO / GENIOS). Multiplicadores globales sobre los tiempos y la puntería de TODOS los enemigos (el jefe
+// conserva sus propios ataques). PROMEDIO = todo ×1: el comportamiento de siempre. Se pone con `setAiLevel` (Game.setAiLevel, desde la opción).
+//   react    pausa entre verte y empezar a actuar (también al levantarse de un derribo)   windup  preparación del golpe y del apuntado (la ventana para esquivar)
+//   cooldown espera entre golpes / disparos / ráfagas                                      spread  dispersión de las balas (puntería)
+//   speed    velocidad de persecución / búsqueda (tope: el jugador sigue siendo más rápido) view / sense  alcance de la vista y de la detección a la espalda   search  cuánto te buscan
+// GENIOS no rompe reglas: persiguen a 202 u/s (< 228 del jugador), el golpe aún se ve venir (≥ 0,13 s) y las balas siguen esquivables.
+export const AI = { react: 1, windup: 1, cooldown: 1, spread: 1, speed: 1, view: 1, sense: 1, search: 1 };
+const AI_LEVELS = {
+  dumb: { react: 2.2, windup: 1.35, cooldown: 1.6, spread: 1.9, speed: 0.9, view: 0.8, sense: 0.8, search: 0.7 },
+  avg: { react: 1, windup: 1, cooldown: 1, spread: 1, speed: 1, view: 1, sense: 1, search: 1 },
+  genius: { react: 0.5, windup: 0.8, cooldown: 0.75, spread: 0.55, speed: 1.05, view: 1.12, sense: 1.2, search: 1.3 },
+};
+export function setAiLevel(level) { Object.assign(AI, AI_LEVELS[level] || AI_LEVELS.avg); }
 const FROZEN_MAX = 8;       // s que un enemigo `scared` aguanta paralizado de miedo antes de reaccionar
 const REACTION_TIME = 0.18;  // pausa entre verte y empezar a perseguir (0,3)
 const ATTACK_REACH = 14;     // hueco entre cuerpos para poder golpear
 const WINDUP = 0.17;         // preparación del puñetazo (ventana para esquivar) (0,22)
 const ATTACK_COOLDOWN = 0.3; // (0,4)
 const SEARCH_TIME = 3.2;     // cuánto te buscan tras perderte (2,5)
+const chaseSpeed = () => CHASE_SPEED * AI.speed; // velocidad de persecución según el nivel de IA
 const DOWN_TIME = 3.2;       // segundos noqueado antes de levantarse
 const KNOCKBACK = 14;
 const ARRIVE_DIST = 6;
@@ -168,9 +182,9 @@ export class Enemy {
     const d = Math.hypot(dx, dy);
     // Penumbra (pisos oscuros): a oscuras te ven a la mitad de distancia, salvo que acabes de hacer ruido (disparo, golpe) y delates tu posición.
     const dk = map.dark;
-    const lim = dk && !(map.reveal > 0) && dk[tileKey(map, p.x, p.y)] ? VIEW_DIST * 0.5 : VIEW_DIST;
+    const lim = dk && !(map.reveal > 0) && dk[tileKey(map, p.x, p.y)] ? VIEW_DIST * 0.5 * AI.view : VIEW_DIST * AI.view;
     if (d > lim) return false;
-    if (d > CLOSE_SENSE && Math.abs(angleDiff(Math.atan2(dy, dx), this.angle)) > FOV / 2) return false;
+    if (d > CLOSE_SENSE * AI.sense && Math.abs(angleDiff(Math.atan2(dy, dx), this.angle)) > FOV / 2) return false;
     return lineOfSight(map, this.x, this.y, p.x, p.y);
   }
 
@@ -202,8 +216,8 @@ export class Enemy {
     for (const o of game.enemies) {
       if (o === this || o.alive || this.seenCorpses.has(o)) continue;
       const dx = o.x - this.x, dy = o.y - this.y, d = Math.hypot(dx, dy);
-      if (d > VIEW_DIST * 0.8) continue;
-      if (d > CLOSE_SENSE && Math.abs(angleDiff(Math.atan2(dy, dx), this.angle)) > FOV / 2) continue;
+      if (d > VIEW_DIST * 0.8 * AI.view) continue;
+      if (d > CLOSE_SENSE * AI.sense && Math.abs(angleDiff(Math.atan2(dy, dx), this.angle)) > FOV / 2) continue;
       if (!lineOfSight(game.map, this.x, this.y, o.x, o.y)) continue;
       this.seenCorpses.add(o); // cada enemigo reacciona a cada cadáver una sola vez
       if (!o.found) {
@@ -246,7 +260,7 @@ export class Enemy {
       this.timer -= dt;
       if (this.timer <= 0) {
         this.state = 'alert';
-        this.timer = REACTION_TIME;
+        this.timer = REACTION_TIME * AI.react;
         this.target = { x: game.player.x, y: game.player.y };
       }
       return;
@@ -265,7 +279,7 @@ export class Enemy {
       if (this.state !== 'alert' && this.state !== 'chase' && this.state !== 'panic' && this.state !== 'frozen') {
         const relaxed = this.state === 'patrol' ? this.relaxDelay : 0; // pillado fumando o sentado: tarda más en reaccionar
         this.state = 'alert';
-        this.timer = this.alarmed ? REACTION_TIME * 0.4 : REACTION_TIME + relaxed; // en estado de combate (alarma) reacciona al instante
+        this.timer = (this.alarmed ? REACTION_TIME * 0.4 : REACTION_TIME + relaxed) * AI.react; // en estado de combate (alarma) reacciona al instante
         game.playAt('alert', this.x, this.y);
         game.raiseAlarm(this, p.x, p.y); // da la voz a las salas contiguas
         if (!this.spotted) { this.spotted = true; game.bark(this, spotLine(game.player.gender, game.mask && game.mask.id, game.lastBark)); }
@@ -314,7 +328,7 @@ export class Enemy {
           this.turnTowards(Math.atan2(this.target.y - this.y, this.target.x - this.x), 9, dt);
           break;
         }
-        if (this.goTo(this.target.x, this.target.y, (this.hurry ? CHASE_SPEED * 0.92 : INVESTIGATE_SPEED) * this.speedMul, dt, game.map)) this.startSearch();
+        if (this.goTo(this.target.x, this.target.y, (this.hurry ? chaseSpeed() * 0.92 : INVESTIGATE_SPEED) * this.speedMul, dt, game.map)) this.startSearch();
         break;
       case 'search':
         this.angle += 2.2 * dt;
@@ -346,14 +360,14 @@ export class Enemy {
     const p = game.player;
     this.scared = false; this.thawNow = false;
     this.state = 'alert';
-    this.timer = REACTION_TIME * 2;
+    this.timer = REACTION_TIME * 2 * AI.react;
     this.target = { x: p.x, y: p.y };
     game.playAt('alert', this.x, this.y);
   }
 
   startSearch() {
     this.state = 'search';
-    this.timer = SEARCH_TIME;
+    this.timer = SEARCH_TIME * AI.search;
     this.windup = this.aim = this.burstLeft = 0;
   }
 
@@ -411,9 +425,9 @@ export class Enemy {
     // Si te pierde de vista, el wind-up se cancela: por eso cubrirse tras una esquina funciona.
     if (!this.sees) {
       // Una ráfaga cortada a medias deja un pequeño respiro antes de volver a apuntar.
-      if (this.burstLeft > 0) this.attackCd = this.gunDef.cooldown * 0.5;
+      if (this.burstLeft > 0) this.attackCd = this.gunDef.cooldown * 0.5 * AI.cooldown;
       this.windup = this.aim = this.burstLeft = 0;
-      if (this.goTo(this.target.x, this.target.y, CHASE_SPEED * this.speedMul, dt, game.map)) this.startSearch();
+      if (this.goTo(this.target.x, this.target.y, chaseSpeed() * this.speedMul, dt, game.map)) this.startSearch();
       return;
     }
 
@@ -430,17 +444,17 @@ export class Enemy {
           game.enemyShoot(this);
           this.burstLeft--;
           this.burstTimer = def.burstInterval;
-          if (this.burstLeft === 0) this.attackCd = def.cooldown;
+          if (this.burstLeft === 0) this.attackCd = def.cooldown * AI.cooldown;
         }
         return;
       }
       if (d < def.range) {
         this.turnTowards(angleToPlayer, 9, dt);
-        if (this.pressure && d > 110 && this.aim === 0) this.goTo(p.x, p.y, CHASE_SPEED * this.speedMul * 0.5, dt, game.map); // el blindado avanza tras su escudo
+        if (this.pressure && d > 110 && this.aim === 0) this.goTo(p.x, p.y, chaseSpeed() * this.speedMul * 0.5, dt, game.map); // el blindado avanza tras su escudo
         if (this.attackCd <= 0) {
           if (this.aim === 0) game.playAt('aim', this.x, this.y);
           this.aim += dt;
-          if (this.aim >= def.windup) {
+          if (this.aim >= def.windup * AI.windup) {
             this.aim = 0;
             this.burstLeft = def.burst;
             this.burstTimer = 0;
@@ -449,7 +463,7 @@ export class Enemy {
         return;
       }
       this.aim = 0;
-      this.goTo(p.x, p.y, CHASE_SPEED * this.speedMul, dt, game.map);
+      this.goTo(p.x, p.y, chaseSpeed() * this.speedMul, dt, game.map);
       return;
     }
 
@@ -457,9 +471,9 @@ export class Enemy {
       this.turnTowards(angleToPlayer, 16, dt);
       if (this.attackCd <= 0) {
         this.windup += dt;
-        if (this.windup >= this.windupTime) {
+        if (this.windup >= this.windupTime * AI.windup) {
           this.windup = 0;
-          this.attackCd = ATTACK_COOLDOWN;
+          this.attackCd = ATTACK_COOLDOWN * AI.cooldown;
           this.swingT = 0.15;
           if (p === game.partner) game.partnerStrike(this); // el compañero inactivo no forcejea: cae de un golpe
       else game.enemyStrike(this, angleToPlayer); // frontal = forcejeo; por la espalda mata
@@ -468,7 +482,7 @@ export class Enemy {
       return;
     }
     this.windup = 0;
-    this.goTo(p.x, p.y, CHASE_SPEED * this.speedMul, dt, game.map);
+    this.goTo(p.x, p.y, chaseSpeed() * this.speedMul, dt, game.map);
   }
 
   // --- Cobertura ------------------------------------------------------------------------------------
@@ -496,7 +510,7 @@ export class Enemy {
     this.cT += dt;
     if (this.cmode === 'seek') {
       if (this.cT > 3.5) { this.cover = null; this.coverCool = 5; return false; }
-      if (this.goTo(c.sx, c.sy, CHASE_SPEED * this.speedMul, dt, map)) { this.cmode = 'hide'; this.cT = 0; this.hideFor = 0.5 + Math.random() * 0.9; this.aim = 0; }
+      if (this.goTo(c.sx, c.sy, chaseSpeed() * this.speedMul, dt, map)) { this.cmode = 'hide'; this.cT = 0; this.hideFor = 0.5 + Math.random() * 0.9; this.aim = 0; }
       return true;
     }
     if (this.cmode === 'hide') {
@@ -515,7 +529,7 @@ export class Enemy {
       return true;
     }
     if (this.sees && d < def.range * 0.95) return false; // ve al jugador: dispara desde donde está
-    this.goTo(c.px, c.py, CHASE_SPEED * this.speedMul, dt, map);
+    this.goTo(c.px, c.py, chaseSpeed() * this.speedMul, dt, map);
     return true;
   }
 
@@ -565,7 +579,7 @@ export class Enemy {
     const pk = this.nearestWeapon(game);
     if (pk) {
       if (Math.hypot(pk.x - this.x, pk.y - this.y) < 14) { this.takeWeapon(pk, game); return; }
-      this.goTo(pk.x, pk.y, CHASE_SPEED * 1.05, dt, game.map);
+      this.goTo(pk.x, pk.y, chaseSpeed() * 1.05, dt, game.map);
       return;
     }
     this.cornered = d < 42 ? this.cornered + dt : Math.max(0, this.cornered - dt);
@@ -575,7 +589,7 @@ export class Enemy {
       this.fleeTarget = this.pickFlee(game);
       this.fleeRepath = 0.5;
     }
-    if (this.fleeTarget) this.goTo(this.fleeTarget.x, this.fleeTarget.y, CHASE_SPEED, dt, game.map);
+    if (this.fleeTarget) this.goTo(this.fleeTarget.x, this.fleeTarget.y, chaseSpeed(), dt, game.map);
   }
 
   // El arma suelta más cercana que merece la pena: cuerpo a cuerpo o de fuego con balas, a ≤ 360 u, alcanzable
@@ -683,7 +697,7 @@ export class Enemy {
     // Mira láser durante el wind-up del disparo: avisa de que va a disparar.
     if (this.aim > 0) {
       // Línea de puntos pixelada que se va llenando: avisa de que va a disparar.
-      const t = this.aim / this.gunDef.windup;
+      const t = this.aim / (this.gunDef.windup * AI.windup);
       const len = castRay(game.map, this.x, this.y, this.angle, this.gunDef.range + 80);
       const cos = Math.cos(this.angle), sin = Math.sin(this.angle);
       ctx.save();
@@ -720,7 +734,7 @@ export class Enemy {
       ctx.fillStyle = '#3a2f1a'; pixelRect(ctx, -10, -7, 4, 15);
     }
     // Puños; durante la preparación del golpe el brazo se echa hacia atrás.
-    const wind = this.windup / this.windupTime;
+    const wind = this.windup / (this.windupTime * AI.windup);
     if (resting && this.seated) {
       drawSprite(ctx, 'fist', 11, 6);
       drawSprite(ctx, 'fist', 11, -6);

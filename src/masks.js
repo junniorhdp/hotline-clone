@@ -9,7 +9,8 @@ import { buildSprite } from './sprites.js';
 //   startWeapon     arma con la que empiezas el piso (tipo de WEAPON_DEFS)
 //   bulletSpeedMul  multiplicador de la velocidad de tus balas
 //   spreadMul       multiplicador de la dispersión de tus disparos (menos = más precisión)
-export const DEFAULT_EFFECTS = { meleeLethal: false, speedMul: 1, startWeapon: null, bulletSpeedMul: 1, spreadMul: 1 };
+//   lookAhead       mirada adelantada de la cámara (RICK): 1 = la de siempre; > 1 la adelanta más hacia el cursor (PC) o hacia donde apuntas / te mueves (táctil). Sin zoom.
+export const DEFAULT_EFFECTS = { meleeLethal: false, speedMul: 1, startWeapon: null, bulletSpeedMul: 1, spreadMul: 1, lookAhead: 1 };
 
 export const MASKS = [
   {
@@ -124,6 +125,32 @@ export const MASKS = [
       '.kuUuuuuUuk.',
       '..kkuuuukk..',
       '....kkkk....',
+    ],
+  },
+  {
+    // SECRETA: no sale en la selección hasta encontrarla (`secret`). Está en el cadáver que devora el cocodrilo de la alcantarilla del piso 3 (ver Game.lootRick). Águila de Rick, su
+    // antiguo dueño: plumas oscuras con acentos dorados, cejas marcadas, ojos de oro y pico de hueso afilado y ganchudo. Lleva la MARCA de su final sin romper la silueta: una
+    // GRIETA clara (`c`) que cruza el ojo izquierdo y una MUESCA de mordisco en el borde derecho.
+    id: 'aguila',
+    secret: true,
+    jaw: { x0: 4, x1: 8, y0: 8, y1: 11 }, // el pico baja al hablar
+    name: 'RICK',
+    passive: ['MIRADA ADELANTADA:', 'LA CÁMARA SE ADELANTA.'],
+    effects: { lookAhead: 2.4 },
+    palette: { d: '#565670', D: '#1c1c28', g: '#e0a82a', b: '#ece4c8', B: '#b8ae8c', e: '#f2c230', c: '#fff6d8' },
+    rows: [
+      '..kg....gk..',
+      '.kddgkkgddk.',
+      'kdDcddddDDdk',
+      'kDDckddkDDDk',
+      'kdecekkeeedk',
+      'kdckekkekedk',
+      'kdcddbbdddk.',
+      'kdddkbbkddk.',
+      '.kddkbBkddk.',
+      '.kdgkBBkgdk.',
+      '..kkkBBkkk..',
+      '.....kk.....',
     ],
   },
 ];

@@ -157,6 +157,29 @@ export const FLOORS = {
     if (rnd() < 0.2) crack(ctx, '#1c182c', x0 + 2 + Math.floor(rnd() * 11), y0 + 1, 6 + Math.floor(rnd() * 8), rnd);
     if (rnd() < 0.08) rect(ctx, '#8a4a6a', x0 + 3 + Math.floor(rnd() * 9), y0 + 3 + Math.floor(rnd() * 9), 2, 1); // chicle
   },
+  // Piedra húmeda de la alcantarilla: adoquines oscuros con verdín y charcos.
+  sewerStone(ctx, tx, ty, rnd) {
+    const x0 = tx * PX, y0 = ty * PX;
+    rect(ctx, '#101c1c', x0, y0, PX, PX);
+    for (let r = 0; r < 4; r++) {
+      const off = (r + ty) % 2 ? 0 : 4;
+      rect(ctx, '#0a140d', x0, y0 + r * 4 + 3, PX, 1);
+      for (let x = off; x < PX; x += 8) rect(ctx, '#0a140d', x0 + x, y0 + r * 4, 1, 3);
+    }
+    dots(ctx, '#1d3524', x0, y0, PX, PX, 14, rnd);
+    dots(ctx, '#2f6a35', x0, y0, PX, PX, 8, rnd); // moho
+    dots(ctx, '#6fb83a', x0, y0, PX, PX, 2, rnd); // limo brillante
+    if (rnd() < 0.12) { ctx.globalAlpha = 0.45; ctx.fillStyle = '#1d5a24'; pixelDisc(ctx, x0 + 4 + rnd() * 8, y0 + 4 + rnd() * 8, 2 + rnd() * 3); ctx.globalAlpha = 1; }
+  },
+  // Agua del canal: verde azulada oscura con vetas de luz (el brillo animado lo pone el túnel).
+  water(ctx, tx, ty, rnd) {
+    const x0 = tx * PX, y0 = ty * PX;
+    rect(ctx, '#1c2c0e', x0, y0, PX, PX);
+    dots(ctx, '#2c4214', x0, y0, PX, PX, 24, rnd);
+    dots(ctx, '#0e1a08', x0, y0, PX, PX, 16, rnd);
+    dots(ctx, '#a8d83a', x0, y0, PX, PX, 3, rnd); // espuma tóxica
+    for (let i = 0; i < 2; i++) rect(ctx, '#5a7a22', x0 + Math.floor(rnd() * 11), y0 + 2 + Math.floor(rnd() * 11), 3 + Math.floor(rnd() * 3), 1);
+  },
   // Chapa metálica antideslizante (almacenes, servidores): marcas en diagonal y óxido.
   metal(ctx, tx, ty, rnd) {
     const x0 = tx * PX, y0 = ty * PX;
@@ -383,12 +406,30 @@ const DECO_ART = {
     ctx.fillStyle = 'rgba(255, 224, 138, 0.10)'; pixelDisc(ctx, cx, cy, 7);
   },
   // Base de la alcantarilla: el agujero oscuro con su marco (la tapa la dibuja sewer.js y se desliza).
+  // Pozo de la escalera (cuarto de servicio y final del túnel): boca oscura con dos largueros y peldaños.
+  ladder(ctx, x, y, w, h) {
+    rect(ctx, K, x + 2, y + 1, w - 4, h - 2);
+    rect(ctx, '#05030a', x + 3, y + 2, w - 6, h - 4);
+    rect(ctx, '#9aa0b8', x + 4, y + 2, 1, h - 4);
+    rect(ctx, '#9aa0b8', x + w - 5, y + 2, 1, h - 4);
+    for (let yy = y + 4; yy < y + h - 3; yy += 3) rect(ctx, '#c9c3e6', x + 4, yy, w - 8, 1);
+    rect(ctx, '#ffbe0b', x + 2, y + 1, w - 4, 1); // marco de aviso
+    rect(ctx, '#ffbe0b', x + 2, y + h - 2, w - 4, 1);
+  },
   sewer(ctx, x, y, w, h) {
     const cx = x + w / 2, cy = y + h / 2;
     ctx.fillStyle = '#0a0712'; pixelDisc(ctx, cx, cy, 11);
     ctx.fillStyle = '#2a2540'; pixelDisc(ctx, cx, cy, 10);
     ctx.fillStyle = '#04030a'; pixelDisc(ctx, cx, cy, 8);
     ctx.fillStyle = '#0b2a2a'; pixelDisc(ctx, cx, cy + 1, 5);
+  },
+  // Pilar de piedra del túnel (2×2): bloque con juntas y musgo; sirve de cobertura y de cebo para la embestida del cocodrilo.
+  pillar(ctx, x, y, w, h, rnd) {
+    box(ctx, '#3a4658', x + 1, y + 1, w - 2, h - 2);
+    rect(ctx, '#556377', x + 2, y + 2, w - 4, 2);
+    rect(ctx, '#2a3342', x + 2, y + h - 5, w - 4, 3);
+    for (let i = 1; i < 3; i++) rect(ctx, '#2a3342', x + 2, y + Math.floor((h * i) / 3), w - 4, 1);
+    dots(ctx, '#2f6a4a', x + 2, y + 2, w - 4, h - 4, 8, rnd);
   },
   debris(ctx, x, y, w, h, rnd) {
     for (let i = 0; i < 6; i++) {
@@ -476,7 +517,9 @@ function drawFence(ctx, x0, y0, tx, ty) {
   rect(ctx, '#0a0812', x0, y0 + PX - 1, PX, 1);
 }
 
-export function renderWalls(map) {
+// Paleta de las paredes: ladrillo (cara, junta, brillo), tubo neón (brillante, medio) y halo. La de siempre es la del edificio; el túnel de la alcantarilla usa una verde.
+export const WALL_PAL = { brick: ['#2a0d3a', '#1d0829', '#3c1450'], neon: ['#ff2a85', '#9c1a5a'], glow: COLORS.wall };
+export function renderWalls(map, pal = WALL_PAL) {
   const walls = makeLayer(map);
   const glow = makeLayer(map);
   const ctx = walls.getContext('2d');
@@ -491,14 +534,14 @@ export function renderWalls(map) {
       const x0 = tx * PX, y0 = ty * PX;
       if (tx === 0 || ty === 0 || tx === map.w - 1 || ty === map.h - 1) { drawFence(ctx, x0, y0, tx, ty); continue; } // límite del mapa
       // Cara superior: ladrillo oscuro con juntas y brillo arriba-izquierda.
-      rect(ctx, '#2a0d3a', x0, y0, PX, PX);
-      ctx.fillStyle = '#1d0829';
+      rect(ctx, pal.brick[0], x0, y0, PX, PX);
+      ctx.fillStyle = pal.brick[1];
       for (let r = 0; r < 4; r++) {
         ctx.fillRect(x0, y0 + r * 4 + 3, PX, 1);
         const off = (r + ty) % 2 ? 4 : 12;
         ctx.fillRect(x0 + off, y0 + r * 4, 1, 3);
       }
-      ctx.fillStyle = '#3c1450';
+      ctx.fillStyle = pal.brick[2];
       for (let r = 0; r < 4; r++) ctx.fillRect(x0, y0 + r * 4, PX, 1);
 
       const open = { top: !solid(tx, ty - 1), bottom: !solid(tx, ty + 1), left: !solid(tx - 1, ty), right: !solid(tx + 1, ty) };
@@ -532,8 +575,8 @@ export function renderWalls(map) {
 
       // Bordes que dan al suelo: tubo neón de 2 px (brillante + medio).
       const neon = (x, y, w, h, ix, iy) => {
-        rect(ctx, '#ff2a85', x, y, w, h);
-        rect(ctx, '#9c1a5a', x + ix, y + iy, w, h);
+        rect(ctx, pal.neon[0], x, y, w, h);
+        rect(ctx, pal.neon[1], x + ix, y + iy, w, h);
         edges.push([x, y, w, h]);
       };
       if (open.top) neon(x0, y0, PX, 1, 0, 1);
@@ -544,9 +587,9 @@ export function renderWalls(map) {
   }
 
   // Glow: los mismos bordes con desenfoque; al escalar sin suavizado queda un halo "en bloques".
-  g.shadowColor = COLORS.wall;
+  g.shadowColor = pal.glow;
   g.shadowBlur = 6;
-  g.fillStyle = COLORS.wall;
+  g.fillStyle = pal.glow;
   for (let pass = 0; pass < 2; pass++) for (const [x, y, w, h] of edges) g.fillRect(x, y, w, h);
   return { walls, glow };
 }

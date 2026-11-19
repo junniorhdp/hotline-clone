@@ -64,7 +64,7 @@ export class Menu {
   open(screen = 'title') {
     this.screen = screen;
     if (screen === 'title') this.index = 0;
-    if (screen === 'floors') this.floorIndex = 0;
+    if (screen === 'floors') { this.floorIndex = 0; this.floorFirst = null; }
     // Solo un movimiento real del ratón cambia la selección.
     this.mouse = this.game.mouseInternal();
   }
@@ -177,7 +177,12 @@ export class Menu {
     // (flechas `<` / `>` en los bordes cuando hay más a un lado).
     const perPage = Math.max(1, Math.min(n, Math.floor((w - 16 + gap) / (70 + gap))));
     const cardW = clamp(Math.floor((w - 16 - gap * (perPage - 1)) / perPage), 70, 150);
-    const first = clamp(this.floorIndex - Math.floor(perPage / 2), 0, n - perPage);
+    // La ventana de tarjetas NO se recentra en cada selección (antes, al pasar el ratón o tocar una tarjeta la ventana se desplazaba y la tarjeta se iba de debajo del dedo /
+    // cursor: no se podía elegir, p. ej., el piso 6): solo se desplaza cuando la selección sale de lo visible (flechas, bordes o teclado).
+    let first = this.floorFirst == null ? clamp(this.floorIndex - Math.floor(perPage / 2), 0, n - perPage) : clamp(this.floorFirst, 0, n - perPage);
+    if (this.floorIndex < first) first = this.floorIndex;
+    else if (this.floorIndex >= first + perPage) first = this.floorIndex - perPage + 1;
+    this.floorFirst = first;
     const maxMapW = Math.max(...LEVELS.map((l) => l.rows[0].length));
     const maxMapH = Math.max(...LEVELS.map((l) => l.rows.length));
     const thumbScale = clamp(Math.floor((cardW - 10) / maxMapW), 1, 3);
