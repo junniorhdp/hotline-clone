@@ -241,6 +241,7 @@ export class Game {
     this.levelIndex = 0;
     this.comms = new Comms(this); // líneas cortas de lore no modales (prólogo)
     this.skipHold = 0; this.skipAsk = 0; this.prologueT = 0;
+    this.tut = { done: new Set(), seen: new Set(), cur: null }; this.tutFocus = null; // instrucciones contextuales del prólogo (ver updateTutorial)
     this.prologue = false; // tutorial aparte del piso 1 (ver prologue.js): sin resultados, récords ni estadísticas de campaña
     this.debug = false;
     this.acc = 0;
@@ -925,6 +926,57 @@ export class Game {
     if (this.state === 'playing' && this.inside && this.stats.kills >= 1 && this.time > 4) this.prologueLine('kill');
     if (this.state === 'cleared' && this.goalAge > 0.3) this.prologueLine('clear');
     c.update(dt);
+    this.updateTutorial(dt);
+  }
+
+  // INSTRUCCIONES CONTEXTUALES del prólogo (no modales): un recuadro sobre el objetivo y, la primera vez de cada una, un desplazamiento suave de cámara hacia él.
+  // En orden, y cada una solo mientras tenga sentido: golpear al enemigo paralizado (sin arma) → rematarlo → recoger un arma → usarla (y lanzarla) con el siguiente.
+  // Se dan por aprendidas según lo que haces (una baja, recoger un arma...), así que no insisten ni salen si ya lo hiciste (`tut.done` persiste con R).
+  updateTutorial(dt) {
+    const p = this.player, T = this.tut, k = this.keys;
+    if (this.tutFocus && (this.tutFocus.t += dt) > this.tutFocus.life) this.tutFocus = null;
+    T.cur = null;
+    if (this.state !== 'playing' || !p.alive || p.exec || p.vomit || this.panel || this.callout) return; // (no mientras hay un cartel grande en pantalla)
+    const kills = this.stats.kills, armed = !!p.weapon;
+    if (armed) { T.done.add('punch'); T.done.add('pickup'); }
+    if (kills >= 1) { T.done.add('punch'); T.done.add('execute'); }
+    if (kills >= 2) T.done.add('weapon');
+    const near = (list, r) => {
+      let best = null, bd = r;
+      for (const o of list) {
+        const d = Math.hypot(o.x - p.x, o.y - p.y);
+        if (d < bd && lineOfSight(this.map, p.x, p.y, o.x, o.y)) { best = o; bd = d; }
+      }
+      return best;
+    };
+    const live = this.enemies.filter((e) => e.alive);
+    let id = null, t = null, l1 = '', l2 = '', l3 = '';
+    if (!T.done.has('punch') && (t = near(live.filter((e) => e.state === 'frozen'), 150))) {
+      id = 'punch'; l1 = '¡ESTÁ PARALIZADO!'; l2 = this.hint(`${k.label('attack')} · GOLPEAR`, 'ATACAR · GOLPEAR');
+    } else if (!T.done.has('execute') && (t = near(live.filter((e) => e.state === 'down'), 170))) {
+      id = 'execute'; l1 = '¡REMÁTALO YA!'; l2 = this.hint(`${k.label('execute')} · ${k.label('attack')}`, 'REMATAR');
+    } else if (!T.done.has('pickup') && (t = near(this.pickups.filter((q) => q.alive && !q.flying), 90))) {
+      id = 'pickup'; l1 = 'ARMA EN EL SUELO'; l2 = this.hint(`${k.label('throw')} · RECOGER`, 'LANZAR · RECOGER');
+    } else if (!T.done.has('weapon') && armed && (t = near(live.filter((e) => e.state === 'frozen'), 170))) {
+      id = 'weapon'; l1 = 'USA TU ARMA'; l2 = this.hint(`${k.label('attack')}: GOLPEAR`, 'ATACAR: GOLPEAR'); l3 = this.hint(`${k.label('throw')}: LANZAR (DERRIBA)`, 'LANZAR: DERRIBA');
+    }
+    if (!id) return;
+    T.cur = { id, x: t.x, y: t.y, lines: l3 ? [l1, l2, l3] : [l1, l2] };
+    if (!T.seen.has(id)) { T.seen.add(id); this.tutFocus = { x: t.x, y: t.y, t: 0, life: 1.8 }; }
+  }
+
+  // El recuadro de la instrucción actual, sobre su objetivo (en la escena, no en el mundo: texto nítido). Parpadea el borde para llamar la atención sin tapar la acción.
+  drawTutorial(ctx) {
+    const c = this.tut.cur;
+    if (!c || this.state !== 'playing') return;
+    const s = this.camera.worldToScreen(c.x, c.y - 30);
+    const bw = Math.max(...c.lines.map((l) => measureText(l))) + 12, bh = 4 + c.lines.length * 10;
+    const p = this.keepOnScreen(s.x, s.y - bh, bw, bh, 6);
+    const bx = Math.round(p.x - bw / 2), by = Math.round(p.y);
+    ctx.fillStyle = 'rgba(13, 2, 33, 0.92)'; ctx.fillRect(bx, by, bw, bh);
+    ctx.fillStyle = Math.floor(performance.now() / 350) % 2 ? '#05d9e8' : '#ffbe0b';
+    ctx.fillRect(bx, by, bw, 1); ctx.fillRect(bx, by + bh - 1, bw, 1); ctx.fillRect(bx, by, 1, bh); ctx.fillRect(bx + bw - 1, by, 1, bh);
+    c.lines.forEach((l, i) => drawText(ctx, l, bx + bw / 2, by + 4 + i * 10, { color: i ? COLORS.text : '#ffbe0b', align: 'center', shadow: null }));
   }
 
   // ¿Hay un dedo sobre el botón táctil de saltar? (el salto del prólogo exige mantenerlo)
@@ -957,7 +1009,7 @@ export class Game {
   startRunAt(index, prologue = false) {
     this.runId = newRunId();
     this.prologue = prologue;
-    this.comms.forget(); this.skipHold = 0;
+    this.comms.forget(); this.skipHold = 0; this.tut.done.clear(); this.tut.seen.clear();
     this.buff = null;
     this.streetRun = newStreetRun();
     this.civilianBase = { hurt: 0, killed: 0, gifts: 0 }; // el comportamiento con los civiles se acumula durante toda la partida
@@ -1088,7 +1140,7 @@ export class Game {
     this.deathMsg = null; // mensaje propio de la pantalla de muerte (compañero caído)
     this.leaveAsk = 0;   // rehenes sin rescatar de los que se avisa junto a la moto (0 = nada que avisar)
     this.cams = new SecurityCams(this, level.cameras || []); // cámaras de seguridad y operador (piso 8)
-    this.comms.clear(); this.prologueT = 0;
+    this.comms.clear(); this.prologueT = 0; this.tut.cur = null; this.tutFocus = null;
     this.hostages = new Hostages(this, level.hostages || []); // rehenes atados a sillas dentro del edificio (ver hostages.js)
     this.pools = [];
     // masks (selección) | arriving (llega en moto) | playing (fuera o dentro: ver `inside`) | dead |
@@ -1321,6 +1373,11 @@ export class Game {
       ty += ly;
     }
     if (this.asphyx && this.trap && this.trap.victim) { tx = this.trap.victim.x; ty = this.trap.victim.y; } // la cámara viaja al agente que se asfixia
+    if (this.tutFocus) {   // instrucción del prólogo: la cámara se desplaza suave hacia el punto medio entre tú y el objetivo (sin zoom: el pixel art solo escala en enteros)
+      const F = this.tutFocus, env = Math.min(1, F.t / 0.45, (F.life - F.t) / 0.6);
+      const k = 0.5 * Math.max(0, env) * Math.max(0, env) * (3 - 2 * Math.max(0, env));
+      tx += (F.x - tx) * k; ty += (F.y - ty) * k;
+    }
     this.camera.update(dt, tx, ty);
   }
 
@@ -4251,6 +4308,7 @@ export class Game {
     if (this.state === 'reunion' || this.state === 'radio' || this.state === 'ambush' || this.state === 'ending') { ctx.fillStyle = '#05000f'; ctx.fillRect(0, 0, w, CINE_BAR); ctx.fillRect(0, h - CINE_BAR, w, CINE_BAR); } // barras de cine durante el reencuentro y la radio
     this.drawRadioBox(ctx, w, h);
     this.drawExecutePrompt(ctx);
+    this.drawTutorial(ctx);
     const boss = this.enemies.find((e) => e.kind === 'boss' && e.alive && e.awake);
     if (boss && this.state !== 'cleared') drawBossBar(ctx, boss, w, 32 + this.safe.t);
 
