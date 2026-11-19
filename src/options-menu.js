@@ -294,6 +294,7 @@ export function buildOptionsMenu(game, onBack) {
   const items = [];
   let section = null;
   for (const o of OPTIONS) {
+    if (o.hidden) continue; // (p. ej. el agente: se elige en ELIGE TU MÁSCARA)
     if (o.section !== section) { section = o.section; items.push({ kind: 'header', label: section }); }
     items.push({ kind: 'value', id: o.id });
   }

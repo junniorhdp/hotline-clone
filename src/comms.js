@@ -133,7 +133,7 @@ export class Comms {
     const target = !talking ? 0 : VOWELS.includes(ch) ? 2 : /[mbpMBP .,:;¡!¿?]/.test(ch) ? 0 : 1;
     c.open += (target - c.open) * 0.5;
     const bob = talking && c.open > 1.2 ? -1 : 0;
-    const mask = c.portrait.mask, cv = bloodyMaskPortrait(mask, 0, c.portrait.gender, []);
+    const mask = c.portrait.mask, cv = bloodyMaskPortrait(mask, c.portrait.level || 0, c.portrait.gender, c.portrait.bits || []); // con la sangre (roja / verde) que lleva encima
     const k = 32 / cv.width, jaw = Math.round(c.open), J = mask.jaw;
     ctx.save();
     ctx.beginPath(); ctx.rect(x, y, 32, 32); ctx.clip();

@@ -73,6 +73,7 @@ export function bloodLevelFor(gore) {
   return level;
 }
 
+const DOOR_REACH = 44; // distancia mínima al centro de la puerta principal durante la animación: fuera del barrido de la hoja (radio ~32 + el del jugador)
 export class Player {
   // `perks` = efectos de la máscara elegida y `maskId` su aspecto (ver masks.js): la cabeza que
   // se pinta sobre el cuerpo es la de esa máscara, así que en el piso se ve la que se eligió.
@@ -290,7 +291,7 @@ export class Player {
   // Cerrar la puerta principal al entrar (`close`: se gira, da un paso hacia ella y tira de la hoja; se cierra y se bloquea a mitad de la animación) y abrirla al despejar
   // el piso (`open`: al llegar a ella). ~0,9 s sin control; el arma se guarda un momento. La hoja se mueve en `fired` (0,5 s): ver Door.lock / unlock.
   startDoorAnim(game, kind, door) {
-    if (this.doorAnim || !this.alive) { if (kind === 'close') door.lock(); else door.unlock(); return; } // (si no se puede animar, el efecto se aplica igual)
+    if (!game.doorAnimOn || this.doorAnim || !this.alive) { if (kind === 'close') door.lock(); else door.unlock(); return; } // (sin animación —opción— o si no se puede, el efecto se aplica igual)
     this.doorAnim = { kind, t: 0, dur: 0.9, door, fired: false };
     this.moving = false; this.swing = 0; this.recoil = 0; this.muzzle = 0;
   }
@@ -301,17 +302,20 @@ export class Player {
     this.cooldown = Math.max(this.cooldown, 0.3);
     const to = Math.atan2(d.cy - this.y, d.cx - this.x);
     this.angle += clamp(angleDiff(to, this.angle), -14 * dt, 14 * dt);                  // se gira hacia la puerta
-    if (a.t > 0.2 && a.t < 0.55 && Math.hypot(d.cx - this.x, d.cy - this.y) > 28) {     // y da un paso hacia ella
+    if (a.t > 0.2 && a.t < 0.55 && Math.hypot(d.cx - this.x, d.cy - this.y) > DOOR_REACH) {     // y da un paso hacia ella (sin entrar en el barrido de la hoja: al cerrarse empujaría hacia la calle)
       const k = 130 * dt;
       moveAndSlide(game.map, this, Math.cos(to) * k, Math.sin(to) * k);
     }
     if (!a.fired && a.t >= 0.5) {
       a.fired = true;
-      if (a.kind === 'close') d.lock();
+      if (a.kind === 'close') {
+        d.lock();
+        if (this.y > d.cy - DOOR_REACH * 0.7) { this.y = d.cy - DOOR_REACH; moveAndSlide(game.map, this, 0, 0); } // salvaguarda: si por lo que sea queda pegado a la hoja o fuera, se le deja dentro
+      }
       else {
         d.unlock();
         game.sfx.play('unlock');
-        game.addFloat(this.x, this.y - 24, `${AGENTS[this.gender].name} ABRE LA PUERTA`, '#9be32a', 1, 1.5);
+        game.showCallout('SALIDA ABIERTA', COLORS.player, 1.8, `${AGENTS[this.gender].name} ABRE LA PUERTA`); // el objetivo «REGRESA A LA MOTO» sale al apagarse
       }
     }
     if (a.t >= a.dur) { this.doorAnim = null; this.cooldown = Math.max(this.cooldown, 0.15); }

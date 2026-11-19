@@ -21,6 +21,7 @@ const INTERACT_GAP = 22;        // distancia al borde del rehén para liberarlo
 const RUN_SPEED = 120, WALK_SPEED = 95;
 const GRACE = 0.8;              // s tras un golpe en los que otro golpe no cuenta (el aviso se nota)
 const BOARD_TIME = 0.5;
+const DOOR_STOP = 22;           // distancia (hacia dentro) a la que se detienen ante la puerta principal si está cerrada
 const STUCK_TIME = 14;          // si tras salir a la calle un rehén no llega en este tiempo, se coloca solo
 
 const TIED = ['¡MMMPH! ¡MMM!', '¡MMM-MMM!', '(SOLLOZOS...)', '¡MMMPH!', '¡MMM! ¡MMM!'];
@@ -143,7 +144,11 @@ export class Hostages {
       while (path.length && Math.hypot(path[0].x - h.x, path[0].y - h.y) < 8) path.shift();
       if (path.length) {
         const dx = path[0].x - h.x, dy = path[0].y - h.y, d = Math.hypot(dx, dy) || 1;
+        const py = h.y;
         moveAndSlide(map, h, (dx / d) * speed * dt, (dy / d) * speed * dt);
+        // La puerta principal bloqueada (o cerrándose) no se cruza hacia la calle: se queda dentro, esperando a que el agente la abra.
+        const door = g.mainDoor;
+        if (door && (door.locked || door.closing) && py <= door.cy - DOOR_STOP && h.y > door.cy - DOOR_STOP) h.y = py;
         h.facing = Math.atan2(dy, dx);
       }
     }
@@ -161,7 +166,7 @@ export class Hostages {
   // otro tras decidirlo, o muere uno), se vuelve a repartir, así ningún rehén se queda sin plaza («rehén fantasma»). Mientras suben al auto no se toca el grupo.
   refresh(force) {
     const g = this.game, p = g.player;
-    if (!this.outside && (force || (g.state === 'cleared' && p.alive && p.y > g.entry.y + 88))) this.outside = true;
+    if (!this.outside && (force || (g.state === 'cleared' && p.alive && p.y > g.entry.y + 88)) && !g.mainDoor.locked) this.outside = true; // (con la puerta cerrada nadie sale)
     if (!this.outside) return;
     if (this.car && (this.car.phase === 'board' || this.car.phase === 'hold')) return;
     const cur = this.rescued();
@@ -199,7 +204,7 @@ export class Hostages {
     const g = this.game;
     if (this.planned && this.mode) {
       // Los que se atascan (puerta, ruta) se colocan solos pasado un tiempo.
-      if (this.clock - this.plannedAt > STUCK_TIME) {
+      if (this.clock - this.plannedAt > STUCK_TIME && !(g.mainDoor && (g.mainDoor.locked || g.mainDoor.closing))) {
         for (const h of this.group) if (h.state === 'freed' || h.state === 'waiting' || h.state === 'exiting') { this.aim(h); if (h.target) { h.x = h.target.x; h.y = h.target.y; } h.state = 'ready'; }
       }
     }

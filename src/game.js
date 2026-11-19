@@ -202,6 +202,9 @@ class Camera {
   }
 }
 
+// ¿Hay una línea de avisos (SONIDO OFF, EFECTOS LIGEROS...) bajo los puntos de arriba a la derecha? (los textos que esquivan el HUD se bajan lo justo)
+const flagsOn = (g) => !!(g.sfx.muted || !g.fx.enabled || (g.fx.enabled && g.fx.lite));
+
 export class Game {
   constructor(canvas) {
     this.canvas = canvas;
@@ -241,6 +244,7 @@ export class Game {
     this.levelIndex = 0;
     this.comms = new Comms(this); // líneas cortas de lore no modales (prólogo)
     this.skipHold = 0; this.skipAsk = 0; this.prologueT = 0;
+    this.cineK = 0; // 0..1: cuánto están puestas las barras de cine de llegada / fuga (anima las barras y el fundido del HUD)
     this.tut = { done: new Set(), seen: new Set(), cur: null }; this.tutFocus = null; // instrucciones contextuales del prólogo (ver updateTutorial)
     this.prologue = false; // tutorial aparte del piso 1 (ver prologue.js): sin resultados, récords ni estadísticas de campaña
     this.debug = false;
@@ -904,6 +908,29 @@ export class Game {
     this.floorStats.record(this.levelIndex + 1, this.results.rank, this.results.levelScore);
   }
 
+  // Dibuja `fn(ctx)` con el HUD atenuado según las barras de cine (`cineK`): visible del todo sin ellas, nada con ellas, y a medias mientras se deslizan
+  // (en una capa aparte, porque el HUD asigna `globalAlpha` por su cuenta).
+  fadeHud(ctx, w, h, fn) {
+    const a = 1 - this.cineK;
+    if (a >= 0.995) { fn(ctx); return; }
+    if (a <= 0.005) return;
+    if (!this._hudLayer || this._hudLayer.width !== w || this._hudLayer.height !== h) {
+      this._hudLayer = document.createElement('canvas');
+      this._hudLayer.width = w; this._hudLayer.height = h;
+    }
+    const hc = this._hudLayer.getContext('2d');
+    hc.imageSmoothingEnabled = false;
+    hc.clearRect(0, 0, w, h);
+    fn(hc);
+    ctx.save();
+    ctx.globalAlpha = a;
+    ctx.drawImage(this._hudLayer, 0, 0);
+    ctx.restore();
+  }
+
+  // ¿Animación del agente al cerrar / abrir la puerta principal? (opción ANIMACIÓN DE LA PUERTA)
+  get doorAnimOn() { return this.settings.get('doorAnim') !== false; }
+
   // --- Prólogo: líneas de lore (comms.js) y salto -----------------------------------------------------
   agentInfo(gender) { return { name: AGENTS[gender].name, color: AGENTS[gender].color }; }
 
@@ -913,7 +940,8 @@ export class Game {
     if (!lines) return;
     const pg = this.gender === 'male' ? 'female' : 'male', me = this.agentInfo(this.gender).name, pa = this.agentInfo(pg);
     const ph = this.hostages.list.find((x) => x.partner), mask = ph ? MASKS.find((m) => m.id === ph.maskId) : null;
-    const partner = { name: pa.name, color: pa.color, portrait: mask ? { mask, gender: pg } : null };
+    // El retrato lleva la sangre que el compañero tiene encima (herido: nivel 2, roja; sin sangre si está desactivada), igual que su sprite.
+    const partner = { name: pa.name, color: pa.color, portrait: mask ? { mask, gender: pg, level: this.goreOn ? 2 : 0, bits: [] } : null };
     const fill = (t) => t.replace(/\{ME\}/g, me).replace(/\{PARTNER\}/g, pa.name);
     this.comms.say(id, lines.map((l) => ({ speaker: l.who === 'partner' ? partner : 'central', text: fill(l.text) })), { urgent: id === 'free' }); // el compañero habla justo al liberarlo
   }
@@ -1204,6 +1232,9 @@ export class Game {
 
   update(dt) {
     const input = this.input;
+    const cineTo = this.state === 'arriving' || this.state === 'leaving' ? 1 : 0;   // barras de cine: se deslizan y el HUD se desvanece / reaparece
+    this.cineK += (cineTo - this.cineK) * (1 - Math.exp(-7 * dt));
+    if (Math.abs(cineTo - this.cineK) < 0.01) this.cineK = cineTo;
     // Primero los controles táctiles: traducen los dedos a teclas/clics que se leen abajo.
     this.touch.update(dt);
     // Filtro VS: entra y sale con suavidad (también al resolverse el forcejeo o reiniciar).
@@ -1331,6 +1362,7 @@ export class Game {
     // (la calle de arriba y de los lados también tiene y < lockY, y ahí no se bloquea nada).
     if (this.state === 'playing' && !this.inside && this.player.alive && this.inBuilding(this.player)) this.beginLockdown();
     if (this.trap) this.updateTrap(dt);
+    if (this.doorPending && !this.doorAnimOn) { this.doorPending = false; this.mainDoor.unlock(); this.sfx.play('unlock'); } // (se desactivó la animación con la puerta pendiente)
     if (this.state === 'cleared' && this.doorPending && this.player.alive && !this.player.doorAnim && !this.player.vomit && !this.player.exec
       && Math.hypot(this.player.x - this.mainDoor.cx, this.player.y - this.mainDoor.cy) < 84) { this.doorPending = false; this.player.startDoorAnim(this, 'open', this.mainDoor); }
     if (this.state === 'playing' && this.inside && this.enemies.every((e) => !e.alive) && (!this.trap || (this.trap.state === 'done' && this.final && this.final.done))) { // con trampa: resolverla, reencontrarse y ganar la fase final antes de dar el piso por despejado
@@ -1339,7 +1371,7 @@ export class Game {
       // abre el ambiente del edificio vacío, que acompaña hasta la moto. La puerta se desbloquea.
       this.sfx.setMusic('empty');
       // La puerta principal la abre el agente al llegar a ella (animación; `doorPending`). En el piso 10 (trampa y final con la carrera de los dos agentes y el rehén de la IA) se abre sola.
-      if (this.trap) { this.mainDoor.unlock(); this.sfx.play('unlock'); } else this.doorPending = true;
+      if (this.trap || !this.doorAnimOn) { this.mainDoor.unlock(); this.sfx.play('unlock'); } else this.doorPending = true;
       this.showCallout('PISO COMPLETADO', COLORS.player, 2.8, '¡EDIFICIO LIMPIO!'); // el objetivo (REGRESA A LA MOTO) sale al apagarse
     }
     // Junto a la moto con el piso despejado: si no quedan rehenes atados, la fuga arranca sola; si quedan, solo se AVISA (el rescate es opcional) y el jugador decide:
@@ -2266,8 +2298,8 @@ export class Game {
     if (touch) { const col = this.touch.rightColumn(); if (y + th > col.y - 2) right = Math.min(right, col.x - 4); }
     const cx = clamp(x, sf.l + margin + tw / 2, Math.max(sf.l + margin + tw / 2, right - tw / 2));
     let cy = clamp(y, sf.t + margin, Math.max(sf.t + margin, h - sf.b - margin - th));
-    // Y esquivan el HUD de las esquinas de arriba (izquierda: arma, máscara y, en táctil, REINICIAR/PAUSA; derecha: puntos y piso): se bajan por debajo.
-    const rz = { x: w - sf.r - 134, b: 66 + sf.t }, lz = { x: sf.l + (touch ? 78 : 118), b: (touch ? 84 : 52) + sf.t };
+    // Y esquivan el HUD de las esquinas de arriba (izquierda: arma, máscara y, en táctil, REINICIAR/PAUSA; derecha: puntos): se bajan por debajo.
+    const rz = { x: w - sf.r - 134, b: (flagsOn(this) ? 31 : 22) + sf.t }, lz = { x: sf.l + (touch ? 78 : 118), b: (touch ? 84 : 52) + sf.t };
     for (let k = 0; k < 2; k++) {
       if (cx + tw / 2 > rz.x && cy < rz.b) cy = rz.b;
       if (cx - tw / 2 < lz.x && cy < lz.b) cy = lz.b;
@@ -2916,8 +2948,8 @@ export class Game {
     this.radioCine = {
       t: 0, end: 5.0, split: 2.9, cut: false,
       lines: [
-        { who: a, mask: this.mask, lines: [`¡${nameB}, ME HAN ENCERRADO,`, 'HAY GAS!'], from: 0.35 },
-        { who: b, mask: this.partnerMask, lines: [`¡AGUANTA, ${nameA}!`, '¡VOY PARA ALLÁ!'], from: 3.1 },
+        { who: a, mask: this.mask, level: a.bloodLevel, bits: [...this.maskBits], lines: [`¡${nameB}, ME HAN ENCERRADO,`, 'HAY GAS!'], from: 0.35 },   // el retrato lleva la sangre (roja / verde) que el agente tiene encima
+        { who: b, mask: this.partnerMask, level: b.bloodLevel, bits: [...this.partnerBlood.maskBits], lines: [`¡AGUANTA, ${nameA}!`, '¡VOY PARA ALLÁ!'], from: 3.1 },
       ],
     };
     this.showCallout('¡TRAMPA!', COLORS.blood, 2.2, 'GAS TÓXICO · SALA SELLADA');
@@ -2978,7 +3010,7 @@ export class Game {
     ctx.fillStyle = 'rgba(5, 0, 15, 0.92)'; ctx.fillRect(bx, by, bw, bh);
     ctx.fillStyle = ag.color;
     ctx.fillRect(bx, by, bw, 1); ctx.fillRect(bx, by + bh - 1, bw, 1); ctx.fillRect(bx, by, 1, bh); ctx.fillRect(bx + bw - 1, by, 1, bh);
-    ctx.drawImage(bloodyMaskPortrait(cur.mask, 0, cur.who.gender, []), bx + 5, by + 6, 32, 32);
+    ctx.drawImage(bloodyMaskPortrait(cur.mask, this.goreOn ? cur.level || 0 : 0, cur.who.gender, cur.bits || []), bx + 5, by + 6, 32, 32);
     ctx.fillStyle = ag.color; ctx.fillRect(bx + 4, by + 5, 34, 1); ctx.fillRect(bx + 4, by + 38, 34, 1); ctx.fillRect(bx + 4, by + 5, 1, 34); ctx.fillRect(bx + 37, by + 5, 1, 34);
     drawText(ctx, `${ag.name} · RADIO`, bx + 44, by + 5, { color: ag.color });
     // texto tecleado (30 caracteres por segundo)
@@ -3681,6 +3713,9 @@ export class Game {
     } else if (this.state === 'cleared' && this.trap) {
       const d = this.trap.detonator;
       if (d && this.final && this.final.role === 'limpieza' && !this.endingDone && !this.detNear) r = { x: d.x - TILE / 2, y: d.y - TILE / 2, w: TILE, h: TILE, label: 'DETONADOR', below: true };
+    } else if (this.state === 'cleared' && this.doorPending) {   // la puerta sigue bloqueada hasta que el agente llega a ella: el marcador la señala a ella, no a la moto
+      const d = this.mainDoor;
+      r = { x: d.cx - TILE / 2, y: d.cy - TILE / 2, w: TILE, h: TILE, label: 'SALIDA', below: false };
     } else if (this.state === 'cleared') {
       const b = this.bike;
       r = { x: b.park.x - b.w / 2, y: b.park.y - b.h / 2, w: b.w, h: b.h, label: 'MOTO', below: false };
@@ -4188,7 +4223,9 @@ export class Game {
   // flecha parpadeante y borde que late). Solo sale cuando el cartel grande ya se ha ido.
   drawGoalPanel(ctx, w, h) {
     if (this.state !== 'cleared' || this.callout) return;
-    const text = this.trap ? (this.final && this.final.role === 'limpieza' ? 'ACTIVA EL DETONADOR · DESPACHO' : null) : 'REGRESA A LA MOTO'; // piso 10: el objetivo es detonar
+    // Con la puerta aún por abrir, el objetivo es abrirla (ámbar); al abrirse sale «REGRESA A LA MOTO». Piso 10: el objetivo es detonar.
+    const pend = this.doorPending && !this.trap, col = pend ? '#ffbe0b' : COLORS.player;
+    const text = this.trap ? (this.final && this.final.role === 'limpieza' ? 'ACTIVA EL DETONADOR · DESPACHO' : null) : pend ? 'ABRE LA SALIDA · ACÉRCATE A LA PUERTA' : 'REGRESA A LA MOTO';
     if (!text) return;
     const e = 1 - Math.pow(1 - clamp(this.goalAge / 0.3, 0, 1), 3);
     const colX = this.input.touchMode ? this.touch.rightColumn().x : w; // en táctil, el panel se queda a la izquierda de la columna de botones
@@ -4205,7 +4242,7 @@ export class Game {
     ctx.fillStyle = '#0a0418';
     ctx.fillRect(x, y, pw, ph);
     ctx.globalAlpha = (0.5 + 0.5 * pulse) * e;
-    ctx.fillStyle = COLORS.player;
+    ctx.fillStyle = col;
     ctx.fillRect(x, y, pw, 1);
     ctx.fillRect(x, y + ph - 1, pw, 1);
     ctx.fillRect(x, y, 1, ph);
@@ -4215,7 +4252,7 @@ export class Game {
     if (Math.floor(performance.now() / 250) % 2 === 0) {
       for (let i = 0; i < 4; i++) ctx.fillRect(x + 8 + i, y + Math.round(ph / 2) - 4 + i, 1, 8 - 2 * i);
     }
-    drawText(ctx, text, x + 20 + Math.round(tw / 2), y + 6, { color: COLORS.player, scale, align: 'center' });
+    drawText(ctx, text, x + 20 + Math.round(tw / 2), y + 6, { color: col, scale, align: 'center' });
     ctx.restore();
   }
 
@@ -4315,6 +4352,8 @@ export class Game {
 
     // Márgenes del HUD: separación fija + zona segura (muesca / esquinas redondeadas).
     const L = 6 + this.safe.l, R = w - 6 - this.safe.r, T = this.safe.t;
+    // El HUD de debajo de las barras de cine (arma, máscara, puntos, combo, ayuda de controles) aparece y desaparece con ellas (`cineK`).
+    this.fadeHud(ctx, w, h, (ctx) => {
     const def = p.def;
     let weaponText = def.name;
     if (p.weapon && def.maxAmmo) weaponText += `  ${p.weapon.ammo}/${def.maxAmmo}`;
@@ -4344,14 +4383,11 @@ export class Game {
       if (!tl) drawText(ctx, this.partnerMask.name, px + 18, py + 9, { color: '#5b4f78' });
     }
 
-    const alive = this.enemies.filter((e) => e.alive).length;
-    drawText(ctx, `ENEMIGOS ${alive}/${this.enemies.length}`, R, 4 + T, { color: COLORS.enemy, align: 'right' });
-    drawText(ctx, `${this.score.total.toLocaleString('es')} PTS`, R, 15 + T, { color: COLORS.text, scale: 2, align: 'right', shadow: COLORS.wall });
-    drawText(ctx, `RÉCORD ${this.bestScore.toLocaleString('es')}`, R, 36 + T, { color: this.score.isRecord ? COLORS.enemy : '#9d8fb8', align: 'right' });
-    drawText(ctx, this.levelName, R, 47 + T, { color: '#9d8fb8', align: 'right' });
+    // Arriba a la derecha SOLO los puntos (sin contador de enemigos, récord ni nombre del piso: tapaban demasiado en móvil); debajo, los avisos raros.
+    drawText(ctx, `${this.score.total.toLocaleString('es')} PTS`, R, 4 + T, { color: COLORS.text, scale: 2, align: 'right', shadow: COLORS.wall });
     const flags = [this.sfx.muted && 'SONIDO OFF', !this.fx.enabled && 'EFECTOS OFF', this.fx.enabled && this.fx.lite && 'EFECTOS LIGEROS']
       .filter(Boolean).join(' · ');
-    if (flags) drawText(ctx, flags, R, 58 + T, { color: '#9d8fb8', align: 'right' });
+    if (flags) drawText(ctx, flags, R, 21 + T, { color: '#9d8fb8', align: 'right' });
 
     this.drawComboMeter(ctx, w);
 
@@ -4364,6 +4400,7 @@ export class Game {
       drawText(ctx, `${k.label('kick')} PATEAR · ${k.label('execute')} REMATAR · R REINICIAR · ESC PAUSA · M SONIDO`, 6, h - 13, { color: '#7d6f98' });
     }
 
+    });
     if (this.debug) {
       drawText(ctx, `DEBUG · ${this.fps} FPS · BALAS ${this.bullets.length} · PART ${this.particles.list.length} · CASQ ${this.particles.shells.length}`, L, 54 + T, { color: COLORS.debug });
       drawText(ctx, `ESCENA ${w}X${h} · ESCALA ${this.view.scale} · MÁSCARA ${this.mask.id} · MANCHAS ${this.stains} · SANGRE ${this.player.bloodLevel} (${this.gore.toFixed(1)}) · PISADAS ${this.prints.list.length} · SUELAS ${this.player.soles} · CIVILES ${this.civilianRecord.hurt}/${this.civilianRecord.killed}/${this.civilianRecord.gifts} ${this.civiliansHelp()} · ${this.inside ? 'DENTRO' : 'FUERA'} PUERTA ${this.mainDoor.locked ? 'BLOQUEADA' : this.mainDoor.closing ? 'CERRANDO' : 'LIBRE'}`, L, 65 + T, { color: COLORS.debug });
@@ -4383,12 +4420,20 @@ export class Game {
     }
     this.drawCallout(ctx, w, h);
     this.drawGoalPanel(ctx, w, h);
-    // Cinemáticas: barras negras arriba y abajo y cómo saltarlas.
-    if (this.state === 'arriving' || this.state === 'leaving') {
+    // Cinemáticas (llegada y fuga): barras negras arriba y abajo que se deslizan al entrar y al salir (`cineK`), con un filo de neón en el borde interior;
+    // mientras están, el HUD de debajo se desvanece (fadeHud) y vuelve al irse.
+    if (this.cineK > 0.01 && ['arriving', 'leaving', 'playing', 'cleared'].includes(this.state)) {
+      const k = this.cineK, bh = Math.round(CINE_BAR * k);
       ctx.fillStyle = '#05000f';
-      ctx.fillRect(0, 0, w, CINE_BAR);
-      ctx.fillRect(0, h - CINE_BAR, w, CINE_BAR);
-      if (!this.endingRide) drawText(ctx, this.hint('ESPACIO · CLIC: SALTAR', 'TOCA: SALTAR'), cx, h - CINE_BAR + 4, { color: '#9d8fb8', align: 'center' }); // la salida del final no se salta
+      ctx.fillRect(0, 0, w, bh);
+      ctx.fillRect(0, h - bh, w, bh);
+      if (bh > 1) {
+        ctx.globalAlpha = 0.85 * k;
+        ctx.fillStyle = COLORS.wall; ctx.fillRect(0, bh - 1, w, 1);          // filo rosa bajo la barra de arriba
+        ctx.fillStyle = COLORS.player; ctx.fillRect(0, h - bh, w, 1);        // filo cian sobre la barra de abajo
+        ctx.globalAlpha = 1;
+      }
+      if (k > 0.9 && (this.state === 'arriving' || this.state === 'leaving') && !this.endingRide) drawText(ctx, this.hint('ESPACIO · CLIC: SALTAR', 'TOCA: SALTAR'), cx, h - CINE_BAR + 4, { color: '#9d8fb8', align: 'center' }); // la salida del final no se salta
     }
     if (this.state === 'dead') this.drawRunover(ctx, w, h);
     if (this.state === 'dead' && !(this.asphyx && this.asphyx.t < 2.6)) { // (con la cinemática de asfixia, la franja sale al final)
@@ -4408,7 +4453,7 @@ export class Game {
       this.touch.drawScreenButtons(ctx);
     }
     this.comms.draw(ctx, w, h); // encima de todo el HUD (ayuda de controles incluida)
-    if (!this.comms.cur) this.touch.draw(ctx);
+    if (!this.comms.cur) this.fadeHud(ctx, w, h, (c) => this.touch.draw(c));
     if (this.state === 'results') this.drawResults(ctx, w, h);
     this.drawToast(ctx);
 
