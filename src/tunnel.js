@@ -6,6 +6,7 @@ import { drawSprite, pixelRect, pixelDisc, WORLD_PX } from './sprites.js';
 import { drawText } from './pixelfont.js';
 import { COLORS, angleDiff, rand } from './utils.js';
 import { buildTunnelMap } from './tunnel-map.js';
+import { Ambience, paintStatics } from './tunnel-ambience.js';
 
 // TRAMO DE ALCANTARILLA del piso 3 (estado 'sewer'). Al forzar la tapa de la entrada con la palanca se baja a un túnel corto con colisiones: pilares de piedra, un canal de
 // agua, tuberías y una escalera al otro extremo que sube al cuarto de servicio del edificio. Un COCODRILO (invulnerable) hace la ronda por el túnel:
@@ -16,6 +17,7 @@ import { buildTunnelMap } from './tunnel-map.js';
 //   · un arma LANZADA a sus ojos lo CIEGA (`blind`; la palanca 5 s, otra arma 2,5 s): ya no te ve y no hace daño; es la salida más segura.
 // Tocarlo con la ronda, el aviso, la embestida o al recuperarse es mortal (R reaparece en la calle: no se había entrado todavía). Aquí no hay enemigos ni armas del suelo.
 const VIEW = 230, CONE = 1.05, NEAR = 78;      // alcance de la vista, medio ángulo del cono (rad) y radio de «lo oigo/lo huelo» aunque esté a su espalda
+const FEED_SENSE = 120;                        // comiendo: radio al que te nota
 const PATROL_SPEED = 56, CHARGE_SPEED = 420, STALK_SPEED = 150, SEARCH_SPEED = 110;
 const WINDUP = 0.7, LOCK_AT = 0.45, CHARGE_MAX = 0.95, RECOVER = 0.8, CRASH = 2.3;
 const BLIND_CROWBAR = 5, BLIND_OTHER = 2.5;
@@ -26,10 +28,11 @@ const LADDER_REACH = 44;                       // distancia al centro de la esca
 class Croc {
   constructor(map) {
     this.map = map;
-    this.x = map.crocStart.x; this.y = map.crocStart.y;
+    this.x = map.crocStart.x; this.y = map.crocStart.y + 12;
     this.r = BODY_R - 1;                       // semitamaño de colisión con las paredes (moveAndSlide)
-    this.angle = Math.PI;
-    this.mode = 'patrol';
+    this.angle = -Math.PI / 2;
+    this.mode = 'feed';                        // empieza DEVORANDO un cuerpo (ver tunnel-ambience.js): solo te nota si te acercas mucho o haces ruido
+    this.feedT = 0;
     this.t = 0;
     this.clock = 0;
     this.leg = 0; this.dirStep = 1;            // ronda: índice del tramo y sentido
@@ -45,12 +48,13 @@ class Croc {
   }
 
   get head() { return { x: this.x + Math.cos(this.angle) * HEAD, y: this.y + Math.sin(this.angle) * HEAD }; }
-  get lethal() { return this.mode === 'patrol' || this.mode === 'alert' || this.mode === 'charge' || this.mode === 'recover' || this.mode === 'stalk' || this.mode === 'search'; }
+  get lethal() { return this.mode === 'feed' || this.mode === 'patrol' || this.mode === 'alert' || this.mode === 'charge' || this.mode === 'recover' || this.mode === 'stalk' || this.mode === 'search'; }
   get look() { return this.mode === 'patrol' ? this.angle + Math.sin(this.clock * 1.4) * 0.45 : this.angle; } // en la ronda barre la cabeza de un lado a otro
 
   // ¿Ve al jugador? Cono delante (que barre), con línea de visión, o muy cerca (le des o no la espalda).
   sees(p) {
     const d = Math.hypot(p.x - this.x, p.y - this.y);
+    if (this.mode === 'feed') return d < FEED_SENSE && lineOfSight(this.map, this.x, this.y, p.x, p.y); // comiendo, solo te nota de cerca (a cualquier lado)
     if (d > VIEW || !lineOfSight(this.map, this.x, this.y, p.x, p.y)) return false;
     if (d < NEAR) return true;
     return Math.abs(angleDiff(Math.atan2(p.y - this.y, p.x - this.x), this.look)) < CONE;
@@ -79,7 +83,7 @@ class Croc {
 
   // Oye un ruido (disparo, golpe, arma lanzada): si patrulla o busca, va a investigar el origen.
   hear(x, y, radius) {
-    if (this.mode !== 'patrol' && this.mode !== 'search') return;
+    if (this.mode !== 'patrol' && this.mode !== 'search' && this.mode !== 'feed') return;
     if (Math.hypot(x - this.x, y - this.y) > Math.min(radius, 520) * 0.8) return;
     this.last = { x, y }; this.mode = 'search'; this.t = 0; this.searchT = 0; this.path = null; this.repath = 0;
   }
@@ -123,7 +127,12 @@ class Croc {
     this.pp = { x: p.x, y: p.y };
     const step = (speed, ang) => moveAndSlide(m, this, Math.cos(ang) * speed * dt, Math.sin(ang) * speed * dt);
     const sees = this.sees(p);
-    if (this.mode === 'patrol') {
+    if (this.mode === 'feed') {                        // devorando: sacude la cabeza contra el cuerpo y salpica sangre
+      this.angle = -Math.PI / 2 + Math.sin(this.clock * 3.4) * 0.22;
+      this.feedT -= dt;
+      if (this.feedT <= 0) { this.feedT = rand(0.4, 0.9); const h = this.head; run.amb.splat(h.x, h.y - 6, -Math.PI / 2); }
+      if (sees) this.engage(p, game);
+    } else if (this.mode === 'patrol') {
       const tgt = m.route[this.leg];
       if (this.hold > 0) this.hold -= dt;
       else {
@@ -215,6 +224,10 @@ class Croc {
     drawSprite(ctx, 'croc', this.x, this.y, this.angle);
     const ca = Math.cos(this.angle), sa = Math.sin(this.angle);
     const at = (f, l) => ({ x: this.x + ca * f - sa * l, y: this.y + sa * f + ca * l });
+    ctx.fillStyle = '#b0102a';                          // hocico y mandíbula manchados de sangre
+    for (const [f, l] of [[30, -3], [32, -2], [33, 0], [31, 3], [34, 2], [29, -5], [28, 5], [35, -1]]) { const q = at(f, l); pixelRect(ctx, q.x - 1, q.y - 1, 1, 1); }
+    ctx.fillStyle = '#6a0818';
+    for (const [f, l] of [[31, -4], [33, 2], [30, 1], [26, -5], [27, 4]]) { const q = at(f, l); pixelRect(ctx, q.x - 1, q.y - 1, 1, 1); }
     if (this.mode === 'alert') {                        // línea de aviso en el suelo hasta donde va a embestir
       const blink = Math.floor(clock * 14) % 2 === 0;
       ctx.fillStyle = blink ? '#ff2e55' : '#ff7a9a';
@@ -241,6 +254,7 @@ export class SewerRun {
     this.nearLadder = false;
     this.hinted = false;                       // el aviso de «lánzale el arma» sale una sola vez
     this.croc = new Croc(this.map);
+    this.amb = new Ambience(this.map, this.map.crocStart);
     this.build();
     // Reflejos en el agua (posiciones fijas con fase propia).
     this.glints = [];
@@ -264,11 +278,13 @@ export class SewerRun {
     for (const ty of [1, m.h - 2]) {                                      // tuberías a lo largo de las dos paredes largas, con juntas y válvulas
       for (let tx = 2; tx < m.w - 2; tx++) {
         const x0 = tx * PX, y0 = ty * PX + (ty === 1 ? 5 : 3);
-        wc.fillStyle = '#140a24'; wc.fillRect(x0, y0 - 1, PX, 6);
-        wc.fillStyle = '#4a5a6e'; wc.fillRect(x0, y0, PX, 4);
-        wc.fillStyle = '#7a8aa0'; wc.fillRect(x0, y0, PX, 1);
-        wc.fillStyle = '#2a3342'; wc.fillRect(x0, y0 + 3, PX, 1);
-        if (tx % 6 === 2) { wc.fillStyle = '#2a3342'; wc.fillRect(x0 + 6, y0 - 2, 3, 8); wc.fillStyle = '#ff2e55'; wc.fillRect(x0 + 6, y0 - 3, 3, 2); }
+        wc.fillStyle = '#140a08'; wc.fillRect(x0, y0 - 1, PX, 6);
+        wc.fillStyle = '#7a4a2a'; wc.fillRect(x0, y0, PX, 4);                    // tubería oxidada
+        wc.fillStyle = '#b8743c'; wc.fillRect(x0, y0, PX, 1);
+        wc.fillStyle = '#3a2014'; wc.fillRect(x0, y0 + 3, PX, 1);
+        if ((tx * 7 + ty) % 5 === 0) { wc.fillStyle = '#c2682a'; wc.fillRect(x0 + 3, y0 + 1, 2, 1); wc.fillRect(x0 + 10, y0 + 2, 1, 1); }
+        if (tx % 6 === 2) { wc.fillStyle = '#3a2014'; wc.fillRect(x0 + 6, y0 - 2, 3, 8); wc.fillStyle = '#a8321e'; wc.fillRect(x0 + 5, y0 - 4, 5, 2); wc.fillStyle = '#d8582e'; wc.fillRect(x0 + 6, y0 - 4, 3, 1); } // válvula con rueda roja
+        if (tx % 6 === 2 && ty === 1) { wc.fillStyle = '#2f6a35'; wc.fillRect(x0 + 7, y0 + 5, 1, 4); wc.fillStyle = '#6fb83a'; wc.fillRect(x0 + 7, y0 + 8, 1, 2); } // reguero de la gotera
       }
     }
     for (const ty of [1, m.h - 2]) {                                      // desagües con regueros de limo verde
@@ -280,6 +296,7 @@ export class SewerRun {
         wc.fillStyle = '#7fcf3a'; wc.fillRect(x0 + 7, y0 + 6, 1, ty === 1 ? 7 : 0);
       }
     }
+    paintStatics(fc, wc, m, this.amb.bodies);                              // rejillas, tapas, moho, bolsas rotas y rastros rojos del canal
     this.wallLayer = walls;
     this.glowLayer = glow;
     this.bloodLayer = document.createElement('canvas');
@@ -304,6 +321,7 @@ export class SewerRun {
       } else if (Math.hypot(w.x - c.x, w.y - c.y) < BODY_R + w.r) { w.bounce(); game.sfx.play('ricochet', 0.6); game.particles.sparks(w.x, w.y, Math.atan2(-w.vy, -w.vx), 5, 0.4); }
     }
     if (p.alive) c.update(dt, p, this, game);
+    this.amb.update(dt, game);
     const l = this.map.ladder;
     this.nearLadder = p.alive && Math.hypot(p.x - l.x, p.y - l.y) < LADDER_REACH;
     if (this.nearLadder && (game.keys.pressed('kick') || game.keys.pressed('execute'))) game.climbLadder();
@@ -315,6 +333,8 @@ export class SewerRun {
     ctx.globalAlpha = 0.45;
     for (const g of this.glints) if (Math.sin(this.clock * 2.4 + g.ph) > 0.55) pixelRect(ctx, g.x, g.y, 3, 1);
     ctx.globalAlpha = 1;
+    this.amb.drawBelow(ctx, this.croc);
+    this.amb.drawLight(ctx);
     const l = this.map.ladder;
     ctx.save();
     ctx.globalCompositeOperation = 'lighter';

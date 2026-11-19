@@ -24,6 +24,7 @@ const PALETTE = {
   q: '#ff4fa3',                              // raya rosa de la bomber femenina
   r: COLORS.blood,                           // huella de sangre (footMid y footDark la recolorean)
   1: '#4fbf4a', 2: '#2a7a3a', 3: '#a8f08a', 4: '#e8e6b0', 5: '#ffd23a', 7: '#ffffff', // cocodrilo
+  6: '#d88a8a', 8: '#6a5a4a', // rata
 };
 
 // Cuerpo del jugador (plantilla): vista cenital, hombros perpendiculares a la mirada, mangas
@@ -179,6 +180,8 @@ const DEFS = {
   // Llave de la puerta principal (piso 3): anilla y paletón dorados con dientes.
   key: ['.kkk.........', 'kyuyk........', 'ky.ykkkkkkkk.', 'kyyykyyyyyyyk', '.kkkkkkkkykyk', '.........kkk.'],
   croc: crocGrid(),
+  // Rata de la alcantarilla (10×3 px), mirando a +X: cola rosada, cuerpo pardo y hocico.
+  rat: ['...kkkk...', '66k8888kk6', '...kkkk...'],
 };
 
 // Cocodrilo del tramo de alcantarilla (piso 3), mirando a +X: cola, cuerpo con patas, cabeza con ojos y hocico dentado. Se genera por perfil de ancho
