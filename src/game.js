@@ -1408,6 +1408,8 @@ export class Game {
     const c = this.cine, b = this.bike, p = this.player;
     c.t += dt;
     if (this.callout && (this.callout.t -= dt) <= 0) this.callout = null; // los carteles (p. ej. FIN) también caducan durante las cinemáticas
+    for (const f of this.floatingTexts) f.t -= dt; // (y los textos flotantes: antes se quedaban congelados en pantalla, p. ej. «¡ESPERA A JACK!» al salir en la moto)
+    this.floatingTexts = this.floatingTexts.filter((f) => f.t > 0);
     if (c.kind === 'arrive') {
       const end = ARRIVE_RIDE + ARRIVE_DISMOUNT;
       if (skip && c.t < end) {
