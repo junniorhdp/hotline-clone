@@ -246,7 +246,7 @@ export class Game {
     this.levelIndex = 0;
     this.comms = new Comms(this); // líneas cortas de lore no modales (prólogo)
     this.flow = new PrologueFlow(this); // lógica y estado del prólogo / tutorial (instrucciones, salto, fin): prologue-flow.js
-    this.climb = null; this.emerge = null; this.descent = null; this.sewerRun = null; this.sewerStash = null; this.sewerRoute = null; this.keyRoute = false; this.hasKey = false; this.keyDrop = null; this.keyHintAt = 0; this.shutAt = 0; // piso 3: entrada por la alcantarilla y llave de salida
+    this.ladderRoom = null; this.climb = null; this.emerge = null; this.descent = null; this.sewerRun = null; this.sewerStash = null; this.sewerRoute = null; this.keyRoute = false; this.hasKey = false; this.keyDrop = null; this.keyHintAt = 0; this.shutAt = 0; // piso 3: entrada por la alcantarilla y llave de salida
     this.cineK = 0; // 0..1: cuánto están puestas las barras de cine de llegada / fuga (anima las barras y el fundido del HUD)
     this.prologue = false; // tutorial aparte del piso 1 (ver prologue.js): sin resultados, récords ni estadísticas de campaña
     this.debug = false;
@@ -1037,6 +1037,7 @@ export class Game {
     this.hasBoss = level.boss;
     this.par = level.par;
     this.map = level.map;
+    this.ladderRoom = level.ladderRoom || null; // piso 10: el compañero llega por la escalera de un cuarto de servicio (ver beginTrap / updateRadio)
     this.sewerRoute = level.sewerRoute; this.keyRoute = !!level.key; this.hasKey = false; this.keyDrop = null; // piso 3: ver beginSewer / dropKey
     const retryInside = !arrival && this.entered;
     const start = retryInside ? (level.sewerRoute ? level.sewerRoute.service : level.entry) : level.player; // con la ruta de la alcantarilla, R reaparece en el cuarto de servicio
@@ -3222,7 +3223,9 @@ export class Game {
       if (!door) continue;
       if (retry) { door.locked = true; door.closing = false; door.offset = 0; door.angVel = 0; } else door.lock(); // reintento: ya selladas
     }
-    b.x = this.entry.x; b.y = this.entry.y; b.angle = -Math.PI / 2; // el compañero llega por la entrada del edificio
+    const arrive = this.ladderRoom ? this.ladderRoom.service : this.entry; // sin escalera, por la entrada del edificio
+    b.x = arrive.x; b.y = arrive.y; b.angle = -Math.PI / 2;
+    if (this.ladderRoom && !retry) { b.x = this.ladderRoom.ladder.x; b.y = this.ladderRoom.ladder.y; b.angle = 0; } // primera vez: espera bajo la boca de la escalera (se ve al cortar la cámara)
     if (retry) { // fase 2 directa (R): sin cinemática, el gas ya corre
       a.x = T.center.x; a.y = T.center.y;
       b.away = false;
@@ -3234,7 +3237,7 @@ export class Game {
     }
     // Primera vez: mini cinemática por WALKIE-TALKIE (el reloj aún no corre): el atrapado avisa a su compañero por su nombre y este responde; luego el control pasa a él.
     T.state = 'radio';
-    b.away = false;
+    b.away = !!this.ladderRoom; // con escalera: no se ve hasta que sale de ella (updateRadio); sin ella, ya está en la entrada
     a.cancelExecution();
     const nameA = (AGENTS[a.gender] || AGENTS.male).name, nameB = (AGENTS[b.gender] || AGENTS.male).name;
     this.state = 'radio';
@@ -3267,7 +3270,24 @@ export class Game {
     for (const f of this.floatingTexts) f.t -= dt;
     this.floatingTexts = this.floatingTexts.filter((f) => f.t > 0);
     for (const L of R.lines) if (before < L.from && R.t >= L.from) { this.sfx.play('empty'); this.sfx.play('pickup', 0.6); } // chasquido de radio al empezar cada línea
-    if (!R.cut && R.t >= R.split) { R.cut = true; this.camera.snap(b.x, b.y); } // corte al compañero en la entrada
+    if (!R.cut && R.t >= R.split) {                                                  // corte al compañero
+      R.cut = true;
+      if (this.ladderRoom) {                                                         // asoma por la boca de la escalera del cuarto de servicio (misma animación que el piso 3)
+        const L = this.ladderRoom;
+        b.away = false; b.x = L.ladder.x; b.y = L.ladder.y;
+        R.emerge = { t: 0, sink: 1, dust: false };
+        this.sfx.play('manholeScrape', 0.5);
+      }
+      this.camera.snap(b.x, b.y);
+    }
+    if (R.emerge) {                                                                  // 0-0,7 s asoma · 0,7-1,1 s sale y se pone de pie en el cuarto
+      const E = R.emerge, L = this.ladderRoom, k = (v) => v * v * (3 - 2 * v);
+      E.t += dt;
+      if (E.t < 0.7) E.sink = 1 - k(E.t / 0.7);
+      else { E.sink = 0; const q = k(Math.min(1, (E.t - 0.7) / 0.4)); b.x = L.ladder.x + (L.service.x - L.ladder.x) * q; b.y = L.ladder.y + (L.service.y - L.ladder.y) * q; b.angle = -Math.PI / 2 * q; }
+      if (E.t > 0.35 && !E.dust) { E.dust = true; this.particles.dust(L.ladder.x, L.ladder.y, 8); this.camera.addShake(3); }
+      this.particles.update(dt, this.map, (kind, pt) => this.bake(kind, pt));
+    }
     const f = R.cut ? b : a;
     this.camera.update(dt, f.x, f.y);
     if (skip && R.t > 0.8) R.t = R.end;
@@ -3965,10 +3985,18 @@ export class Game {
     const t = this.partner;
     if (!t || !t.alive || t.away || !['playing', 'cleared', 'scuffle', 'dead', 'reunion', 'radio', 'ambush', 'ending'].includes(this.state)) return;
     const T = this.trap, gassed = T && T.state === 'gas' && T.victim === t, k = gassed ? 1 - T.t / GAS_TIME : 0;
-    const ox = t.x;
+    const ox = t.x, em = this.radioCine && this.radioCine.emerge && this.ladderRoom && this.radioCine.emerge.sink > 0 ? this.radioCine : null;
     if (gassed) t.x += Math.sin(performance.now() / 70) * (0.5 + k * 2.5); // tambaleo del agente atrapado en el gas
-    t.draw(ctx);
+    if (em) {                                                               // asoma de la boca de la escalera: desplazado hacia abajo y recortado por su borde
+      const L = this.ladderRoom;
+      ctx.save();
+      ctx.beginPath(); ctx.rect(L.ladder.x - 120, L.ladder.y - 160, 240, 160 + 10); ctx.clip();
+      ctx.translate(0, em.emerge.sink * 34);
+      t.draw(ctx);
+      ctx.restore();
+    } else t.draw(ctx);
     t.x = ox;
+    if (em) return; // asomando de la escalera: sin nombre ni flecha hasta que sale
     const time = performance.now() / 1000;
     const name = this.partnerMask ? this.partnerMask.name : '';
     if (this.state !== 'ending') drawText(ctx, name, t.x, t.y - t.r - 14, { color: '#9d8fb8', scale: WORLD_PX, align: 'center' });

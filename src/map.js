@@ -726,8 +726,8 @@ export const LEVELS = [
       '#...............?...................A........?.#',
       '#..............................................#',
       '##########D#############D#############D#########',
-      '#..............................................#',
-      '#..................B...........................#',
+      '#...#..........................................#',
+      '#...D..............B...........................#',
       '########################N#######################',
       '.......P........................................',
       '................................................',
@@ -743,11 +743,14 @@ export const LEVELS = [
     detonator: [27, 6], // consola del despacho: con ella se activa la detonación del edificio al acabar (final, ver Game.startEnding)
     hatch: [25, 17],    // trampilla de 2×2 casillas en la sala central: parece decoración hasta que se abre (emboscada de la fase final, ver Game.startAmbush)
     vent: [29, 4],
+    // Llegada del compañero: la puerta principal se cierra detrás del primer agente, así que el compañero llega por la ALCANTARILLA: sale por la escalera de este cuarto de servicio
+    // (x 1..3, y 21..22 del vestíbulo, puerta en (4,22)) cuando acaba la radio (ver Game.updateRadio). `service` = donde queda de pie; `ladder` = la boca de la escalera.
+    ladderRoom: { service: [2, 21], ladder: [1, 21] },
     ventSide: 'e',      // cara exterior de la pared: 's' (sur) o 'e' (este)
     zones: [
       ['carpet', 19, 1, 28, 8], ['wood', 1, 1, 8, 8], ['wood', 10, 1, 17, 8], ['carpet', 30, 1, 38, 8], ['wood', 40, 1, 46, 8], ['metal', 1, 10, 46, 19],
       // Exterior: vestíbulo, calle (asfalto, rayas del carril) y plaza de la moto.
-      ['wood', 1, 21, 46, 22], ['asphalt', 0, 25, 47, 28], ['asphaltLine', 0, 27, 1, 27],
+      ['wood', 1, 21, 46, 22], ['metal', 1, 21, 3, 22], ['asphalt', 0, 25, 47, 28], ['asphaltLine', 0, 27, 1, 27],
       ['asphaltLine', 4, 27, 5, 27], ['asphaltLine', 8, 27, 9, 27], ['asphaltLine', 12, 27, 13, 27],
       ['asphaltLine', 16, 27, 17, 27], ['asphaltLine', 20, 27, 21, 27],
       ['asphaltLine', 24, 27, 25, 27], ['asphaltLine', 28, 27, 29, 27],
@@ -765,7 +768,7 @@ export const LEVELS = [
       ['detonator', 27, 6, 1, 1], ['hatch', 25, 17, 2, 2], ['debris', 20, 11, 1, 1], ['stain', 33, 17, 1, 1], ['trash', 6, 18, 1, 1],
       // Exterior: vestíbulo, calle y la moto (aparcada en la plaza, 2×1 casillas).
       ['counter', 12, 21, 4, 1], ['sofa', 27, 22, 3, 1], ['cabinet', 32, 21, 1, 1],
-      ['cabinet', 33, 21, 1, 1], ['barrel', 1, 21, 1, 1], ['crates', 1, 22, 1, 1],
+      ['cabinet', 33, 21, 1, 1], ['ladder', 1, 21, 1, 1], ['barrel', 3, 21, 1, 1], ['crates', 1, 22, 1, 1],
       ['shelf', 46, 21, 1, 2], ['rug', 16, 21, 4, 2], ['papers', 14, 22, 1, 1],
       ['trash', 41, 22, 1, 1], ['tv', 44, 21, 1, 1], ['stain', 40, 22, 1, 1],
       ['crates', 4, 28, 1, 1], ['crates', 5, 28, 1, 1], ['barrel', 13, 28, 1, 1],
@@ -1166,6 +1169,11 @@ export function loadLevel(index = 0, rng = Math.random, override = null) {
     const O = OUTSKIRT, c = (t) => t * TILE + TILE / 2, [sx, sy] = def.sewerRoute.service, [lx, ly] = def.sewerRoute.ladder;
     sewerRoute = { service: { x: c(sx + O), y: c(sy + O) }, ladder: { tx: lx + O, ty: ly + O, x: c(lx + O), y: c(ly + O) } };
   }
+  let ladderRoom = null;
+  if (def.ladderRoom) {
+    const O = OUTSKIRT, c = (t) => t * TILE + TILE / 2, [sx, sy] = def.ladderRoom.service, [lx, ly] = def.ladderRoom.ladder;
+    ladderRoom = { service: { x: c(sx + O), y: c(sy + O) }, ladder: { tx: lx + O, ty: ly + O, x: c(lx + O), y: c(ly + O) } };
+  }
   if (def.key && sewerRoute) {
     const pool = enemies.filter((e) => (e.kind === 'grunt' || e.kind === 'runner') && !e.carrier);
     if (pool.length) {
@@ -1216,7 +1224,7 @@ export function loadLevel(index = 0, rng = Math.random, override = null) {
   const fixedHostage = def.hostage ? [{ tx: def.hostage[0] + OUTSKIRT, ty: def.hostage[1] + OUTSKIRT, x: (def.hostage[0] + OUTSKIRT) * TILE + TILE / 2, y: (def.hostage[1] + OUTSKIRT) * TILE + TILE / 2,
     look: { shirt: '#05d9e8', hair: '#140a08', skin: '#d9a67a', gender: 'm' }, facing: Math.PI, partner: true }] : null;
   const hostages = fixedHostage || (def.noHostages ? [] : placeHostages(map, enemies, actRnd, doors, mainDoor.ty, entry, occupied, index));
-  return { name: def.name, par: def.par, sewerRoute, key: !!def.key, trap: map.trap, noHostages: !!def.noHostages, duo: !!def.duo, cameras: map.cameras, dark: !!def.dark, strobe: !!def.strobe, boss: !!def.boss, map, player, bike, mainDoor, entry, enemies, weapons, doors, hostages };
+  return { name: def.name, par: def.par, sewerRoute, ladderRoom, key: !!def.key, trap: map.trap, noHostages: !!def.noHostages, duo: !!def.duo, cameras: map.cameras, dark: !!def.dark, strobe: !!def.strobe, boss: !!def.boss, map, player, bike, mainDoor, entry, enemies, weapons, doors, hostages };
 }
 
 // Patrulla de ida y vuelta: en el eje más despejado, o en el vertical si se fuerza.
