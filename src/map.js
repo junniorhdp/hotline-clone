@@ -820,7 +820,7 @@ function placeActivities(map, enemies, rnd, occupied, doors) {
   const nearDoor = (tx, ty) => doors.some((d) => Math.abs(d.tx - tx) <= 2 && Math.abs(d.ty - ty) <= 2);
   const taken = new Set();
   for (const e of enemies) {
-    if (e.kind === 'boss' || e.carrier) continue;                      // el jefe y los portadores de máscara no cambian
+    if (e.kind === 'boss' || e.carrier || e.keepAct) continue;         // el jefe, los portadores de máscara no cambian
     const r = rnd();
     let act = e.kind === 'runner' ? 'patrol' : e.kind === 'heavy' ? (r < 0.6 ? 'watch' : 'patrol') : r < 0.42 ? 'patrol' : r < 0.68 ? 'watch' : r < 0.86 ? 'smoke' : 'sit';
     if (e.axis === 'none') act = 'watch';                              // los que por diseño no se mueven, vigilan
@@ -1024,8 +1024,9 @@ function withOutskirts(def, index, rng) {
 }
 
 // `rng` (0..1) decide las armas aleatorias; el juego pasa uno con semilla por partida y piso.
-export function loadLevel(index = 0, rng = Math.random) {
-  const def = LEVELS[index];
+// `override` = una definición que no está en LEVELS (el prólogo, ver prologue.js).
+export function loadLevel(index = 0, rng = Math.random, override = null) {
+  const def = override || LEVELS[index];
   const { rows, zones: defZones, props: defProps, sewers, street } = withOutskirts(def, index, rng);
   const h = rows.length;
   const w = rows[0].length;
@@ -1134,7 +1135,7 @@ export function loadLevel(index = 0, rng = Math.random) {
   for (const e of enemies) {
     e.patrol = e.axis === 'none' ? [{ x: e.x, y: e.y }] : autoPatrol(map, e.tx, e.ty, e.axis);
     e.kind = e.kind || 'grunt';
-    const mix = ENEMY_MIX[index] || ENEMY_MIX[0];
+    const mix = def.mix || ENEMY_MIX[index] || ENEMY_MIX[0];
     if (!e.armed && e.kind === 'grunt' && e.kind !== 'boss' && rng() < mix.arm) e.armed = true; // más pistolas
     e.melee = !e.armed && (e.kind === 'grunt' || e.kind === 'runner') && rng() < mix.melee ? MELEE_TYPES[Math.floor(rng() * MELEE_TYPES.length)] : null;
     e.weapon = e.kind === 'heavy' ? 'shotgun' : e.kind === 'shield' ? 'smg' : e.armed ? (rng() < def.smgChance ? 'smg' : 'gun') : null;
@@ -1166,7 +1167,26 @@ export function loadLevel(index = 0, rng = Math.random) {
   });
   // Actividades iniciales de los enemigos y rehenes (al azar por partida y piso: R repite lo mismo; otra partida, otro reparto).
   const actRnd = seededRandom(((Math.floor(rng() * 4294967296) ^ 0x51ed1234) >>> 0) || 1);
+  // Prólogo: actividades fijas (`def.activities`: [casilla x, y, 'smoke' | 'watch', ángulo]) y enemigos asustados (`def.scared`: [[x, y], ...]), en casillas de LEVELS.
+  // Se localizan ANTES del sorteo de actividades (que puede mover a un enemigo sentado) y se aplican después.
+  const at = (sx, sy) => enemies.find((e) => e.tx === sx + OUTSKIRT && e.ty === sy + OUTSKIRT);
+  const fixedActs = (def.activities || []).map(([sx, sy, act, ang]) => {
+    const e = at(sx, sy);
+    if (!e) throw new Error(`${def.name}: no hay enemigo en (${sx},${sy}) para la actividad ${act}`);
+    e.keepAct = true; // el sorteo de actividades no lo toca (podría sentarlo y moverlo)
+    return { e, act, ang };
+  });
+  const scaredList = (def.scared || []).map(([sx, sy]) => {
+    const e = at(sx, sy);
+    if (!e) throw new Error(`${def.name}: no hay enemigo asustado en (${sx},${sy})`);
+    return e;
+  });
   placeActivities(map, enemies, actRnd, occupied, doors);
+  for (const { e, act, ang } of fixedActs) {
+    e.activity = act; e.patrol = [{ x: e.x, y: e.y }];
+    if (ang !== undefined) e.seatAngle = ang;
+  }
+  for (const e of scaredList) e.scared = true;
   if (map.trap) {
     // Fase final (tanda C): `ext` = el punto de la calle justo al sur de la puerta principal (quien se queda fuera); `spawns` = 6 puntos de aparición de oleadas por cada
     // extremo de la calle (el asfalto llega hasta la valla por ambos lados).
@@ -1175,7 +1195,10 @@ export function loadLevel(index = 0, rng = Math.random) {
     map.trap.meet = { x: bike.x + 64, y: bike.y - 32 }; // dónde se encuentran los dos agentes junto a la moto (el beso del final)
     map.trap.spawns = { w: [0, 1, 2, 3, 4, 5].map((i) => mk('w', i)), e: [0, 1, 2, 3, 4, 5].map((i) => mk('e', i)) };
   }
-  const hostages = def.noHostages ? [] : placeHostages(map, enemies, actRnd, doors, mainDoor.ty, entry, occupied, index);
+  // Prólogo: el compañero capturado está en una casilla fija (R lo conserva) y es un rehén `partner` (no pelea; el aspecto lo pone Game según el agente elegido).
+  const fixedHostage = def.hostage ? [{ tx: def.hostage[0] + OUTSKIRT, ty: def.hostage[1] + OUTSKIRT, x: (def.hostage[0] + OUTSKIRT) * TILE + TILE / 2, y: (def.hostage[1] + OUTSKIRT) * TILE + TILE / 2,
+    look: { shirt: '#05d9e8', hair: '#140a08', skin: '#d9a67a', gender: 'm' }, facing: Math.PI, partner: true }] : null;
+  const hostages = fixedHostage || (def.noHostages ? [] : placeHostages(map, enemies, actRnd, doors, mainDoor.ty, entry, occupied, index));
   return { name: def.name, par: def.par, trap: map.trap, noHostages: !!def.noHostages, duo: !!def.duo, cameras: map.cameras, dark: !!def.dark, strobe: !!def.strobe, boss: !!def.boss, map, player, bike, mainDoor, entry, enemies, weapons, doors, hostages };
 }
 

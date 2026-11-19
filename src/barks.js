@@ -26,6 +26,12 @@ const pick = (list, avoid) => {
   return t;
 };
 
+// Enemigo asustado y paralizado (marca `scared`, prólogo): balbucea, con alguna pista del lore (la Organización, los nombres que faltan).
+const SCARED = ['¡N-NO ME MATES!', '¡ES LA ORGANIZACIÓN!', '¡YO SOLO FUMABA!', '¡NO DISPARES!', '¡DIJERON QUE YA NO QUEDABA NADIE!', '¡NO ES NADA PERSONAL, ¿EH?!', '¡ELLOS DIJERON QUE VENDRÍAS!'];
+export function scaredLine(avoid) {
+  return pick(SCARED, avoid);
+}
+
 // Frase al avistar al jugador: máscara 45 %, género 30 %, neutra el resto (las líneas de máscara y de género se intercalan con las neutras).
 export function spotLine(gender, maskId, avoid) {
   const r = Math.random(), m = MASK[maskId];

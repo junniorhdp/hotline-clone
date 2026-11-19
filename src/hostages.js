@@ -1,7 +1,8 @@
 import { findPath, moveAndSlide } from './map.js';
 import { segmentPointDistance, inMeleeArc } from './weapons.js';
 import { ExtractionCar } from './extraction.js';
-import { pixelRect, WORLD_PX } from './sprites.js';
+import { pixelRect, WORLD_PX, drawSprite, drawMaskHead, playerBody } from './sprites.js';
+import { AGENTS } from './portraits.js';
 import { drawText, measureText } from './pixelfont.js';
 import { COLORS } from './utils.js';
 
@@ -26,12 +27,20 @@ const TIED = ['¡MMMPH! ¡MMM!', '¡MMM-MMM!', '(SOLLOZOS...)', '¡MMMPH!', '¡M
 const FREED = ['¡GRACIAS!', '¡ME SALVASTE!', '¡CUIDADO, HAY MÁS!', '¡NO ME DEJES AQUÍ!'];
 const RELIEF = ['¡POR FIN LIBRES!', '¡VÁMONOS DE AQUÍ!', '¡GRACIAS POR TODO!'];
 const HIT = '¡MMMPH!!';
-const TARGETABLE = new Set(['tied', 'freed', 'waiting', 'exiting', 'ready']);
+// COMPAÑERO del prólogo (`partner`): rehén herido que no pelea. Mientras `protected`, tus golpes y balas lo ignoran (ni muere ni penaliza); al liberarlo pasa a `follow`
+// (te sigue cojeando, sin acercarse más de FOLLOW_GAP) y, con el piso despejado, a `freed`: sale con el flujo normal de extracción (moto, detrás de ti).
+const FOLLOW_GAP = 26, FOLLOW_SPEED = 80, FOLLOW_FAST = 110, FOLLOW_FAR = 130;
+const PARTNER_TIED = ['(TOS...) ¡AQUÍ!', '¡CUIDADO CON ELLOS!', '¡SUÉLTAME!'];
+const PARTNER_FREED = ['TARDASTE...', 'ESTOY BIEN. VÁMONOS.'];
+const TARGETABLE = new Set(['tied', 'follow', 'freed', 'waiting', 'exiting', 'ready']);
 
 class Hostage {
   constructor(d) {
     this.x = d.x; this.y = d.y;
     this.look = d.look;
+    this.partner = !!d.partner;   // compañero del prólogo
+    this.agent = d.agent || 'female'; this.maskId = d.maskId || 'neon'; this.maskName = d.maskName || ''; this.masked = false; // aspecto del agente; la máscara se la cedes al liberarlo
+    this.protected = this.partner; // tus golpes y balas no le hacen nada
     this.facing = d.facing;
     this.r = 7;
     this.state = 'tied';
@@ -93,7 +102,14 @@ export class Hostages {
       if (h.state === 'tied') {
         h.shiver += dt * (hot ? 45 : 14);
         // Gimen amordazados cuando el jugador está cerca.
-        if (p.alive && h.sayCd <= 0 && h.sayT <= 0 && Math.hypot(p.x - h.x, p.y - h.y) < 150) { h.say = TIED[Math.floor(Math.random() * TIED.length)]; h.sayT = 2.2; h.sayCd = 4 + Math.random() * 3; }
+        if (p.alive && h.sayCd <= 0 && h.sayT <= 0 && !(h.partner && g.comms.cur) && Math.hypot(p.x - h.x, p.y - h.y) < 150) { { const L = h.partner ? PARTNER_TIED : TIED; h.say = L[Math.floor(Math.random() * L.length)]; } h.sayT = 2.2; h.sayCd = 4 + Math.random() * 3; }
+      } else if (h.state === 'follow') {
+        h.shiver += dt * 5;
+        if (g.state === 'cleared') { h.state = 'freed'; h.path = null; }  // piso despejado: sigue la extracción de siempre
+        else if (!h.down && p.alive) {
+          if (Math.hypot(p.x - h.x, p.y - h.y) > FOLLOW_GAP) this.walk(h, dt, p.x, p.y, Math.hypot(p.x - h.x, p.y - h.y) > FOLLOW_FAR ? FOLLOW_FAST : FOLLOW_SPEED, FOLLOW_GAP, () => {});
+          else h.path = null;
+        }
       } else if (h.state === 'freed') {
         h.shiver += dt * 30;
         if (!h.down) this.walk(h, dt, g.entry.x, g.entry.y, RUN_SPEED, 26, () => {
@@ -225,6 +241,21 @@ export class Hostages {
   // --- Liberar, golpes y balas ----------------------------------------------------------------------
   free(h) {
     const g = this.game;
+    if (h.partner) {
+      h.state = 'follow'; h.down = false; h.path = null;
+      h.say = PARTNER_FREED[Math.floor(Math.random() * PARTNER_FREED.length)]; h.sayT = 2.4; h.sayCd = 6;
+      g.sfx.play('unlock');
+      g.sfx.play('pickup', 0.8);
+      g.addFloat(h.x, h.y - 20, '¡COMPAÑERO LIBRE!', '#9be32a', 1, 1.8);
+      g.particles.dust(h.x, h.y, 6);
+      h.masked = true;                                       // le cedes la otra máscara (solo visual)
+      g.sfx.play('maskOn');
+      g.particles.neon(h.x, h.y, -Math.PI / 2, 10, 2);
+      g.addFloat(h.x, h.y - 34, `MÁSCARA CEDIDA: ${h.maskName}`, '#05d9e8', 1, 2);
+      if (g.prologue) g.prologueLine('free');
+      if (g.comms.cur || g.comms.queue.length) { h.say = null; h.sayT = 0; }   // sus líneas de comunicación sustituyen a la frase genérica
+      return;
+    }
     h.state = 'freed';
     h.down = false;
     h.say = FREED[Math.floor(Math.random() * FREED.length)]; h.sayT = 2.4; h.sayCd = 6;
@@ -240,7 +271,7 @@ export class Hostages {
   meleeHit(p, def) {
     let hit = false;
     for (const h of this.list) {
-      if (!h.alive || !inMeleeArc(p.x, p.y, p.angle, def, h)) continue;
+      if (!h.alive || h.protected || !inMeleeArc(p.x, p.y, p.angle, def, h)) continue;
       hit = true;
       if (h.hitCd > 0) continue;                       // pasado un instante del primer golpe: el aviso se nota, no se remata en el mismo tirón
       h.hits++;
@@ -263,7 +294,7 @@ export class Hostages {
   // Una bala del jugador: la bala se detiene en el rehén y lo mata (sin aviso previo). Devuelve true si le dio a alguien.
   bulletHit(b) {
     for (const h of this.list) {
-      if (!h.alive || segmentPointDistance(b.px, b.py, b.x, b.y, h.x, h.y) >= h.r + b.r) continue;
+      if (!h.alive || h.protected || segmentPointDistance(b.px, b.py, b.x, b.y, h.x, h.y) >= h.r + b.r) continue;
       this.kill(h, Math.atan2(b.vy, b.vx));
       return true;
     }
@@ -309,10 +340,35 @@ export class Hostages {
     for (const h of this.list) if (h.state === 'riding') this.drawOne(ctx, h);
   }
 
+  // El compañero del prólogo (`partner`): el otro agente, con su cuerpo y cabeza de personaje (herido: sangre nivel 2), atado a la silla hasta que lo liberas;
+  // sin máscara hasta que le cedes la otra (h.masked). Se dibuja girado hacia donde mira, como el jugador.
+  drawPartner(ctx, h) {
+    const g = this.game, x = Math.round(h.x), y = Math.round(h.y), tied = h.state === 'tied', female = h.agent === 'female', lvl = g.goreOn ? 2 : 0;
+    ctx.save();
+    ctx.globalAlpha = h.state === 'boarding' ? Math.max(0, h.fade) : 1;
+    ctx.fillStyle = 'rgba(5,0,15,0.5)'; pixelRect(ctx, x - 12, y + 8, 14, 4);                // sombra
+    ctx.translate(x, y);
+    ctx.rotate(h.facing);
+    if (tied) {                                                                              // silla (respaldo detrás) y asiento
+      ctx.fillStyle = '#14100a'; pixelRect(ctx, -16, -10, 5, 20);
+      ctx.fillStyle = '#5b4a2a'; pixelRect(ctx, -15, -9, 3, 18);
+      ctx.fillStyle = '#3a2f1a'; pixelRect(ctx, -12, -8, 14, 16);
+    }
+    drawSprite(ctx, playerBody(h.maskId, lvl, h.agent), 0, 0);
+    if (female) drawSprite(ctx, 'ponytail', -3, 0, 0, { ox: 10, oy: 2.5 });
+    drawMaskHead(ctx, h.masked ? h.maskId : (female ? 'bare_f' : 'bare'), lvl);
+    if (tied) { ctx.fillStyle = '#b8864a'; ctx.fillRect(-4, -12, 3, 24); ctx.fillRect(4, -12, 3, 24); } // cuerdas
+    ctx.restore();
+    const a = AGENTS[h.agent];
+    if (tied) { ctx.fillStyle = '#ffbe0b'; pixelRect(ctx, x, y - 26, 1, 3); pixelRect(ctx, x, y - 20, 1, 1); } // «!» de socorro
+    drawText(ctx, a.name, x, y - 34, { color: a.color, scale: WORLD_PX, align: 'center' });
+  }
+
   drawOne(ctx, h) {
+    if (h.partner) { this.drawPartner(ctx, h); return; }
     const L = h.look, x = Math.round(h.x), y = Math.round(h.y);
     const tied = h.state === 'tied', dead = h.state === 'dead';
-    const moving = h.state === 'freed' || h.state === 'exiting' || h.state === 'riding';
+    const moving = h.state === 'freed' || h.state === 'exiting' || h.state === 'riding' || h.state === 'follow';
     const sh = (tied || moving || h.state === 'waiting') ? Math.round(Math.sin(h.shiver) * (h.state === 'waiting' ? 0.6 : 1)) : 0;
     ctx.save();
     ctx.globalAlpha = h.state === 'boarding' ? Math.max(0, h.fade) : 1;
@@ -345,12 +401,16 @@ export class Hostages {
     const fx = Math.cos(h.facing) >= 0 ? 1 : -2;
     px(fx, -6, 2, 2, L.skin);
     if (tied) {
-      px(fx, -6, 2, 1, '#e8e4f0');                                          // mordaza
+      if (!h.partner) px(fx, -6, 2, 1, '#e8e4f0');                          // mordaza (el compañero habla)
       px(-6, -3, 12, 1, '#b8864a'); px(-6, 1, 12, 1, '#b8864a');           // cuerdas
       px(-7, -1, 2, 3, L.skin);                                              // manos atadas a la espalda
       px(0, -12, 1, 3, '#ffbe0b'); px(0, -8, 1, 1, '#ffbe0b');              // «!» de socorro
     } else {
       px(-8, -2, 2, 4, L.skin); px(6, -2, 2, 4, L.skin);                    // brazos sueltos
+    }
+    if (h.partner) {                                                         // herido: venda en la frente, moretón y sangre en la camisa
+      px(-3, -8, 7, 1, '#e8e4f0'); px(fx, -5, 2, 1, '#6b2f5a');
+      px(-3, -2, 3, 2, '#d90429'); px(1, 1, 2, 2, '#8a0a1d');
     }
     ctx.restore();
   }
@@ -359,7 +419,8 @@ export class Hostages {
   drawLeaveAsk(ctx, w, h) {
     const g = this.game, n = g.leaveAsk;
     if (!n || g.state !== 'cleared') return;
-    const msg = n === 1 ? 'Falta 1 rehén por rescatar.' : `Faltan ${n} rehenes por rescatar.`;
+    const pa = g.prologue ? this.list.find((x) => x.partner && x.state === 'tied') : null;   // en el prólogo el que falta es el compañero: se le nombra
+    const msg = pa ? `Esperas a ${AGENTS[pa.agent].name}: sigue dentro.` : n === 1 ? 'Falta 1 rehén por rescatar.' : `Faltan ${n} rehenes por rescatar.`;
     const sub = g.hint(`${g.keys.label('kick')} · IRTE IGUALMENTE`, 'TOCA LA MOTO (BOTA) · IRTE IGUALMENTE');
     const s = g.camera.worldToScreen(g.bike.x, g.bike.y - 34);
     const tw = Math.max(measureText(msg), measureText(sub)), bw = tw + 12, bh = 27;
@@ -375,6 +436,7 @@ export class Hostages {
   // Pantalla: aviso de liberar y burbujas (frases amordazadas / de dolor / de gratitud).
   drawHud(ctx, w, h) {
     const g = this.game;
+    const talking = !!(g.comms && (g.comms.cur || g.comms.queue.length)); // hay una línea de comunicación: el compañero no dice nada más a la vez
     if (this.list.length === 0 || (g.state !== 'playing' && g.state !== 'cleared' && g.state !== 'leaving')) return;
     const cam = g.camera;
     const t = g.state !== 'leaving' && g.player.alive && !g.panel ? this.nearTarget() : null;
@@ -385,7 +447,7 @@ export class Hostages {
       drawText(ctx, txt, p.x, p.y, { color: '#9be32a', align: 'center', shadow: COLORS.background });
     }
     for (const hs of this.list) {
-      if (hs.state === 'dead' || hs.state === 'boarded' || hs.sayT <= 0 || !hs.say) continue;
+      if (hs.state === 'dead' || hs.state === 'boarded' || hs.sayT <= 0 || !hs.say || (hs.partner && talking)) continue;
       const s = cam.worldToScreen(hs.x, hs.y - 26);
       if (s.x < -4 || s.x > w + 4 || s.y < -4 || s.y > h + 4) continue;
       const tw = measureText(hs.say), bp = g.keepOnScreen(s.x, s.y - 3, tw + 8, 13, 6);

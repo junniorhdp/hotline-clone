@@ -5,6 +5,7 @@ import { COLORS, TAU, angleDiff, clamp } from './utils.js';
 import { drawSprite, sprites, pixelRect, pixelDisc, drawMaskHead, maskHead, playerBody, BLOOD_LEVELS, WORLD_PX } from './sprites.js';
 import { DEFAULT_EFFECTS } from './masks.js';
 import { drawText } from './pixelfont.js';
+import { AGENTS } from './portraits.js';
 
 const SPEED = 228;           // antes 210: un ~9% más rápido
 // El movimiento ya responde al instante (no hay inercia), así que la "aceleración" es un
@@ -87,6 +88,7 @@ export class Player {
     this.agentId = 'main'; // 'main' (el primer agente) | 'support' (el compañero del relevo, ver Game.swapControl)
     this.gender = 'male';
     this.vomit = null; // { t, dur, spurts, wasMasked }: vomitando por culpa (ver startVomit)
+    this.doorAnim = null; // { kind: 'close' | 'open', t, door, fired }: el agente cierra la puerta principal al entrar / la abre al despejar (ver startDoorAnim)
     this.bloodLevel = 0;  // 0..BLOOD_LEVELS: cuánta sangre lleva encima (lo fija Game)
     this.soles = 0;       // pisadas manchadas que le quedan
     this.solesMax = 0;    // las de la carga actual (para saber en qué punto de la secuencia va)
@@ -145,6 +147,7 @@ export class Player {
     // Ejecutando: sin movimiento, ataque ni recoger/lanzar hasta que acabe (EXEC_TIME).
     if (this.exec) { this.updateExecution(dt, game); return; }
     if (this.vomit) { this.updateVomit(dt, game); return; } // vomitando: quieto, sin máscara y vulnerable
+    if (this.doorAnim) { this.updateDoorAnim(dt, game); return; } // cerrando / abriendo la puerta principal: sin control unos instantes
     this.bumpCd = Math.max(0, this.bumpCd - dt);
     this.boost *= Math.exp(-dt / DODGE_DECAY);
     const startX = this.x, startY = this.y;
@@ -284,6 +287,36 @@ export class Player {
   // --- Culpa: vómito ---------------------------------------------------------------------------
   // Tras matar a un civil el jugador se quita la máscara (queda en su mano) y vomita tres arcadas en el suelo, a unos 2,7 s en total:
   // sin movimiento, ataque ni recoger/lanzar, y vulnerable (el juego es de un golpe). Al acabar se vuelve a poner la máscara.
+  // Cerrar la puerta principal al entrar (`close`: se gira, da un paso hacia ella y tira de la hoja; se cierra y se bloquea a mitad de la animación) y abrirla al despejar
+  // el piso (`open`: al llegar a ella). ~0,9 s sin control; el arma se guarda un momento. La hoja se mueve en `fired` (0,5 s): ver Door.lock / unlock.
+  startDoorAnim(game, kind, door) {
+    if (this.doorAnim || !this.alive) { if (kind === 'close') door.lock(); else door.unlock(); return; } // (si no se puede animar, el efecto se aplica igual)
+    this.doorAnim = { kind, t: 0, dur: 0.9, door, fired: false };
+    this.moving = false; this.swing = 0; this.recoil = 0; this.muzzle = 0;
+  }
+
+  updateDoorAnim(dt, game) {
+    const a = this.doorAnim, d = a.door;
+    a.t += dt;
+    this.cooldown = Math.max(this.cooldown, 0.3);
+    const to = Math.atan2(d.cy - this.y, d.cx - this.x);
+    this.angle += clamp(angleDiff(to, this.angle), -14 * dt, 14 * dt);                  // se gira hacia la puerta
+    if (a.t > 0.2 && a.t < 0.55 && Math.hypot(d.cx - this.x, d.cy - this.y) > 28) {     // y da un paso hacia ella
+      const k = 130 * dt;
+      moveAndSlide(game.map, this, Math.cos(to) * k, Math.sin(to) * k);
+    }
+    if (!a.fired && a.t >= 0.5) {
+      a.fired = true;
+      if (a.kind === 'close') d.lock();
+      else {
+        d.unlock();
+        game.sfx.play('unlock');
+        game.addFloat(this.x, this.y - 24, `${AGENTS[this.gender].name} ABRE LA PUERTA`, '#9be32a', 1, 1.5);
+      }
+    }
+    if (a.t >= a.dur) { this.doorAnim = null; this.cooldown = Math.max(this.cooldown, 0.15); }
+  }
+
   startVomit(game) {
     if (this.vomit || !this.alive) return;
     this.vomit = { t: 0, dur: 2.7, spurts: 0, wasMasked: this.masked };
@@ -541,7 +574,12 @@ export class Player {
     // Sin máscara puesta la lleva en la mano izquierda (el lado -Y), con el puño agarrándola.
     const inHand = () => { if (!this.masked) drawSprite(ctx, maskHead(this.maskId), 11, -8, 0.3); };
 
-    if (pose) {
+    if (this.doorAnim) {
+      // Cerrando / abriendo la puerta: el arma se guarda y las dos manos se adelantan hacia la hoja y tiran de ella (se echan atrás al cerrarse / abrirse).
+      const t = this.doorAnim.t, reach = t < 0.5 ? 6 + 10 * Math.min(1, t / 0.4) : 16 - 8 * Math.min(1, (t - 0.5) / 0.3);
+      drawSprite(ctx, 'fist', reach, 6);
+      drawSprite(ctx, 'fist', reach, -6);
+    } else if (pose) {
       if (!pose.raised) this.drawExecTool(ctx, pose);
     } else if (this.weapon) {
       // Cada arma tiene su gesto: el bate y el tubo barren un arco (el bate arranca lento y acaba

@@ -325,7 +325,7 @@ export class TouchControls {
     for (const id in this.flash) this.flash[id] = Math.max(0, this.flash[id] - dt);
     if (!input.touchMode) { if (this.move || this.aim) this.reset(); return; }
 
-    if (!GAMEPLAY.has(g.state) || g.panel) {
+    if (!GAMEPLAY.has(g.state) || g.panel || g.comms.cur) {   // con una línea de comunicación en pantalla un toque es un clic (sin joysticks)
       if (this.move || this.aim || this.roles.size) this.reset();
       // Pantallas fuera de la partida: primero los botones táctiles de la pantalla (VOLVER,
       // TERMINAR…), que "pulsan" la tecla equivalente. Si no se toca ninguno: con el panel de

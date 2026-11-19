@@ -3,6 +3,7 @@ import { drawText, measureText, CELL_H } from './pixelfont.js';
 import { pixelLine } from './sprites.js';
 import { drawTouchButton } from './touch.js';
 import { COLORS, clamp } from './utils.js';
+import { prologueSeen } from './prologue.js';
 
 // Menú principal estilo arcade. Vive en `game.state === 'menu'` con tres subpantallas:
 //   'title'   logo + JUGAR / SELECCIONAR PISO / RÉCORDS / OPCIONES (modal de options-menu.js)
@@ -10,7 +11,8 @@ import { COLORS, clamp } from './utils.js';
 //   'records' Top 5 histórico
 // Los cambios de pantalla pasan por `game.transition()` (fundido).
 const TITLE_OPTIONS = [
-  { label: 'JUGAR', action: (g) => g.transition(() => g.startRunAt(0)) },
+  { label: 'JUGAR', action: (g) => g.transition(() => g.startRunAt(0, !prologueSeen())) }, // la primera vez, el prólogo
+  { label: 'PRÓLOGO', action: (g) => g.transition(() => g.startRunAt(0, true)) },
   { label: 'SELECCIONAR PISO', action: (g) => g.transition(() => g.menu.open('floors'), 0.15) },
   { label: 'RÉCORDS', action: (g) => g.transition(() => g.menu.open('records'), 0.15) },
   { label: 'OPCIONES', action: (g) => g.openOptions() },

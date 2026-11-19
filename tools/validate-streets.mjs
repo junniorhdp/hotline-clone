@@ -4,16 +4,18 @@
 //   - ninguna alcantarilla pegada a la fogata ni bajo el HUD.
 // Se ejecuta con `npm run check:levels` (junto a validate-levels.mjs).
 import { LEVELS, loadLevel, isWallTile, TILE } from '../src/map.js';
+import { PROLOGUE_DEF } from '../src/prologue.js';
 
 let bad = 0;
 const fail = (m) => { bad++; console.log('  ✗ ' + m); };
 const seeds = Array.from({ length: 20 }, (_, k) => (k + 0.5) / 20);
 console.log('Calle exterior (20 semillas por piso)…');
 
-for (let i = 0; i < LEVELS.length; i++) {
+for (let n = 0; n <= LEVELS.length; n++) {
+  const pro = n === LEVELS.length, i = pro ? 0 : n; // el último es el prólogo
   for (const sd of seeds) {
-    const L = loadLevel(i, () => sd), { map } = L, st = map.street;
-    const tag = `piso ${i + 1} semilla ${sd}`;
+    const L = loadLevel(i, () => sd, pro ? PROLOGUE_DEF : null), { map } = L, st = map.street;
+    const tag = `${pro ? 'prólogo' : 'piso ' + (i + 1)} semilla ${sd}`;
     const solid = (tx, ty) => isWallTile(map, tx, ty);
     const start = [Math.floor(L.player.x / TILE), Math.floor(L.player.y / TILE)];
     const seen = new Set([start.join()]), q = [start];
