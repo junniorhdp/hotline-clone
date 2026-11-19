@@ -102,7 +102,7 @@ export class Hostages {
       if (h.state === 'tied') {
         h.shiver += dt * (hot ? 45 : 14);
         // Gimen amordazados cuando el jugador está cerca.
-        if (p.alive && h.sayCd <= 0 && h.sayT <= 0 && Math.hypot(p.x - h.x, p.y - h.y) < 150) { { const L = h.partner ? PARTNER_TIED : TIED; h.say = L[Math.floor(Math.random() * L.length)]; } h.sayT = 2.2; h.sayCd = 4 + Math.random() * 3; }
+        if (p.alive && h.sayCd <= 0 && h.sayT <= 0 && !(h.partner && g.comms.cur) && Math.hypot(p.x - h.x, p.y - h.y) < 150) { { const L = h.partner ? PARTNER_TIED : TIED; h.say = L[Math.floor(Math.random() * L.length)]; } h.sayT = 2.2; h.sayCd = 4 + Math.random() * 3; }
       } else if (h.state === 'follow') {
         h.shiver += dt * 5;
         if (g.state === 'cleared') { h.state = 'freed'; h.path = null; }  // piso despejado: sigue la extracción de siempre
@@ -253,6 +253,7 @@ export class Hostages {
       g.particles.neon(h.x, h.y, -Math.PI / 2, 10, 2);
       g.addFloat(h.x, h.y - 34, `MÁSCARA CEDIDA: ${h.maskName}`, '#05d9e8', 1, 2);
       if (g.prologue) g.prologueLine('free');
+      if (g.comms.cur || g.comms.queue.length) { h.say = null; h.sayT = 0; }   // sus líneas de comunicación sustituyen a la frase genérica
       return;
     }
     h.state = 'freed';
@@ -418,7 +419,8 @@ export class Hostages {
   drawLeaveAsk(ctx, w, h) {
     const g = this.game, n = g.leaveAsk;
     if (!n || g.state !== 'cleared') return;
-    const msg = n === 1 ? 'Falta 1 rehén por rescatar.' : `Faltan ${n} rehenes por rescatar.`;
+    const pa = g.prologue ? this.list.find((x) => x.partner && x.state === 'tied') : null;   // en el prólogo el que falta es el compañero: se le nombra
+    const msg = pa ? `Esperas a ${AGENTS[pa.agent].name}: sigue dentro.` : n === 1 ? 'Falta 1 rehén por rescatar.' : `Faltan ${n} rehenes por rescatar.`;
     const sub = g.hint(`${g.keys.label('kick')} · IRTE IGUALMENTE`, 'TOCA LA MOTO (BOTA) · IRTE IGUALMENTE');
     const s = g.camera.worldToScreen(g.bike.x, g.bike.y - 34);
     const tw = Math.max(measureText(msg), measureText(sub)), bw = tw + 12, bh = 27;
@@ -434,6 +436,7 @@ export class Hostages {
   // Pantalla: aviso de liberar y burbujas (frases amordazadas / de dolor / de gratitud).
   drawHud(ctx, w, h) {
     const g = this.game;
+    const talking = !!(g.comms && (g.comms.cur || g.comms.queue.length)); // hay una línea de comunicación: el compañero no dice nada más a la vez
     if (this.list.length === 0 || (g.state !== 'playing' && g.state !== 'cleared' && g.state !== 'leaving')) return;
     const cam = g.camera;
     const t = g.state !== 'leaving' && g.player.alive && !g.panel ? this.nearTarget() : null;
@@ -444,7 +447,7 @@ export class Hostages {
       drawText(ctx, txt, p.x, p.y, { color: '#9be32a', align: 'center', shadow: COLORS.background });
     }
     for (const hs of this.list) {
-      if (hs.state === 'dead' || hs.state === 'boarded' || hs.sayT <= 0 || !hs.say) continue;
+      if (hs.state === 'dead' || hs.state === 'boarded' || hs.sayT <= 0 || !hs.say || (hs.partner && talking)) continue;
       const s = cam.worldToScreen(hs.x, hs.y - 26);
       if (s.x < -4 || s.x > w + 4 || s.y < -4 || s.y > h + 4) continue;
       const tw = measureText(hs.say), bp = g.keepOnScreen(s.x, s.y - 3, tw + 8, 13, 6);
