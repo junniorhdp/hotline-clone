@@ -121,15 +121,17 @@ for (let n = 0; n <= LEVELS.length; n++) {
     if (!isWallTile(map, v.tx, v.ty)) fail('la ventilación no está en una pared');
     if (isWallTile(map, Math.floor(v.sx / TILE), Math.floor(v.sy / TILE)) || insideRoom(Math.floor(v.sx / TILE), Math.floor(v.sy / TILE))) fail('la casilla exterior de la ventilación está ocupada o dentro del despacho');
     if (!(T.trigger.x1 >= T.trigger.x0 && T.trigger.y1 >= T.trigger.y0)) fail('el centro del despacho (disparador de la trampa) es vacío');
-    const toVent = findPath(map, L.entry.x, L.entry.y, v.sx, v.sy);
-    if (!toVent) fail('la ventilación es inalcanzable desde la entrada');
+    // El compañero llega por la escalera del cuarto de servicio (`ladderRoom`) si el piso la tiene; si no, por la entrada del edificio.
+    const from = L.ladderRoom ? L.ladderRoom.service : L.entry;
+    const toVent = findPath(map, from.x, from.y, v.sx, v.sy);
+    if (!toVent) fail(`la ventilación es inalcanzable desde ${L.ladderRoom ? 'el cuarto de servicio' : 'la entrada'}`);
     else {
       const need = (toVent.length * TILE) / BASE_SPEED;
-      if (toVent.length < 10) fail(`ventilación demasiado cerca de la entrada (${toVent.length} casillas)`);
+      if (toVent.length < 10) fail(`ventilación demasiado cerca del punto de llegada del compañero (${toVent.length} casillas)`);
       if (need > GAS_TIME * 0.7) fail(`ventilación demasiado lejos: ${need.toFixed(1)} s de recorrido > 70 % de ${GAS_TIME} s`);
       const toRoom = findPath(map, L.entry.x, L.entry.y, T.center.x, T.center.y);
       if (!toRoom) fail('el centro del despacho es inalcanzable desde la entrada');
-      else console.log(`  trampa: entrada → despacho ${toRoom.length} casillas · entrada → ventilación ${toVent.length} casillas (${need.toFixed(1)} s de ${GAS_TIME})`);
+      else console.log(`  trampa: entrada → despacho ${toRoom.length} casillas · ${L.ladderRoom ? 'cuarto de servicio' : 'entrada'} → ventilación ${toVent.length} casillas (${need.toFixed(1)} s de ${GAS_TIME})`);
     }
   }
   // 5g) fase final del piso 10: ambos finales alcanzables. LIMPIEZA: todos los enemigos llegan al despacho; PERÍMETRO: el punto exterior (calle, al sur de la puerta principal) y los 12
@@ -206,6 +208,31 @@ for (let n = 0; n <= LEVELS.length; n++) {
     if (closest < 260) fail(`túnel: el punto de aparición está a ${(closest / TILE).toFixed(1)} casillas de la ronda (el cocodrilo te vería al bajar)`);
     if (TUNNEL_PILLARS.length < 4) fail('túnel: pocos pilares (sin cobertura)');
     console.log(`  alcantarilla: cuarto de servicio libre y apartado · llave en 1 enemigo · túnel con escalera alcanzable, ronda libre y ${TUNNEL_PILLARS.length} pilares`);
+  }
+  // 5k) llegada del compañero por la escalera (piso 10, `ladderRoom`): el cuarto de servicio es suelo libre, está apartado (≥ 5 casillas) de los enemigos, tiene la boca de la escalera,
+  // y desde él se llega a la ventilación y al resto del edificio (la puerta del cuarto, en (4,22), cuenta como paso libre).
+  if (L.ladderRoom) {
+    const S = L.ladderRoom.service, fr = (p) => !isWallTile(map, Math.floor(p.x / TILE), Math.floor(p.y / TILE));
+    if (!fr(S)) fail('el cuarto de servicio del compañero está tapado');
+    const near = L.enemies.filter((e) => Math.hypot(e.x - S.x, e.y - S.y) < 5 * TILE);
+    if (near.length) fail(`${near.length} enemigos a menos de 5 casillas del cuarto de servicio del compañero`);
+    if (!map.props.some((p) => p.type === 'ladder' && p.x === L.ladderRoom.ladder.tx && p.y === L.ladderRoom.ladder.ty)) fail('falta la boca de la escalera del compañero');
+    if (!findPath(map, S.x, S.y, L.mainDoor.x, L.mainDoor.y - TILE)) fail('no hay camino del cuarto de servicio del compañero al resto del edificio');
+    else console.log('  compañero: cuarto de servicio libre, apartado y con camino a la ventilación');
+  }
+  // 5l) salida del agente de apoyo por la alcantarilla (piso 10, `trap.manhole`): la boca de la calle existe, es suelo libre y alcanzable, está a ≤ 4 casillas del punto exterior `trap.ext` y la tapa
+  // está dibujada (hay una `sewer` en la lista de la calle, marcada `fixed`: nunca asoma el cocodrilo).
+  if (L.trap && L.ladderRoom) {
+    const Mh = L.trap.manhole;
+    if (!Mh) fail('el piso con escalera de llegada no tiene boca de alcantarilla de salida');
+    else {
+      const frM = !isWallTile(map, Mh.tx, Mh.ty);
+      if (!frM) fail('la boca de alcantarilla de salida está tapada');
+      if (!findPath(map, L.trap.ext.x, L.trap.ext.y, Mh.x, Mh.y)) fail('la boca de alcantarilla de salida es inalcanzable desde el punto exterior');
+      if (Math.hypot(Mh.x - L.trap.ext.x, Mh.y - L.trap.ext.y) > 4 * TILE) fail('la boca de alcantarilla de salida está a más de 4 casillas del punto exterior');
+      if (!map.sewers.some((c) => c.fixed && c.tx === Mh.tx && c.ty === Mh.ty)) fail('la boca de salida no está en la lista de tapas (no se dibujaría)');
+      if (frM) console.log('  salida del agente de apoyo: boca de alcantarilla libre, alcanzable y junto a la puerta');
+    }
   }
   // 6) cada enemigo puede llegar al jugador y a la salida (pathfinding)
   const pEntry = L.entry;

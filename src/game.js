@@ -246,7 +246,7 @@ export class Game {
     this.levelIndex = 0;
     this.comms = new Comms(this); // líneas cortas de lore no modales (prólogo)
     this.flow = new PrologueFlow(this); // lógica y estado del prólogo / tutorial (instrucciones, salto, fin): prologue-flow.js
-    this.climb = null; this.emerge = null; this.descent = null; this.sewerRun = null; this.sewerStash = null; this.sewerRoute = null; this.keyRoute = false; this.hasKey = false; this.keyDrop = null; this.keyHintAt = 0; this.shutAt = 0; // piso 3: entrada por la alcantarilla y llave de salida
+    this.finalExit = null; this.ladderRoom = null; this.climb = null; this.emerge = null; this.descent = null; this.sewerRun = null; this.sewerStash = null; this.sewerRoute = null; this.keyRoute = false; this.hasKey = false; this.keyDrop = null; this.keyHintAt = 0; this.shutAt = 0; // piso 3: entrada por la alcantarilla y llave de salida
     this.cineK = 0; // 0..1: cuánto están puestas las barras de cine de llegada / fuga (anima las barras y el fundido del HUD)
     this.prologue = false; // tutorial aparte del piso 1 (ver prologue.js): sin resultados, récords ni estadísticas de campaña
     this.debug = false;
@@ -387,7 +387,7 @@ export class Game {
     this.levelIndex = index;
     this.streetRun = newStreetRun();
     this.civilianBase = { ...this.civilianRecord }; // el registro al entrar al piso (R lo restaura)
-    this.trapRetry = false; this.finalRetry = false; this.finalRole = null;
+    this.trapRetry = false; this.finalRetry = false; this.finalRole = null; this.trapCheckpoint = null; this.finalCheckpoint = null;
     this.score.startLevel();
     this.scuffleCount = 0;
     this.resetStains(); // el siguiente piso se empieza limpio: ropa y máscara sin sangre
@@ -956,7 +956,7 @@ export class Game {
     this.buff = null;
     this.streetRun = newStreetRun();
     this.civilianBase = { hurt: 0, killed: 0, gifts: 0 }; // el comportamiento con los civiles se acumula durante toda la partida
-    this.trapRetry = false; this.finalRetry = false; this.finalRole = null;
+    this.trapRetry = false; this.finalRetry = false; this.finalRole = null; this.trapCheckpoint = null; this.finalCheckpoint = null;
     this.score.newRun(this.history.best());
     this.resetStains();
     this.scuffleCount = 0;
@@ -1023,7 +1023,7 @@ export class Game {
   //    la que cruzó el umbral y la puerta ya bloqueada. R no repite la llegada: tiene que ser instantáneo.
   //  - Reintento sin haber entrado todavía: otra vez en la acera, sin cinemática.
   reset({ arrival = false } = {}) {
-    this.descent = null; this.climb = null; this.emerge = null;
+    this.descent = null; this.climb = null; this.emerge = null; this.finalExit = null;
     if (this.sewerRun) this.restoreFromSewer(); // R dentro del túnel: se vuelve a la calle (aún no se había entrado al edificio)
     if (this.swapped) { this.swapBundles(); this.swapped = false; } // R: vuelve a controlar al primer agente con su máscara y su sangre
     // Armas aleatorias con semilla por partida y piso: al reintentar (R) todo sigue en su sitio;
@@ -1037,6 +1037,7 @@ export class Game {
     this.hasBoss = level.boss;
     this.par = level.par;
     this.map = level.map;
+    this.ladderRoom = level.ladderRoom || null; // piso 10: el compañero llega por la escalera de un cuarto de servicio (ver beginTrap / updateRadio)
     this.sewerRoute = level.sewerRoute; this.keyRoute = !!level.key; this.hasKey = false; this.keyDrop = null; // piso 3: ver beginSewer / dropKey
     const retryInside = !arrival && this.entered;
     const start = retryInside ? (level.sewerRoute ? level.sewerRoute.service : level.entry) : level.player; // con la ruta de la alcantarilla, R reaparece en el cuarto de servicio
@@ -1066,6 +1067,7 @@ export class Game {
     this.camera.mul = this.camera.mulTarget = 1;
     this.sfx.setSlowMo(false);
     this.enemies = level.enemies.map((e) => this.makeEnemy(e));
+    this.levelEnemyCount = this.enemies.length; // (los refuerzos de la trampilla se añaden después: ver spawnAmbushEnemy)
     this.pickups = level.weapons.map((w) => new Pickup(w.type, w.x, w.y));
     this.doors = level.doors.map((d) => new Door(d.tx, d.ty, d.horizontal, d.main));
     this.mainDoor = this.doors.find((d) => d.main);
@@ -1215,6 +1217,7 @@ export class Game {
     if (this.state === 'sewer') { this.updateSewer(dt); return; }
     if (this.comms.cur) { this.comms.step(dt, confirm || input.mousePressed.left); return; } // línea de comunicación del prólogo: el mundo se congela (como la radio del piso 10)
     if (this.state === 'ambush') { this.updateAmbush(dt); return; }
+    if (this.state === 'exit') { this.updateExit(dt, confirm || input.mousePressed.left); return; }
     if (this.state === 'ending') { this.updateEnding(dt, input.down('Enter')); return; }
     if (this.state === 'radio') { this.updateRadio(dt, confirm || input.mousePressed.left); return; }
     if (this.state === 'reunion') { this.updateReunion(dt); return; }
@@ -1895,13 +1898,9 @@ export class Game {
   // El agente que se hunde: se dibuja desplazado hacia abajo y recortado por el borde de la abertura (solo se ve lo que queda por encima).
   drawPlayerBody(ctx) {
     const D = this.descent, E = this.emerge;
-    if (this.state === 'emerge' && E && E.sink > 0) {          // asoma de la boca de la escalera: desplazado hacia abajo y recortado por su borde
-      ctx.save();
-      ctx.beginPath(); ctx.rect(E.hole.x - 120, E.hole.y - 160, 240, 160 + 10); ctx.clip();
-      ctx.translate(0, E.sink * 34);
-      this.player.draw(ctx);
-      ctx.restore();
-    } else if (this.state === 'descend' && D && D.sink > 0) {
+    if (this.state === 'exit' && this.finalExit && this.finalExit.out === this.player) return; // lo dibuja drawExit
+    if (this.state === 'emerge' && E && E.sink > 0) this.drawThroughHole(ctx, this.player, E.hole, E.sink); // asoma de la boca de la escalera
+    else if (this.state === 'descend' && D && D.sink > 0) {
       ctx.save();
       ctx.beginPath(); ctx.rect(D.lid.x - 120, D.lid.y - 160, 240, 160 + 12); ctx.clip();
       ctx.translate(0, D.sink * 34);
@@ -2772,25 +2771,158 @@ export class Game {
       for (const d of T.doors) { const door = this.doors.find((x) => x.tx === d.tx && x.ty === d.ty); if (door) { door.locked = false; door.closing = false; door.offset = 0; door.angVel = 0; } }
       this.partner.away = false;
       this.player.x = T.center.x - 24; this.player.y = T.center.y; this.partner.x = T.center.x + 24; this.partner.y = T.center.y;
-      const far = this.enemies.filter((e) => e.alive).sort((p, q) => Math.hypot(q.x - T.center.x, q.y - T.center.y) - Math.hypot(p.x - T.center.x, p.y - T.center.y));
-      far.slice(FINAL_KEEP).forEach((e) => { e.alive = false; });
       this.inside = true;
     }
     this.trapRetry = false;
+    if (this.trapCheckpoint && !retry) { this.trapCheckpoint.total = this.score.total; this.trapCheckpoint.levelScore = this.score.levelScore; } // R en la fase final conserva los puntos de este momento
+    else if (this.trapCheckpoint) { this.score.total = this.trapCheckpoint.total; this.score.levelScore = this.trapCheckpoint.levelScore; }
     this.finalRole = role; this.finalRetry = true;
     const want = role === 'limpieza' ? 'main' : 'support';
     if (this.player.agentId !== want) this.swapControl(true);
-    const ext = T.ext, out = role === 'limpieza' ? this.partner : this.player;
-    out.x = ext.x; out.y = ext.y; out.angle = -Math.PI / 2;
+    const ext = T.ext, out = role === 'limpieza' ? this.partner : this.player, animated = !retry && !!this.ladderRoom && !!T.manhole;
+    if (!animated) { out.x = ext.x; out.y = ext.y; out.angle = -Math.PI / 2; } // (R: directo a la calle; con animación, el agente de apoyo sale por la alcantarilla: ver beginExit)
     const ally = this.partner;
     ally.immortal = true; ally.weapon = { type: 'smg', ammo: 9999 }; ally.fireCd = 0; ally.path = null; ally.pathT = 0;
+    if (retry) {                                                      // R en la fase final: se vuelve al PUNTO DE REPETICIÓN (restoreFinalCheckpoint); sin él, los 6 enemigos más lejos
+      if (this.finalCheckpoint) this.restoreFinalCheckpoint(role);
+      else {
+        const far = this.enemies.filter((e) => e.alive).sort((p, q) => Math.hypot(q.x - T.center.x, q.y - T.center.y) - Math.hypot(p.x - T.center.x, p.y - T.center.y));
+        far.slice(FINAL_KEEP).forEach((e) => { e.alive = false; });
+      }
+    }
     this.final = { role, wave: 0, stage: 'wait', timer: 3.5, done: false, montage: null, ambushPending: false };
     // Emboscada: solo si juegas LIMPIEZA (dentro) y al elegirlo quedan menos de AMBUSH_MIN enemigos vivos; con 3 o más no ocurre nunca (y con R, que deja 6, tampoco).
     if (role === 'limpieza' && this.hatch && !this.hatch.used && this.enemies.filter((e) => e.alive).length < AMBUSH_MIN) this.final.ambushPending = true;
+    if (animated) this.beginExit(out, role); else this.startFinalPlay(role, retry);
+  }
+
+  // Arranque del asalto final tras situar a los agentes (directo en un reintento, o al acabar la salida animada).
+  startFinalPlay(role, retry = false) {
     if (role === 'perimetro') this.supplyDrop(true); // quien defiende la calle empieza armado y con armas a mano
+    if (!retry) this.captureFinalCheckpoint(); // PUNTO DE REPETICIÓN de la fase final: así empieza el asalto (ver captureFinalCheckpoint)
     this.camera.snap(this.player.x, this.player.y);
     this.showCallout(role === 'limpieza' ? 'LIMPIEZA' : 'PERÍMETRO', COLORS.player, 2.4, role === 'limpieza' ? 'DESPEJA EL EDIFICIO' : 'DEFIENDE LA CALLE: 2 OLEADAS');
   }
+
+  // PUNTO DE REPETICIÓN DE LA FASE FINAL: se captura al empezar el asalto (rol elegido y salida hecha) y otra vez al TERMINAR la emboscada de la trampilla (los refuerzos ya van a por ti).
+  // R vuelve exactamente a ese momento: los mismos enemigos vivos, en su sitio y con la MISMA conciencia (los que ya iban a por ti siguen yendo a por ti, no «olvidan»), los refuerzos de
+  // la trampilla ya fuera y en persecución (la emboscada no se repite) y el agente con el ARMA con la que empezó (y su munición), no con las manos vacías.
+  captureFinalCheckpoint() {
+    const p = this.player;
+    this.finalCheckpoint = {
+      role: this.finalRole, px: p.x, py: p.y,
+      weapon: p.weapon ? { type: p.weapon.type, ammo: p.weapon.ammo } : null,
+      ambushDone: !!(this.hatch && this.hatch.used),
+      enemies: this.enemies.map((e, i) => (e.alive ? { i, ambushIdx: e.ambushIdx, x: e.x, y: e.y, angle: e.angle, aware: e.state === 'chase' || e.state === 'alert' || !!e.alarmed } : null)).filter(Boolean),
+    };
+  }
+
+  // El enemigo sabe dónde estás (como los refuerzos al salir de la trampilla): persecución, alarmado y con la mira en ti.
+  alertEnemy(e) {
+    const p = this.player;
+    e.found = true; e.alarmed = true; e.state = 'chase'; e.target = { x: p.x, y: p.y }; e.attackCd = 0.8;
+  }
+
+  restoreFinalCheckpoint(role) {
+    const cp = this.finalCheckpoint, n0 = this.levelEnemyCount, p = this.player;
+    const keep = new Set(cp.enemies.filter((c) => c.ambushIdx === undefined && c.i < n0).map((c) => c.i));
+    this.enemies.forEach((e, i) => { if (i < n0 && !keep.has(i)) e.alive = false; });
+    if (cp.ambushDone && this.hatch) { this.hatch.used = true; this.hatch.state = 'open'; this.hatch.open = 1; } // la trampilla ya está abierta y no se repite la emboscada
+    if (role === 'limpieza' && cp.role === 'limpieza') { p.x = cp.px; p.y = cp.py; p.angle = -Math.PI / 2; }     // dentro: donde estabas
+    p.weapon = cp.weapon ? { ...cp.weapon } : null;                                                              // y con tu arma, no sin ella
+    for (const c of cp.enemies) {
+      if (c.ambushIdx !== undefined) this.spawnAmbushEnemy(c.ambushIdx, { x: c.x, y: c.y });                    // refuerzo de la trampilla (siempre en persecución)
+      else { const e = this.enemies[c.i]; e.x = c.x; e.y = c.y; e.angle = c.angle; e.path = null; if (c.aware) this.alertEnemy(e); }
+    }
+  }
+
+  // --- Salida del agente de apoyo al elegir el rol (estado 'exit', ~5 s, Espacio / Enter / clic la salta tras 0,8 s) -------------------------------------------------------
+  // La puerta principal está cerrada, así que el agente que se queda fuera (siempre el de apoyo: el compañero en LIMPIEZA, tú en PERÍMETRO) se va como llegó: 1) corre a la salida del
+  // despacho (cámara en él), 2) corte: baja por la escalera del cuarto de servicio (se hunde en la boca, con peldaños), 3) corte: en la calle la tapa de la alcantarilla se desliza a
+  // tirones, asoma y se pone en su puesto junto a la puerta (`trap.ext`). Después empieza el asalto (`startFinalPlay`).
+  beginExit(out, role) {
+    const name = (AGENTS[out.gender] || AGENTS.male).name;
+    this.finalExit = { t: 0, out, role, from: { x: out.x, y: out.y }, stage: 0, rung: -1, lid: null };
+    this.state = 'exit';
+    this.callout = null;
+    this.showCallout(role === 'limpieza' ? `${name} SALE A LA CALLE` : 'SALES A LA CALLE', COLORS.player, 2.6, role === 'limpieza' ? 'POR LA ALCANTARILLA · CUBRIRÁ EL PERÍMETRO' : 'POR LA ALCANTARILLA · DEFIENDE LA CALLE');
+    this.sfx.play('pickup');
+  }
+
+  updateExit(dt, skip) {
+    const X = this.finalExit, out = X.out, L = this.ladderRoom, T = this.trap, M = T.manhole, ext = T.ext;
+    const ease = (k) => k * k * (3 - 2 * k), clamp01 = (v) => Math.max(0, Math.min(1, v));
+    const CUT1 = 1.0, CUT2 = 2.7, END = 5.0;
+    X.t += dt;
+    if (X.t < END && this.holdSkip(X, dt)) X.t = END;
+    if (this.callout && (this.callout.t -= dt) <= 0) this.callout = null;
+    for (const f of this.floatingTexts) f.t -= dt;
+    this.floatingTexts = this.floatingTexts.filter((f) => f.t > 0);
+    X.flash = Math.max(0, 1 - Math.min(Math.abs(X.t - CUT1), Math.abs(X.t - CUT2)) / 0.14); // corte con fundido rápido a negro
+    let fx = out.x, fy = out.y;
+    if (X.t < CUT1) {                                           // 1) corre hacia la salida del despacho
+      const k = ease(X.t / CUT1);
+      out.x = X.from.x; out.y = X.from.y + 150 * k; out.angle = Math.PI / 2;
+      fx = out.x; fy = out.y;
+    } else if (X.t < CUT2) {                                    // 2) cuarto de servicio: llega a la boca y baja por la escalera
+      if (X.stage < 1) { X.stage = 1; out.x = L.service.x; out.y = L.service.y; out.angle = Math.PI; X.rung = -1; this.camera.snap(L.ladder.x, L.ladder.y); } // (los cortes de cámara son secos)
+      const u = X.t - CUT1;
+      if (u < 0.4) { const k = ease(u / 0.4); out.x = L.service.x + (L.ladder.x - L.service.x) * k; out.y = L.service.y + (L.ladder.y - L.service.y) * k; X.sink = 0; }
+      else { out.x = L.ladder.x; out.y = L.ladder.y; X.sink = ease(clamp01((u - 0.4) / 1.0)); const r = Math.floor((u - 0.4) / 0.25); if (r > X.rung && X.sink < 1) { X.rung = r; this.sfx.play('knock', 0.3); } }
+      fx = L.ladder.x; fy = L.ladder.y;
+    } else if (X.t < END) {                                     // 3) la calle: la tapa cede, asoma y sale
+      if (X.stage < 2) {
+        X.stage = 2; X.rung = -1; X.lid = this.sewer.covers.find((c) => c.tx === M.tx && c.ty === M.ty) || null;
+        if (X.lid) { X.lid.face = 0; X.lid.dir = this.sewer.pickDir(X.lid, this); X.lid.slide = 0; }
+        out.x = M.x; out.y = M.y; out.angle = -Math.PI / 2; X.sink = 1; this.camera.snap(M.x, M.y);
+        this.sfx.play('manholeScrape', 0.8); this.camera.addShake(4); this.particles.dust(M.x, M.y, 8);
+      }
+      const u = X.t - CUT2;
+      if (X.lid) X.lid.slide = ease(clamp01(u / 0.7));
+      if (u < 0.7) { X.sink = 1; }
+      else if (u < 1.8) { X.sink = 1 - ease((u - 0.7) / 1.1); const r = Math.floor((u - 0.7) / 0.27); if (r > X.rung && X.sink > 0) { X.rung = r; this.sfx.play('knock', 0.3); } if (u > 1.1 && !X.dust) { X.dust = true; this.particles.dust(M.x, M.y, 8); this.camera.addShake(3); } }
+      else { X.sink = 0; const k = ease(clamp01((u - 1.8) / 0.5)); out.x = M.x + (ext.x - M.x) * k; out.y = M.y + (ext.y - M.y) * k; }
+      fx = X.sink > 0 ? M.x : out.x; fy = X.sink > 0 ? M.y : out.y;
+    }
+    this.particles.update(dt, this.map, (kind, pt) => this.bake(kind, pt));
+    this.camera.update(dt, fx, fy);
+    if (X.t >= END) {                                           // fin: en su puesto de la calle y empieza el asalto
+      out.x = ext.x; out.y = ext.y; out.angle = -Math.PI / 2;
+      if (X.lid) X.lid.slide = 1;
+      this.finalExit = null;
+      this.state = 'playing';
+      this.player.cooldown = 0.3;
+      this.startFinalPlay(X.role);
+    }
+  }
+
+  // Dibuja al agente que sale: corriendo, hundiéndose por la escalera o asomando de la alcantarilla (con las manos en el borde).
+  drawExit(ctx) {
+    const X = this.finalExit;
+    if (!X || this.state !== 'exit') return;
+    const out = X.out, hole = X.t < 1.0 ? null : X.t < 2.7 ? this.ladderRoom.ladder : this.trap.manhole;
+    if (hole && X.sink > 0 && X.sink < 1) this.drawThroughHole(ctx, out, hole, X.sink);
+    else if (!hole || X.sink === 0) out.draw(ctx);
+  }
+
+  // Un agente que sube (sink 1 → 0) o baja (0 → 1) por una boca: recortado por el borde del hueco, desplazado hacia abajo, algo más pequeño cuanto más hondo y con las manos
+  // agarradas al borde mientras asoma.
+  drawThroughHole(ctx, agent, hole, sink) {
+    const s = 0.82 + 0.18 * (1 - sink);
+    ctx.save();
+    ctx.beginPath(); ctx.rect(hole.x - 120, hole.y - 160, 240, 176); ctx.clip();
+    ctx.translate(agent.x, agent.y + sink * 28); ctx.scale(s, s); ctx.translate(-agent.x, -agent.y);
+    agent.draw(ctx);
+    ctx.restore();
+    if (sink > 0.12 && sink < 0.92) {                           // las manos sobre el borde de la boca
+      for (const side of [-1, 1]) {
+        const x = hole.x + side * 11, y = hole.y + 8;
+        ctx.fillStyle = '#140a24'; pixelRect(ctx, x - 3, y - 2, 4, 3);
+        ctx.fillStyle = '#f1b48a'; pixelRect(ctx, x - 2, y - 1, 2, 2);
+      }
+    }
+  }
+
 
   updateFinal(dt) {
     const F = this.final;
@@ -3011,6 +3143,7 @@ export class Game {
       }
     }
     if (this.flashT > 0) { ctx.fillStyle = `rgba(255,255,255,${0.2 * (this.flashT / 0.08)})`; ctx.fillRect(0, 0, w, h); }
+    if (this.state === 'exit' && this.finalExit && this.finalExit.t > 0.8) this.drawSkipHint(ctx, w, h - CINE_BAR + 4, this.finalExit); // salida del agente de apoyo
     // Pista para saltar la cinemática (mantener ENTER) con su barra
     const E = this.ending;
     if (E && this.state === 'ending') {
@@ -3060,17 +3193,17 @@ export class Game {
     } else H.open = Math.min(1, H.open + dt * 4);
     const next = 1.7 + A.spawned * 0.3;
     if (H.state === 'open' && A.spawned < AMBUSH.length && A.t >= next) this.spawnAmbushEnemy(A.spawned++);
-    if (A.spawned >= AMBUSH.length && A.t >= 1.7 + AMBUSH.length * 0.3 + 0.9) { this.ambush = null; this.state = 'playing'; }
+    if (A.spawned >= AMBUSH.length && A.t >= 1.7 + AMBUSH.length * 0.3 + 0.9) { this.ambush = null; this.state = 'playing'; this.captureFinalCheckpoint(); } // nuevo punto de repetición: la pelea empieza aquí
   }
 
-  spawnAmbushEnemy(i) {
-    const H = this.hatch, d = AMBUSH[i], p = this.player;
-    const a = (i / AMBUSH.length) * TAU + 0.6, x = H.x + Math.cos(a) * 14, y = H.y + Math.sin(a) * 14;
+  spawnAmbushEnemy(i, at = null) {      // `at`: reaparición desde el punto de repetición (sin efectos)
+    const H = this.hatch, d = AMBUSH[i];
+    const a = (i / AMBUSH.length) * TAU + 0.6, x = at ? at.x : H.x + Math.cos(a) * 14, y = at ? at.y : H.y + Math.sin(a) * 14;
     const en = this.makeEnemy({ x, y, patrol: [{ x, y }], weapon: d.weapon || null, kind: d.kind, melee: null });
-    en.found = true; en.alarmed = true; en.state = 'chase'; en.target = { x: p.x, y: p.y }; en.attackCd = 0.8; en.ambush = true;
+    en.ambush = true; en.ambushIdx = i;
     this.enemies.push(en);
-    this.particles.dust(x, y, 6);
-    this.playAt('alert', x, y, 1);
+    this.alertEnemy(en);
+    if (!at) { this.particles.dust(x, y, 6); this.playAt('alert', x, y, 1); }
   }
 
   // La trampilla abierta (sobre el suelo, bajo los personajes): el hueco con una escalera, un resplandor y la tapa levantada de canto.
@@ -3217,12 +3350,18 @@ export class Game {
     if (!T || T.state !== 'idle' || !b) return;
     T.victim = a; T.hold = 0; T.cough = 1.2; T.fade = 1; T.t = GAS_TIME;
     this.trapRetry = true;
+    // PUNTO DE REPETICIÓN: al empezar la trampa (fase 2) se guarda cómo está el piso. R vuelve aquí (no al principio del piso): los enemigos ya abatidos siguen abatidos y los puntos
+    // son los de ese momento. Se conserva hasta elegir el rol final (`beginFinal`, que lo actualiza); ni resolver la trampa lo borra.
+    if (!retry) this.trapCheckpoint = { dead: this.enemies.map((e, i) => (e.alive ? -1 : i)).filter((i) => i >= 0), total: this.score.total, levelScore: this.score.levelScore };
+    else if (this.trapCheckpoint) this.applyCheckpoint();
     for (const d of T.doors) {
       const door = this.doors.find((x) => x.tx === d.tx && x.ty === d.ty);
       if (!door) continue;
       if (retry) { door.locked = true; door.closing = false; door.offset = 0; door.angVel = 0; } else door.lock(); // reintento: ya selladas
     }
-    b.x = this.entry.x; b.y = this.entry.y; b.angle = -Math.PI / 2; // el compañero llega por la entrada del edificio
+    const arrive = this.ladderRoom ? this.ladderRoom.service : this.entry; // sin escalera, por la entrada del edificio
+    b.x = arrive.x; b.y = arrive.y; b.angle = -Math.PI / 2;
+    if (this.ladderRoom && !retry) { b.x = this.ladderRoom.ladder.x; b.y = this.ladderRoom.ladder.y; b.angle = 0; } // primera vez: espera bajo la boca de la escalera (se ve al cortar la cámara)
     if (retry) { // fase 2 directa (R): sin cinemática, el gas ya corre
       a.x = T.center.x; a.y = T.center.y;
       b.away = false;
@@ -3234,15 +3373,16 @@ export class Game {
     }
     // Primera vez: mini cinemática por WALKIE-TALKIE (el reloj aún no corre): el atrapado avisa a su compañero por su nombre y este responde; luego el control pasa a él.
     T.state = 'radio';
-    b.away = false;
+    b.away = !!this.ladderRoom; // con escalera: no se ve hasta que sale de ella (updateRadio); sin ella, ya está en la entrada
     a.cancelExecution();
     const nameA = (AGENTS[a.gender] || AGENTS.male).name, nameB = (AGENTS[b.gender] || AGENTS.male).name;
     this.state = 'radio';
+    const legs = !!(this.ladderRoom && T.manhole);   // la llegada del compañero se ve desde FUERA: corre por la calle, fuerza la tapa de la alcantarilla y baja; corte: sube por la escalera del cuarto de servicio
     this.radioCine = {
-      t: 0, end: 5.0, split: 2.9, cut: false,
+      t: 0, end: legs ? 8.0 : 5.0, split: 2.9, split2: legs ? 5.7 : 2.9, legs, cut: false, inside: false, sinkViz: null,
       lines: [
         { who: a, mask: this.mask, level: a.bloodLevel, bits: [...this.maskBits], lines: [`¡${nameB}, ME HAN ENCERRADO,`, 'HAY GAS!'], from: 0.35 },   // el retrato lleva la sangre (roja / verde) que el agente tiene encima
-        { who: b, mask: this.partnerMask, level: b.bloodLevel, bits: [...this.partnerBlood.maskBits], lines: [`¡AGUANTA, ${nameA}!`, '¡VOY PARA ALLÁ!'], from: 3.1 },
+        { who: b, mask: this.partnerMask, level: b.bloodLevel, bits: [...this.partnerBlood.maskBits], lines: [`¡AGUANTA, ${nameA}!`, '¡VOY PARA ALLÁ!'], from: legs ? 3.0 : 3.1 },
       ],
     };
     this.showCallout('¡TRAMPA!', COLORS.blood, 2.2, 'GAS TÓXICO · SALA SELLADA');
@@ -3250,6 +3390,23 @@ export class Game {
     this.fx.kick(0.8);
     this.sfx.play('lockdown');
     this.touch.haptic([60, 40, 60]);
+  }
+
+  // SALTO DELIBERADO de una cinemática (radio de la trampa y salida del rol): hay que MANTENER Espacio / Enter (en táctil, mantener el dedo) 1,2 s, y solo cuenta si se empieza a apretar
+  // DESPUÉS de que arrancó (el clic o el toque con el que venías peleando, o un dedo que ya estaba en los joysticks, no la salta por accidente). `C.skipHold` alimenta la barra.
+  holdSkip(C, dt) {
+    const inp = this.input, held = inp.down('Space') || inp.down('Enter') || inp.down('NumpadEnter') || (inp.touchMode && inp.touches && inp.touches.size > 0);
+    if (!held) { C.skipArm = true; C.skipHold = 0; return false; }
+    if (!C.skipArm) return false;                      // sigue apretando lo que ya apretaba al empezar
+    C.skipHold = (C.skipHold || 0) + dt;
+    return C.skipHold >= 1.2;
+  }
+
+  // Pista y barra de «mantén para saltar» (abajo, sobre la barra de cine).
+  drawSkipHint(ctx, w, y, C) {
+    const txt = this.hint('MANTÉN ESPACIO: SALTAR', 'MANTÉN EL DEDO: SALTAR'), cx = Math.round(w / 2);
+    drawText(ctx, txt, cx, y, { color: '#9d8fb8', align: 'center' });
+    if (C.skipHold > 0) { ctx.fillStyle = '#05000f'; ctx.fillRect(cx - 41, y + 10, 82, 4); ctx.fillStyle = COLORS.player; ctx.fillRect(cx - 40, y + 11, Math.round(80 * Math.min(1, C.skipHold / 1.2)), 2); }
   }
 
   // Cinemática de radio: el mundo congelado (salvo las puertas, que acaban de sellarse), cámara en el atrapado y luego en el compañero; Espacio/Enter/clic la salta.
@@ -3267,15 +3424,75 @@ export class Game {
     for (const f of this.floatingTexts) f.t -= dt;
     this.floatingTexts = this.floatingTexts.filter((f) => f.t > 0);
     for (const L of R.lines) if (before < L.from && R.t >= L.from) { this.sfx.play('empty'); this.sfx.play('pickup', 0.6); } // chasquido de radio al empezar cada línea
-    if (!R.cut && R.t >= R.split) { R.cut = true; this.camera.snap(b.x, b.y); } // corte al compañero en la entrada
+    const toLadder = () => {                                                         // corte a la escalera del cuarto de servicio: sube y asoma (misma animación que el piso 3)
+      const L = this.ladderRoom;
+      R.inside = true; R.sinkViz = null;
+      this.camera.setBounds(this.map.pixelW, this.map.pixelH);
+      b.away = false; b.x = L.ladder.x; b.y = L.ladder.y;
+      R.emerge = { t: 0, sink: 1, dust: false, rung: -1 };
+      this.sfx.play('manholeScrape', 0.5);
+      this.camera.snap(b.x, b.y);
+    };
+    if (!R.cut && R.t >= R.split) {                                                  // corte al compañero
+      R.cut = true;
+      if (R.legs) {                                                                  // 1) en la CALLE: llega corriendo a la boca de alcantarilla (misma tapa por la que saldrá un agente al elegir el rol)
+        const M = this.trap.manhole, lid = this.sewer.covers.find((c) => c.tx === M.tx && c.ty === M.ty) || null, ext = this.trap.ext;
+        if (lid) { lid.face = 0; lid.dir = this.sewer.pickDir(lid, this); lid.slide = 0; }
+        const d = lid ? lid.dir : 1, stand = { x: M.x - d * 26, y: M.y + 2 };
+        R.st = { t: 0, lid, d, M, stand, from: { x: M.x - 280, y: ext.y }, corner: { x: stand.x, y: ext.y }, heaves: -1 };
+        b.away = false; b.x = R.st.from.x; b.y = R.st.from.y; b.angle = 0;
+        this.showCallout(`${(AGENTS[b.gender] || AGENTS.male).name} LLEGA POR LA CALLE`, COLORS.player, 2.6, 'PUERTA CERRADA · ENTRA POR LA ALCANTARILLA');
+        this.camera.setBounds(this.map.pixelW, this.map.pixelH + 170);   // la calle está pegada al borde sur: se amplía el límite para poder subir el encuadre sobre la caja de radio
+        this.camera.snap(b.x, b.y + 110);
+      } else if (this.ladderRoom) toLadder();
+      else this.camera.snap(b.x, b.y);
+    }
+    if (R.st && !R.inside) {                                                         // tramo de calle: corre · fuerza la tapa (3 tirones) · pisa el hueco · baja
+      const S = R.st, u = (S.t += dt), k = (v) => v * v * (3 - 2 * v), c01 = (v) => Math.max(0, Math.min(1, v)), M = S.M;
+      if (u < 0.9) {                                                                 // corre por la acera hacia la boca
+        const q = k(u / 0.9);
+        if (q < 0.8) { const w = q / 0.8; b.x = S.from.x + (S.corner.x - S.from.x) * w; b.y = S.from.y; b.angle = 0; }
+        else { const w = (q - 0.8) / 0.2; b.x = S.corner.x; b.y = S.from.y + (S.stand.y - S.from.y) * w; b.angle = Math.PI / 2; }
+        if (Math.random() < 0.5) this.particles.dust(b.x - 8, b.y + 6, 1);
+      } else if (u < 1.9) {                                                          // tres tirones: la tapa cede a golpes
+        const t2 = (u - 0.9) / 1.0, h = Math.min(2, Math.floor(t2 * 3)), f = t2 * 3 - h;
+        b.x = S.stand.x - S.d * 4 * Math.sin(Math.min(1, f * 1.4) * Math.PI); b.y = S.stand.y; b.angle = S.d > 0 ? 0 : Math.PI;
+        if (h > S.heaves) {
+          S.heaves = h; this.sfx.play(h === 2 ? 'manholeScrape' : 'knock', 0.9); this.camera.addShake(3 + h * 2);
+          this.particles.dust(M.x - S.d * 14, M.y, 6); this.particles.sparks(M.x - S.d * 20, M.y, S.d > 0 ? Math.PI : 0, 6, 0.5);
+        }
+        if (S.lid) S.lid.slide = (h + k(Math.min(1, f * 1.6))) / 3;
+      } else if (u < 2.2) {                                                          // paso sobre el hueco
+        if (S.lid) S.lid.slide = 1;
+        const q = k((u - 1.9) / 0.3); b.x = S.stand.x + (M.x - S.stand.x) * q; b.y = S.stand.y + (M.y - 6 - S.stand.y) * q;
+      } else {                                                                       // baja: se hunde en la abertura
+        b.x = M.x; b.y = M.y - 6;
+        const sk = k(c01((u - 2.2) / 0.55)); R.sinkViz = { hole: M, sink: sk };
+        if (sk > 0.5 && !S.splash) { S.splash = true; this.sfx.play('crocDown', 0.5); this.particles.dust(M.x, M.y, 8); }
+      }
+    }
+    if (R.legs && !R.inside && R.t >= R.split2) toLadder();                         // 2) corte: dentro, sube por la escalera
+    if (R.emerge) {                                                                  // 0-0,7 s asoma · 0,7-1,1 s sale y se pone de pie en el cuarto
+      const E = R.emerge, L = this.ladderRoom, k = (v) => v * v * (3 - 2 * v);
+      E.t += dt;                                                                 // 0-0,35 s se oye subir (peldaños) · 0,35-1,45 s asoma con las manos en el borde · 1,45-1,95 s sale y se pone en pie
+      if (E.t < 0.35) E.sink = 1;
+      else if (E.t < 1.45) E.sink = 1 - k((E.t - 0.35) / 1.1);
+      else { E.sink = 0; const q = k(Math.min(1, (E.t - 1.45) / 0.5)); b.x = L.ladder.x + (L.service.x - L.ladder.x) * q; b.y = L.ladder.y + (L.service.y - L.ladder.y) * q; b.angle = -Math.PI / 2 * q; }
+      const r = Math.floor(E.t / 0.27);
+      if (r > E.rung && E.t < 1.45) { E.rung = r; this.sfx.play('knock', 0.3); this.camera.addShake(1.2); }    // un golpe seco por peldaño
+      if (E.t > 0.8 && !E.dust) { E.dust = true; this.particles.dust(L.ladder.x, L.ladder.y, 8); this.camera.addShake(3); }
+      this.particles.update(dt, this.map, (kind, pt) => this.bake(kind, pt));
+    }
     const f = R.cut ? b : a;
-    this.camera.update(dt, f.x, f.y);
-    if (skip && R.t > 0.8) R.t = R.end;
+    this.camera.update(dt, f.x, f.y + (R.st && !R.inside ? 110 : 0)); // en la calle, el encuadre queda por encima de la caja de radio
+    if (this.holdSkip(R, dt)) R.t = R.end;
     if (R.t >= R.end) this.endRadio();
   }
 
   endRadio() {
     const T = this.trap;
+    this.camera.setBounds(this.map.pixelW, this.map.pixelH);
+    if (this.ladderRoom) { const b = this.partner, L = this.ladderRoom; b.away = false; b.x = L.service.x; b.y = L.service.y; b.angle = -Math.PI / 2; } // (si se saltó la cinemática, ya está en el cuarto)
     this.radioCine = null;
     T.state = 'gas'; T.t = GAS_TIME; T.hold = 0; T.cough = 1.2; T.fade = 1;
     this.state = 'playing';
@@ -3328,7 +3545,7 @@ export class Game {
     ctx.fillStyle = '#6b6b85'; ctx.fillRect(wx + 1, wy + 6, 6, 12);
     ctx.fillStyle = '#14141e'; ctx.fillRect(wx + 5, wy, 1, 6);
     ctx.fillStyle = Math.floor(R.t * 6) % 2 ? '#ff2a4a' : '#7d3a4a'; ctx.fillRect(wx + 4, wy - 1, 3, 2);
-    if (R.t > 0.8) drawText(ctx, this.hint('ESPACIO: SALTAR', 'TOCA: SALTAR'), bx + bw - 6, by + bh - 20, { color: '#7d6f98', align: 'right' });
+    if (R.t > 0.8) { drawText(ctx, this.hint('MANTÉN ESPACIO: SALTAR', 'MANTÉN EL DEDO: SALTAR'), bx + bw - 6, by + bh - 20, { color: '#7d6f98', align: 'right' }); if (R.skipHold > 0) { ctx.fillStyle = '#05000f'; ctx.fillRect(bx + bw - 86, by + bh - 9, 80, 3); ctx.fillStyle = COLORS.player; ctx.fillRect(bx + bw - 86, by + bh - 9, Math.round(80 * Math.min(1, R.skipHold / 1.2)), 3); } }
   }
 
   updateTrap(dt) {
@@ -3370,10 +3587,16 @@ export class Game {
     if (T.t <= 0) this.trapFail();
   }
 
+  // Restaura el punto de repetición de la trampa: los abatidos siguen abatidos (mismo orden de `enemies`: el piso se recarga con la misma semilla) y los puntos son los guardados.
+  applyCheckpoint() {
+    const cp = this.trapCheckpoint;
+    for (const i of cp.dead) if (this.enemies[i]) this.enemies[i].alive = false;
+    this.score.total = cp.total; this.score.levelScore = cp.levelScore;
+  }
+
   trapSolved() {
     const T = this.trap, left = Math.max(0, Math.round(T.t));
-    T.state = 'done'; T.fade = 1; T.hold = 0;
-    this.trapRetry = false;
+    T.state = 'done'; T.fade = 1; T.hold = 0; // (trapRetry se mantiene: si te matan antes de elegir el rol final, R vuelve a la fase 2, que es el punto de repetición)
     for (const d of T.doors) { const door = this.doors.find((x) => x.tx === d.tx && x.ty === d.ty); if (door) door.unlock(); }
     this.particles.sparks(T.vent.sx, T.vent.sy - 14, -Math.PI / 2, 24, 1.4);
     this.particles.dust(T.vent.sx, T.vent.sy - 10, 14);
@@ -3923,6 +4146,7 @@ export class Game {
       if (!over) this.drawPlayerBody(ctx);
     }
     this.drawDescent(ctx); // palanca clavada bajo la tapa (animación de bajar a la alcantarilla)
+    this.drawExit(ctx);    // el agente de apoyo que sale por la alcantarilla (elección de rol, piso 10)
     this.particles.draw(ctx);
     for (const d of this.doors) d.draw(ctx);
     // Glow neón sumado antes de las paredes: el halo se derrama sobre suelo y personajes.
@@ -3963,12 +4187,15 @@ export class Game {
   // El compañero inactivo: se dibuja con su máscara y su ropa, con una marca sobre la cabeza (nombre de su máscara) para distinguirlo.
   drawPartner(ctx) {
     const t = this.partner;
-    if (!t || !t.alive || t.away || !['playing', 'cleared', 'scuffle', 'dead', 'reunion', 'radio', 'ambush', 'ending'].includes(this.state)) return;
+    if (!t || !t.alive || t.away || (this.finalExit && this.finalExit.out === t) || !['playing', 'cleared', 'scuffle', 'dead', 'reunion', 'radio', 'ambush', 'ending'].includes(this.state)) return;
     const T = this.trap, gassed = T && T.state === 'gas' && T.victim === t, k = gassed ? 1 - T.t / GAS_TIME : 0;
-    const ox = t.x;
+    const ox = t.x, RC = this.radioCine, em = RC && RC.emerge && this.ladderRoom && RC.emerge.sink > 0 ? { hole: this.ladderRoom.ladder, sink: RC.emerge.sink } : RC && RC.sinkViz && !RC.inside ? RC.sinkViz : null;
+    if (em && em.sink >= 1) return; // se ha metido del todo en la boca de la calle
     if (gassed) t.x += Math.sin(performance.now() / 70) * (0.5 + k * 2.5); // tambaleo del agente atrapado en el gas
-    t.draw(ctx);
+    if (em) this.drawThroughHole(ctx, t, em.hole, em.sink); // asoma de la escalera o se hunde en la boca de la calle (con las manos en el borde)
+    else t.draw(ctx);
     t.x = ox;
+    if (em) return; // asomando de la escalera: sin nombre ni flecha hasta que sale
     const time = performance.now() / 1000;
     const name = this.partnerMask ? this.partnerMask.name : '';
     if (this.state !== 'ending') drawText(ctx, name, t.x, t.y - t.r - 14, { color: '#9d8fb8', scale: WORLD_PX, align: 'center' });
@@ -4653,7 +4880,8 @@ export class Game {
     this.drawFinalHud(ctx, w, h);
     this.drawDetonatorHud(ctx, w, h);
     this.drawSunset(ctx, w, h);
-    if (this.state === 'reunion' || this.state === 'radio' || this.state === 'ambush' || this.state === 'ending') { ctx.fillStyle = '#05000f'; ctx.fillRect(0, 0, w, CINE_BAR); ctx.fillRect(0, h - CINE_BAR, w, CINE_BAR); } // barras de cine durante el reencuentro y la radio
+    if (this.state === 'reunion' || this.state === 'radio' || this.state === 'ambush' || this.state === 'ending' || this.state === 'exit') { ctx.fillStyle = '#05000f'; ctx.fillRect(0, 0, w, CINE_BAR); ctx.fillRect(0, h - CINE_BAR, w, CINE_BAR); }
+    if (this.state === 'exit' && this.finalExit && this.finalExit.flash > 0) { ctx.fillStyle = `rgba(5, 0, 15, ${this.finalExit.flash})`; ctx.fillRect(0, 0, w, h); } // corte seco con fundido // barras de cine durante el reencuentro y la radio
     this.drawRadioBox(ctx, w, h);
     this.drawExecutePrompt(ctx);
     this.drawTutorial(ctx);
