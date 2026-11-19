@@ -88,6 +88,50 @@ const SOUNDS = {
   creak(s, v) {
     s.tone({ type: 'sawtooth', from: 170, to: 240, dur: 0.2, gain: 0.035 * v });
   },
+  // PUERTAS. Abrir una puerta empujándola (o que un enemigo la abra): clic mecánico del pestillo y un chirrido corto de bisagra. Suave: muy por debajo de una patada.
+  doorSoft(s, v) {
+    s.noise({ dur: 0.035, gain: 0.6 * v, filter: 'bandpass', freq: 1700, q: 3 });
+    s.tone({ type: 'sawtooth', from: 135, to: 205, dur: 0.16, gain: 0.12 * v, delay: 0.02 });
+    s.noise({ dur: 0.14, gain: 0.2 * v, filter: 'bandpass', freq: 900, freqTo: 1400, q: 4, delay: 0.02 });
+  },
+  // PATADA a una puerta: golpe seco, grave y contundente (cuerpo de seno que cae, madera de ruido filtrado, astilla y resonancia de la hoja) con un eco breve de pasillo.
+  doorKick(s, v) {
+    s.tone({ type: 'sine', from: 105, to: 32, dur: 0.42, gain: 1.0 * v });
+    s.noise({ dur: 0.28, gain: 0.75 * v, filter: 'lowpass', freq: 2000, freqTo: 140, q: 0.9 });
+    s.noise({ dur: 0.06, gain: 0.45 * v, filter: 'bandpass', freq: 2600, q: 2.2, delay: 0.005 });
+    s.tone({ type: 'triangle', from: 340, to: 130, dur: 0.2, gain: 0.16 * v });
+    s.noise({ dur: 0.22, gain: 0.3 * v, filter: 'lowpass', freq: 900, freqTo: 120, delay: 0.13 });
+    s.tone({ type: 'sine', from: 70, to: 30, dur: 0.3, gain: 0.28 * v, delay: 0.13 });
+    s.noise({ dur: 0.2, gain: 0.14 * v, filter: 'lowpass', freq: 600, freqTo: 100, delay: 0.27 });
+  },
+  // Patada a una puerta bloqueada: no cede, golpe sordo.
+  doorThud(s, v) {
+    s.tone({ type: 'sine', from: 80, to: 46, dur: 0.16, gain: 0.5 * v });
+    s.noise({ dur: 0.1, gain: 0.3 * v, filter: 'lowpass', freq: 420, freqTo: 150 });
+  },
+  // VOZ RETRO por letra en los diálogos (Comms / radio del piso 10): un chirrido corto por letra. `a` = { f: tono base, vowel, rough (grave y áspera), sharp (cuadrada), radio (walkie:
+  // banda estrecha + estática, para CENTRAL) }.
+  blip(s, v, a = {}) {
+    const f = (a.f || 180) * (0.92 + Math.random() * 0.2) * (a.vowel ? 1.08 : 0.95);
+    const dur = 0.045 + Math.random() * 0.02;
+    if (a.radio) {
+      s.toneF({ type: 'square', from: f * 1.1, to: f * 0.9, dur, gain: 0.16 * v, filter: 'bandpass', freq: 1500, q: 1.8 });
+      s.noise({ dur: 0.03, gain: 0.07 * v, filter: 'bandpass', freq: 2600, q: 2 });
+    } else {
+      s.tone({ type: a.sharp ? 'square' : 'triangle', from: f * 1.12, to: f * 0.88, dur, gain: (a.sharp ? 0.08 : 0.12) * v });
+      if (a.rough) s.tone({ type: 'sawtooth', from: f * 0.5, to: f * 0.45, dur, gain: 0.05 * v });
+    }
+  },
+  // Enemigo paralizado por el miedo (aparece su «!»): balbuceo nervioso y entrecortado que acaba en un chillido corto.
+  scaredBabble(s, v) {
+    const base = 520 + Math.random() * 120;
+    for (let i = 0; i < 4; i++) {
+      const f = base * (i % 2 ? 1.35 : 0.95) * (0.95 + Math.random() * 0.1);
+      s.tone({ type: 'square', from: f, to: f * (i % 2 ? 0.8 : 1.2), dur: 0.05, gain: 0.14 * v, delay: i * 0.065 });
+    }
+    s.tone({ type: 'triangle', from: 900, to: 1500, dur: 0.12, gain: 0.1 * v, delay: 0.28 });
+    s.noise({ dur: 0.06, gain: 0.08 * v, filter: 'bandpass', freq: 2800, q: 2, delay: 0.3 });
+  },
   // Easter egg de la alcantarilla: tapa de hierro arrastrada, cocodrilo que asoma (risa grave) y chapoteo al esconderse.
   manholeScrape(s, v) {
     s.noise({ dur: 0.65, gain: 0.35 * v, filter: 'bandpass', freq: 220, freqTo: 600, q: 3 });
@@ -127,11 +171,14 @@ const SOUNDS = {
     s.tone({ type: 'sine', from: 520, to: 380, dur: 0.18, gain: 0.1 * v, delay: 0.22 });
   },
   // Explosión del edificio (final del piso 10): estruendo grave con cola de ruido y un golpe seco.
+  // Detonación pesada: sub-grave profundo (dos senos que caen), estruendo de ruido filtrado con ligera saturación y una cola larga de escombros, más el chasquido
+  // del frente de onda. `v` escala el conjunto (las explosiones se solapan: las pequeñas suenan menos para no saturar el compresor).
   blast(s, v) {
-    s.noise({ dur: 1.1, gain: 0.5 * v, filter: 'lowpass', freq: 1100, freqTo: 70, q: 1 });
-    s.tone({ type: 'sawtooth', from: 95, to: 28, dur: 0.8, gain: 0.32 * v });
-    s.noise({ dur: 0.22, gain: 0.35 * v, filter: 'highpass', freq: 1600 });
-    s.tone({ type: 'sine', from: 60, to: 30, dur: 0.5, gain: 0.5 * v });
+    s.tone({ type: 'sine', from: 68, to: 20, dur: 1.5, gain: 0.68 * v });
+    s.tone({ type: 'sine', from: 40, to: 17, dur: 2.1, gain: 0.42 * v, delay: 0.04 });
+    s.noiseSat({ dur: 2.3, gain: 0.42 * v, freq: 1500, freqTo: 55, q: 0.8 });
+    s.noise({ dur: 0.35, gain: 0.3 * v, filter: 'bandpass', freq: 2400, freqTo: 500, q: 0.7 });
+    s.noise({ dur: 1.3, gain: 0.15 * v, filter: 'lowpass', freq: 600, freqTo: 90, delay: 0.2 });
   },
   // Auto de extracción: pasa y frena (carPass), puerta (carDoor) y arranque (carAway).
   carPass(s, v) {
@@ -159,11 +206,16 @@ const SOUNDS = {
   empty(s, v) {
     s.tone({ type: 'square', from: 2400, to: 2000, dur: 0.025, gain: 0.1 * v });
   },
+  // Recoger: clic del arma al engancharse y dos notas cortas que suben.
   pickup(s, v) {
-    s.tone({ type: 'triangle', from: 520, to: 880, dur: 0.07, gain: 0.2 * v });
+    s.noise({ dur: 0.025, gain: 0.25 * v, filter: 'highpass', freq: 2500 });
+    s.tone({ type: 'triangle', from: 520, to: 880, dur: 0.07, gain: 0.22 * v });
+    s.tone({ type: 'triangle', from: 880, to: 1175, dur: 0.08, gain: 0.16 * v, delay: 0.06 });
   },
+  // Lanzar: tirón del brazo (barrido de aire que sube) y un golpe sordo al soltarla.
   throw(s, v) {
-    s.noise({ dur: 0.15, gain: 0.2 * v, filter: 'bandpass', freq: 800, freqTo: 300, q: 1.5 });
+    s.noise({ dur: 0.16, gain: 0.28 * v, filter: 'bandpass', freq: 350, freqTo: 1800, q: 1.4 });
+    s.tone({ type: 'sine', from: 160, to: 90, dur: 0.12, gain: 0.22 * v });
   },
   death(s, v) {
     s.tone({ type: 'sawtooth', from: 300 * s.voice, to: 50 * s.voice, dur: 0.7, gain: 0.25 * v });
@@ -789,10 +841,58 @@ export class Sfx {
     g.gain.setValueAtTime(gain, t);
     g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
     src.connect(f).connect(g).connect(dest || this.sfxBus);
+    src.loop = dur > 0.45; // el búfer de ruido dura 1 s: los ruidos largos (estruendos, el auto) se repiten en vez de callarse a mitad
     src.onended = () => { src.disconnect(); f.disconnect(); g.disconnect(); };
     src.startAt = t;
     src.start(t, Math.random() * 0.5);
     src.stop(t + dur + 0.02);
     return src;
+  }
+
+  // Ruido paso-bajo con saturación suave (tanh): estruendos graves con cuerpo (la explosión).
+  noiseSat({ dur, gain = 0.3, freq = 1000, freqTo = freq, q = 1, delay = 0, at, drive = 2.2 }) {
+    const c = this.ctx, t = at ?? c.currentTime + delay;
+    const src = c.createBufferSource();
+    src.buffer = this.noiseBuffer;
+    src.loop = true;
+    const f = c.createBiquadFilter();
+    f.type = 'lowpass';
+    f.Q.value = q;
+    f.frequency.setValueAtTime(freq, t);
+    f.frequency.exponentialRampToValueAtTime(Math.max(freqTo, 1), t + dur);
+    const pre = c.createGain();
+    pre.gain.value = drive;
+    const sh = c.createWaveShaper();
+    sh.curve = this.saturationCurve();
+    const g = c.createGain();
+    g.gain.setValueAtTime(gain, t);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    src.connect(f).connect(pre).connect(sh).connect(g).connect(this.sfxBus);
+    src.onended = () => { src.disconnect(); f.disconnect(); pre.disconnect(); sh.disconnect(); g.disconnect(); };
+    src.startAt = t;
+    src.start(t, Math.random() * 0.5);
+    src.stop(t + dur + 0.02);
+    return src;
+  }
+
+  // Tono pasado por un filtro (voz de walkie-talkie: banda estrecha).
+  toneF({ type = 'square', from, to = from, dur, gain = 0.3, delay = 0, filter = 'bandpass', freq = 1500, q = 1 }) {
+    const c = this.ctx, t = c.currentTime + delay;
+    const osc = c.createOscillator();
+    const f = c.createBiquadFilter();
+    const g = c.createGain();
+    osc.type = type;
+    osc.frequency.setValueAtTime(from, t);
+    osc.frequency.exponentialRampToValueAtTime(Math.max(to, 1), t + dur);
+    f.type = filter;
+    f.frequency.value = freq;
+    f.Q.value = q;
+    g.gain.setValueAtTime(gain, t);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    osc.connect(f).connect(g).connect(this.sfxBus);
+    osc.onended = () => { osc.disconnect(); f.disconnect(); g.disconnect(); };
+    osc.start(t);
+    osc.stop(t + dur + 0.02);
+    return osc;
   }
 }
