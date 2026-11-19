@@ -4120,8 +4120,7 @@ export class Game {
     const tw = measureText(text) * scale, th = CELL_H * scale;
     const pw = tw + 34, ph = th + 12;
     const x = Math.round(colX / 2 - pw / 2);
-    // En escritorio, por encima de la línea de controles de abajo (dos filas de texto).
-    const bottom = this.input.touchMode ? 10 : 10 + 2 * (CELL_H + 2);
+    const bottom = 10;
     const y = Math.round(h - this.safe.b - bottom - ph + (1 - e) * (ph + 14 + bottom));
     const pulse = 0.6 + 0.4 * Math.sin(performance.now() / 180);
     ctx.save();
@@ -4239,7 +4238,7 @@ export class Game {
 
     // Márgenes del HUD: separación fija + zona segura (muesca / esquinas redondeadas).
     const L = 6 + this.safe.l, R = w - 6 - this.safe.r, T = this.safe.t;
-    // El HUD de debajo de las barras de cine (arma, máscara, puntos, combo, ayuda de controles) aparece y desaparece con ellas (`cineK`).
+    // El HUD de debajo de las barras de cine (arma, máscara, puntos, combo) aparece y desaparece con ellas (`cineK`).
     this.fadeHud(ctx, w, h, (ctx) => {
     const def = p.def;
     let weaponText = def.name;
@@ -4277,15 +4276,6 @@ export class Game {
     if (flags) drawText(ctx, flags, R, 21 + T, { color: '#9d8fb8', align: 'right' });
 
     this.drawComboMeter(ctx, w);
-
-    // En táctil esa zona es de los joysticks: la ayuda de teclado no se muestra.
-    if (!this.input.touchMode) {
-      // Ayuda de controles con las teclas ACTUALES (se pueden cambiar en OPCIONES > CONTROLES).
-      const k = this.keys, mv = ['moveUp', 'moveLeft', 'moveDown', 'moveRight'].map((a) => k.label(a));
-      const moves = mv.every((l) => l.length === 1) ? mv.join('') : mv.join('/');
-      drawText(ctx, `${moves} MOVER · ${k.label('attack')} ATACAR · ${k.label('throw')} RECOGER/LANZAR`, 6, h - 24, { color: '#7d6f98' });
-      drawText(ctx, `${k.label('kick')} PATEAR · ${k.label('execute')} REMATAR · R REINICIAR · ESC PAUSA · M SONIDO`, 6, h - 13, { color: '#7d6f98' });
-    }
 
     });
     if (this.debug) {
@@ -4339,7 +4329,7 @@ export class Game {
       else { const ss = this.statsSummary(); this.drawStatsPanel(ctx, Math.round(cx - this.statsPanelWidth(ss) / 2), Math.min(Math.round(h / 2) - 26 + bandH + 6, h - this.safe.b - 6 - 53), ss); } // sin pasar de la zona segura inferior
       this.touch.drawScreenButtons(ctx);
     }
-    this.comms.draw(ctx, w, h); // encima de todo el HUD (ayuda de controles incluida)
+    this.comms.draw(ctx, w, h); // encima de todo el HUD
     if (!this.comms.cur) this.fadeHud(ctx, w, h, (c) => this.touch.draw(c));
     if (this.state === 'results') this.drawResults(ctx, w, h);
     this.drawToast(ctx);

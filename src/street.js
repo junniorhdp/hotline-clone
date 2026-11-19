@@ -408,7 +408,7 @@ export class StreetLife {
       drawText(ctx, `x${this.run.coins}`, cx0 + 14, cy0 - 1, { color: age < 0.6 ? '#ffffff' : COLORS.enemy, scale: age < 0.25 ? 3 : 2 });
       ctx.restore();
     }
-    // Cuadro del teléfono (abajo, centrado, sobre la línea de controles).
+    // Cuadro del teléfono (abajo, centrado).
     if (this.dialog) {
       // En táctil el cuadro va debajo del HUD y entre los botones de REINICIAR/PAUSA (izquierda) y la columna de botones de la derecha; en escritorio, abajo.
       const tm = g.input.touchMode && g.touch;
@@ -417,7 +417,7 @@ export class StreetLife {
       const lines = [];
       this.dialog.lines.forEach((l, i) => wrap(l, Math.max(14, Math.floor((aw - 16) / 6))).forEach((ln) => lines.push({ ln, head: i === 0 && this.dialog.lines.length > 1 })));
       const bw = Math.min(aw, Math.max(...lines.map((l) => measureText(l.ln))) + 16), bh = lines.length * 10 + 10;
-      const bx = tm ? Math.round(colL + (aw - bw) / 2) : Math.round(w / 2 - bw / 2), by = tm ? Math.round(36 + g.safe.t) : Math.round(h - bh - 44);
+      const bx = tm ? Math.round(colL + (aw - bw) / 2) : Math.round(w / 2 - bw / 2), by = tm ? Math.round(36 + g.safe.t) : Math.round(h - bh - 14);
       ctx.fillStyle = 'rgba(13, 2, 33, 0.94)'; ctx.fillRect(bx, by, bw, bh);
       ctx.fillStyle = COLORS.player; ctx.fillRect(bx, by, bw, 1); ctx.fillRect(bx, by + bh - 1, bw, 1);
       ctx.fillStyle = COLORS.wall; ctx.fillRect(bx, by, 1, bh); ctx.fillRect(bx + bw - 1, by, 1, bh);
