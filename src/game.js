@@ -3681,6 +3681,9 @@ export class Game {
     } else if (this.state === 'cleared' && this.trap) {
       const d = this.trap.detonator;
       if (d && this.final && this.final.role === 'limpieza' && !this.endingDone && !this.detNear) r = { x: d.x - TILE / 2, y: d.y - TILE / 2, w: TILE, h: TILE, label: 'DETONADOR', below: true };
+    } else if (this.state === 'cleared' && this.doorPending) {   // la puerta sigue bloqueada hasta que el agente llega a ella: el marcador la señala a ella, no a la moto
+      const d = this.mainDoor;
+      r = { x: d.cx - TILE / 2, y: d.cy - TILE / 2, w: TILE, h: TILE, label: 'SALIDA', below: false };
     } else if (this.state === 'cleared') {
       const b = this.bike;
       r = { x: b.park.x - b.w / 2, y: b.park.y - b.h / 2, w: b.w, h: b.h, label: 'MOTO', below: false };
