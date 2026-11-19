@@ -19,7 +19,7 @@ export function markPrologueSeen() {
 //   · Arco que se insinúa (sin explicarlo): la mafia está casi caída (trabajo de la Organización) · alguien DENTRO de la Organización vendió los nombres de los agentes ·
 //     quedan tres nombres pendientes (cabo suelto de misterio).
 export const PROLOGUE_LINES = {
-  intro: [{ who: 'central', text: 'La mafia cayó casi entera esta semana. {PARTNER} se quedó dentro.' }],
+  intro: [{ who: 'central', text: 'La mafia cayó casi entera esta semana. {PARTNER} se quedó dentro: ábrete paso hasta él.' }],
   enter: [{ who: 'central', text: 'Bien, puerta cerrada. Que no salga ninguno.' }],
   kill: [{ who: 'central', text: 'Esos no llevan los colores de la familia.' }],
   free: [

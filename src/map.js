@@ -1,7 +1,7 @@
 import { segmentIntersectT, seededRandom } from './utils.js';
 
 export const TILE = 32;
-const CORNER_TOLERANCE = 8; // px que se "empuja" al jugador para entrar en huecos
+const CORNER_TOLERANCE = 12; // px que se "empuja" al jugador para entrar en huecos (con 8, en una puerta de 32 u solo se entraba a ≤ 14 u del centro; ahora ≈ 18)
 const RAY_STEP = 4;
 const PATROL_MAX_TILES = 7;
 

@@ -15,9 +15,9 @@ import { Sewer } from './sewer.js';
 import { BikeExit, EXIT_EXTRA } from './exits.js';
 import { StreetLife, newStreetRun } from './street.js';
 import { Hostages } from './hostages.js';
-import { PROLOGUE_DEF, PROLOGUE_LINES, markPrologueSeen } from './prologue.js';
-import { Comms } from './comms.js';
-const SKIP_HOLD = 1.5; // s que hay que mantener P / el botón táctil para saltar el prólogo
+import { PROLOGUE_DEF } from './prologue.js';
+import { PrologueFlow } from './prologue-flow.js';
+import { Comms, drawTalkingMask } from './comms.js';
 import { weaponCategory } from './weapons.js';
 import { buildOptionsMenu, buildPauseMenu } from './options-menu.js';
 import { Player, bloodLevelFor, FINISH_RANGE } from './player.js';
@@ -243,9 +243,8 @@ export class Game {
     this.showRecords = false;
     this.levelIndex = 0;
     this.comms = new Comms(this); // líneas cortas de lore no modales (prólogo)
-    this.skipHold = 0; this.skipAsk = 0; this.prologueT = 0;
+    this.flow = new PrologueFlow(this); // lógica y estado del prólogo / tutorial (instrucciones, salto, fin): prologue-flow.js
     this.cineK = 0; // 0..1: cuánto están puestas las barras de cine de llegada / fuga (anima las barras y el fundido del HUD)
-    this.tut = { done: new Set(), seen: new Set(), cur: null }; this.tutFocus = null; // instrucciones contextuales del prólogo (ver updateTutorial)
     this.prologue = false; // tutorial aparte del piso 1 (ver prologue.js): sin resultados, récords ni estadísticas de campaña
     this.debug = false;
     this.acc = 0;
@@ -482,12 +481,7 @@ export class Game {
 
   updateMaskSelect() {
     const input = this.input, n = MASKS.length;
-    if (this.prologue) {   // saltar exige MANTENER P (o el botón táctil) SKIP_HOLD s: así no se salta por accidente
-      if (input.wasPressed('KeyP')) this.showToast(this.hint('MANTÉN P PARA SALTAR EL PRÓLOGO', 'MANTÉN PULSADO PARA SALTAR'), 2);
-      const held = input.down('KeyP') || this.skipTouchHeld();
-      this.skipHold = held ? this.skipHold + 1 / 60 : Math.max(0, this.skipHold - 2 / 60);
-      if (this.skipHold >= SKIP_HOLD) { this.skipHold = 0; this.skipPrologue(); return; }
-    }
+    if (this.prologue && this.flow.updateMaskSkip(input)) return; // saltar exige MANTENER P (o el botón táctil): ver PrologueFlow
     const prev = this.maskIndex;
     if (input.wasPressed('ArrowLeft') || input.wasPressed('KeyA')) this.maskIndex = (this.maskIndex + n - 1) % n;
     if (input.wasPressed('ArrowRight') || input.wasPressed('KeyD')) this.maskIndex = (this.maskIndex + 1) % n;
@@ -931,113 +925,18 @@ export class Game {
   // ¿Animación del agente al cerrar / abrir la puerta principal? (opción ANIMACIÓN DE LA PUERTA)
   get doorAnimOn() { return this.settings.get('doorAnim') !== false; }
 
-  // --- Prólogo: líneas de lore (comms.js) y salto -----------------------------------------------------
-  agentInfo(gender) { return { name: AGENTS[gender].name, color: AGENTS[gender].color }; }
-
-  // Las líneas del prólogo (una sola vez por partida: R no las repite). `id` = momento.
-  prologueLine(id) {
-    const lines = PROLOGUE_LINES[id];
-    if (!lines) return;
-    const pg = this.gender === 'male' ? 'female' : 'male', me = this.agentInfo(this.gender).name, pa = this.agentInfo(pg);
-    const ph = this.hostages.list.find((x) => x.partner), mask = ph ? MASKS.find((m) => m.id === ph.maskId) : null;
-    // El retrato lleva la sangre que el compañero tiene encima (herido: nivel 2, roja; sin sangre si está desactivada), igual que su sprite.
-    const partner = { name: pa.name, color: pa.color, portrait: mask ? { mask, gender: pg, level: this.goreOn ? 2 : 0, bits: [] } : null };
-    const fill = (t) => t.replace(/\{ME\}/g, me).replace(/\{PARTNER\}/g, pa.name);
-    this.comms.say(id, lines.map((l) => ({ speaker: l.who === 'partner' ? partner : 'central', text: fill(l.text) })), { urgent: id === 'free' }); // el compañero habla justo al liberarlo
-  }
-
-  updatePrologue(dt) {
-    const input = this.input, c = this.comms;
-    if (this.state === 'playing') this.prologueT += dt;
-    if (this.state === 'playing' && !this.inside && this.prologueT > 1.5) this.prologueLine('intro');
-    if (this.state === 'playing' && this.inside && this.time > 2.5) this.prologueLine('enter');
-    if (this.state === 'playing' && this.inside && this.stats.kills >= 1 && this.time > 4) this.prologueLine('kill');
-    if (this.state === 'cleared' && this.goalAge > 0.3) this.prologueLine('clear');
-    c.update(dt);
-    this.updateTutorial(dt);
-  }
-
-  // INSTRUCCIONES CONTEXTUALES del prólogo (no modales): un recuadro sobre el objetivo y, la primera vez de cada una, un desplazamiento suave de cámara hacia él.
-  // En orden, y cada una solo mientras tenga sentido: golpear al enemigo paralizado (sin arma) → rematarlo → recoger un arma → usarla (y lanzarla) con el siguiente.
-  // Se dan por aprendidas según lo que haces (una baja, recoger un arma...), así que no insisten ni salen si ya lo hiciste (`tut.done` persiste con R).
-  updateTutorial(dt) {
-    const p = this.player, T = this.tut, k = this.keys;
-    if (this.tutFocus && (this.tutFocus.t += dt) > this.tutFocus.life) this.tutFocus = null;
-    T.cur = null;
-    if (this.state !== 'playing' || !p.alive || p.exec || p.vomit || this.panel || this.callout) return; // (no mientras hay un cartel grande en pantalla)
-    const kills = this.stats.kills, armed = !!p.weapon;
-    if (armed) { T.done.add('punch'); T.done.add('pickup'); }
-    if (kills >= 1) { T.done.add('punch'); T.done.add('execute'); }
-    if (kills >= 2) T.done.add('weapon');
-    const near = (list, r) => {
-      let best = null, bd = r;
-      for (const o of list) {
-        const d = Math.hypot(o.x - p.x, o.y - p.y);
-        if (d < bd && lineOfSight(this.map, p.x, p.y, o.x, o.y)) { best = o; bd = d; }
-      }
-      return best;
-    };
-    const live = this.enemies.filter((e) => e.alive);
-    let id = null, t = null, l1 = '', l2 = '', l3 = '';
-    if (!T.done.has('punch') && (t = near(live.filter((e) => e.state === 'frozen'), 150))) {
-      id = 'punch'; l1 = '¡ESTÁ PARALIZADO!'; l2 = this.hint(`${k.label('attack')} · GOLPEAR`, 'ATACAR · GOLPEAR');
-    } else if (!T.done.has('execute') && (t = near(live.filter((e) => e.state === 'down'), 170))) {
-      id = 'execute'; l1 = '¡REMÁTALO YA!'; l2 = this.hint(`${k.label('execute')} · ${k.label('attack')}`, 'REMATAR');
-    } else if (!T.done.has('pickup') && (t = near(this.pickups.filter((q) => q.alive && !q.flying), 90))) {
-      id = 'pickup'; l1 = 'ARMA EN EL SUELO'; l2 = this.hint(`${k.label('throw')} · RECOGER`, 'LANZAR · RECOGER');
-    } else if (!T.done.has('weapon') && armed && (t = near(live.filter((e) => e.state === 'frozen'), 170))) {
-      id = 'weapon'; l1 = 'USA TU ARMA'; l2 = this.hint(`${k.label('attack')}: GOLPEAR`, 'ATACAR: GOLPEAR'); l3 = this.hint(`${k.label('throw')}: LANZAR (DERRIBA)`, 'LANZAR: DERRIBA');
-    }
-    if (!id) return;
-    T.cur = { id, x: t.x, y: t.y, lines: l3 ? [l1, l2, l3] : [l1, l2] };
-    if (!T.seen.has(id)) { T.seen.add(id); this.tutFocus = { x: t.x, y: t.y, t: 0, life: 1.8 }; }
-  }
-
-  // El recuadro de la instrucción actual, sobre su objetivo (en la escena, no en el mundo: texto nítido). Parpadea el borde para llamar la atención sin tapar la acción.
-  drawTutorial(ctx) {
-    const c = this.tut.cur;
-    if (!c || this.state !== 'playing') return;
-    const s = this.camera.worldToScreen(c.x, c.y - 30);
-    const bw = Math.max(...c.lines.map((l) => measureText(l))) + 12, bh = 4 + c.lines.length * 10;
-    const p = this.keepOnScreen(s.x, s.y - bh, bw, bh, 6);
-    const bx = Math.round(p.x - bw / 2), by = Math.round(p.y);
-    ctx.fillStyle = 'rgba(13, 2, 33, 0.92)'; ctx.fillRect(bx, by, bw, bh);
-    ctx.fillStyle = Math.floor(performance.now() / 350) % 2 ? '#05d9e8' : '#ffbe0b';
-    ctx.fillRect(bx, by, bw, 1); ctx.fillRect(bx, by + bh - 1, bw, 1); ctx.fillRect(bx, by, 1, bh); ctx.fillRect(bx + bw - 1, by, 1, bh);
-    c.lines.forEach((l, i) => drawText(ctx, l, bx + bw / 2, by + 4 + i * 10, { color: i ? COLORS.text : '#ffbe0b', align: 'center', shadow: null }));
-  }
-
-  // ¿Hay un dedo sobre el botón táctil de saltar? (el salto del prólogo exige mantenerlo)
-  skipTouchHeld() {
-    const b = this.screenButtons().find((x) => x.id === 'skip');
-    if (!b) return false;
-    for (const t of this.input.touches.values()) {
-      if (t.ended) continue;
-      const p = this.toInternal(t.x, t.y);
-      if (p.x >= b.x && p.x <= b.x + b.w && p.y >= b.y && p.y <= b.y + b.h) return true;
-    }
-    return false;
-  }
-
-  // Fin del prólogo (huida en moto o salto): queda marcado como visto y empieza la campaña (puntuación a 0, selección de máscara del piso 1).
-  endPrologue() {
-    markPrologueSeen();
-    this.startRunAt(0, false);
-  }
-
-  // Saltar el prólogo (P en la selección de máscara, su botón táctil o la pausa): mismo destino que terminarlo.
-  skipPrologue() {
-    if (!this.prologue) return;
-    markPrologueSeen();
-    this.sfx.play('pickup');
-    this.transition(() => this.startRunAt(0, false));
-  }
+  // --- Prólogo: delegadores finos (la lógica y el estado viven en PrologueFlow, `game.flow`) ---------------------------
+  prologueLine(id) { this.flow.line(id); }          // línea de lore por momento (la usa Hostages al liberar al compañero)
+  updatePrologue(dt) { this.flow.update(dt); }
+  drawTutorial(ctx) { this.flow.drawTutorial(ctx); }
+  endPrologue() { this.flow.end(); }                // fin del prólogo (huida en moto): campaña
+  skipPrologue() { this.flow.skip(); }              // saltarlo (P mantenida, botón táctil o pausa)
 
   // Partida nueva empezando en el piso `index` (desde el menú o el selector de pisos).
   startRunAt(index, prologue = false) {
     this.runId = newRunId();
     this.prologue = prologue;
-    this.comms.forget(); this.skipHold = 0; this.tut.done.clear(); this.tut.seen.clear();
+    this.comms.forget(); this.flow.forget();
     this.buff = null;
     this.streetRun = newStreetRun();
     this.civilianBase = { hurt: 0, killed: 0, gifts: 0 }; // el comportamiento con los civiles se acumula durante toda la partida
@@ -1112,12 +1011,7 @@ export class Game {
     // en una partida nueva cambian.
     this.sfx.stopMoto(0.05); // R, piso nuevo...: si la moto sonaba, se corta limpia
     const level = loadLevel(this.levelIndex, seededRandom(hashString(`${this.runId}:${this.levelIndex}`)), this.prologue ? PROLOGUE_DEF : null);
-    if (this.prologue) for (const hd of level.hostages) if (hd.partner) hd.look = { ...hd.look, gender: this.gender === 'male' ? 'f' : 'm', hair: this.gender === 'male' ? '#7a2fb8' : '#140a08' }; // (aspecto antiguo, ya no se dibuja)
-    if (this.prologue) for (const hd of level.hostages) if (hd.partner) {   // el compañero es el otro agente; la otra máscara (NEON, o BRUTE si llevas NEON) se la cedes al liberarlo
-      hd.agent = this.gender === 'male' ? 'female' : 'male';
-      const spare = MASKS.find((m) => m.id === (this.mask.id === 'neon' ? 'oso' : 'neon'));
-      hd.maskId = spare.id; hd.maskName = spare.name;
-    }
+    if (this.prologue) this.flow.dressPartner(level); // el compañero es el otro agente (la otra máscara se la cedes al liberarlo)
     this.levelName = level.name;
     this.dark = level.dark;       // piso en penumbra (ver map.dark y renderDark)
     this.strobe = level.strobe;   // el club: luces estroboscópicas (opción `strobeEnabled`)
@@ -1168,7 +1062,7 @@ export class Game {
     this.deathMsg = null; // mensaje propio de la pantalla de muerte (compañero caído)
     this.leaveAsk = 0;   // rehenes sin rescatar de los que se avisa junto a la moto (0 = nada que avisar)
     this.cams = new SecurityCams(this, level.cameras || []); // cámaras de seguridad y operador (piso 8)
-    this.comms.clear(); this.prologueT = 0; this.tut.cur = null; this.tutFocus = null; this.doorPending = false;
+    this.comms.clear(); this.flow.resetAttempt(); this.doorPending = false;
     this.hostages = new Hostages(this, level.hostages || []); // rehenes atados a sillas dentro del edificio (ver hostages.js)
     this.pools = [];
     // masks (selección) | arriving (llega en moto) | playing (fuera o dentro: ver `inside`) | dead |
@@ -1407,11 +1301,7 @@ export class Game {
       ty += ly;
     }
     if (this.asphyx && this.trap && this.trap.victim) { tx = this.trap.victim.x; ty = this.trap.victim.y; } // la cámara viaja al agente que se asfixia
-    if (this.tutFocus) {   // instrucción del prólogo: la cámara se desplaza suave hacia el punto medio entre tú y el objetivo (sin zoom: el pixel art solo escala en enteros)
-      const F = this.tutFocus, env = Math.min(1, F.t / 0.45, (F.life - F.t) / 0.6);
-      const k = 0.5 * Math.max(0, env) * Math.max(0, env) * (3 - 2 * Math.max(0, env));
-      tx += (F.x - tx) * k; ty += (F.y - ty) * k;
-    }
+    if (this.prologue) [tx, ty] = this.flow.cameraFocus(tx, ty); // instrucción nueva: la cámara se desplaza suave hacia el objetivo
     this.camera.update(dt, tx, ty);
   }
 
@@ -1528,6 +1418,7 @@ export class Game {
   // El forcejeo congela el mundo, hace zoom ×2 y baja la música (ver abajo); hay que aporrear ATACAR para empujar la
   // barra y la resistencia del enemigo sube con cada forcejeo del piso (+22 %, tope ×2,2).
   enemyStrike(e, angle) {
+    if (this.player.doorAnim) return; // intocable mientras cierra / abre la puerta
     const p = this.player;
     if (this.state !== 'playing' || !p.alive) return;
     if (this.scuffleGrace > 0) { e.attackCd = 0.4; return; } // acaba de forcejear: ese golpe no cuenta
@@ -3010,7 +2901,11 @@ export class Game {
     ctx.fillStyle = 'rgba(5, 0, 15, 0.92)'; ctx.fillRect(bx, by, bw, bh);
     ctx.fillStyle = ag.color;
     ctx.fillRect(bx, by, bw, 1); ctx.fillRect(bx, by + bh - 1, bw, 1); ctx.fillRect(bx, by, 1, bh); ctx.fillRect(bx + bw - 1, by, 1, bh);
-    ctx.drawImage(bloodyMaskPortrait(cur.mask, this.goreOn ? cur.level || 0 : 0, cur.who.gender, cur.bits || []), bx + 5, by + 6, 32, 32);
+    // El retrato mueve la boca al hablar igual que en los diálogos del prólogo (con la sangre roja / verde del agente): ver drawTalkingMask.
+    const full = cur.lines.join(' '), typedN = Math.min(full.length, Math.max(0, Math.floor((R.t - cur.from) * 30)));
+    cur.text = full;
+    cur.portrait = { mask: cur.mask, gender: cur.who.gender, level: this.goreOn ? cur.level || 0 : 0, bits: cur.bits || [] };
+    drawTalkingMask(ctx, cur, bx + 5, by + 6, typedN, typedN < full.length);
     ctx.fillStyle = ag.color; ctx.fillRect(bx + 4, by + 5, 34, 1); ctx.fillRect(bx + 4, by + 38, 34, 1); ctx.fillRect(bx + 4, by + 5, 1, 34); ctx.fillRect(bx + 37, by + 5, 1, 34);
     drawText(ctx, `${ag.name} · RADIO`, bx + 44, by + 5, { color: ag.color });
     // texto tecleado (30 caracteres por segundo)
@@ -3200,7 +3095,7 @@ export class Game {
   }
 
   killPlayer(angle) {
-    if (this.state !== 'playing' || !this.player.alive) return;
+    if (this.state !== 'playing' || !this.player.alive || this.player.doorAnim) return; // (el agente es intocable mientras cierra / abre la puerta: ~0,8 s sin control; ver Player.startDoorAnim)
     const p = this.player;
     p.alive = false;
     p.cancelExecution(); // si lo matan a mitad de un remate, el derribado no se queda congelado
@@ -4133,15 +4028,7 @@ export class Game {
       drawText(ctx, this.hint('FLECHAS: MÁSCARA · Q/E: AGENTE · ESPACIO / ENTER: EMPEZAR', 'TOCA UNA MÁSCARA: ELEGIR · OTRA VEZ: EMPEZAR'),
         cx, h - 12 - this.safe.b, { color: COLORS.player, align: 'center' });
     }
-    if (this.prologue && !this.input.touchMode) drawText(ctx, 'MANTÉN P: SALTAR PRÓLOGO', cx, h - 23 - this.safe.b, { color: COLORS.enemy, align: 'center' });
-    if (this.prologue && this.skipHold > 0) {   // progreso del salto mantenido
-      const bw = 150, bx = cx - bw / 2, by = Math.round(h * 0.5);
-      ctx.fillStyle = 'rgba(13, 2, 33, 0.92)'; ctx.fillRect(bx - 4, by - 14, bw + 8, 30);
-      ctx.fillStyle = COLORS.enemy; ctx.fillRect(bx - 4, by - 14, bw + 8, 1); ctx.fillRect(bx - 4, by + 15, bw + 8, 1);
-      drawText(ctx, 'SALTANDO PRÓLOGO...', cx, by - 9, { color: COLORS.enemy, align: 'center', shadow: null });
-      ctx.fillStyle = '#3a2a5a'; ctx.fillRect(bx, by + 3, bw, 7);
-      ctx.fillStyle = COLORS.enemy; ctx.fillRect(bx, by + 3, Math.round(bw * Math.min(1, this.skipHold / SKIP_HOLD)), 7);
-    }
+    if (this.prologue) this.flow.drawMaskSelectExtras(ctx, w, h, cx);
   }
 
   // Escala de texto más grande (hasta `preferred`) con la que el texto cabe en `maxW`.
@@ -4233,8 +4120,7 @@ export class Game {
     const tw = measureText(text) * scale, th = CELL_H * scale;
     const pw = tw + 34, ph = th + 12;
     const x = Math.round(colX / 2 - pw / 2);
-    // En escritorio, por encima de la línea de controles de abajo (dos filas de texto).
-    const bottom = this.input.touchMode ? 10 : 10 + 2 * (CELL_H + 2);
+    const bottom = 10;
     const y = Math.round(h - this.safe.b - bottom - ph + (1 - e) * (ph + 14 + bottom));
     const pulse = 0.6 + 0.4 * Math.sin(performance.now() / 180);
     ctx.save();
@@ -4352,7 +4238,7 @@ export class Game {
 
     // Márgenes del HUD: separación fija + zona segura (muesca / esquinas redondeadas).
     const L = 6 + this.safe.l, R = w - 6 - this.safe.r, T = this.safe.t;
-    // El HUD de debajo de las barras de cine (arma, máscara, puntos, combo, ayuda de controles) aparece y desaparece con ellas (`cineK`).
+    // El HUD de debajo de las barras de cine (arma, máscara, puntos, combo) aparece y desaparece con ellas (`cineK`).
     this.fadeHud(ctx, w, h, (ctx) => {
     const def = p.def;
     let weaponText = def.name;
@@ -4390,15 +4276,6 @@ export class Game {
     if (flags) drawText(ctx, flags, R, 21 + T, { color: '#9d8fb8', align: 'right' });
 
     this.drawComboMeter(ctx, w);
-
-    // En táctil esa zona es de los joysticks: la ayuda de teclado no se muestra.
-    if (!this.input.touchMode) {
-      // Ayuda de controles con las teclas ACTUALES (se pueden cambiar en OPCIONES > CONTROLES).
-      const k = this.keys, mv = ['moveUp', 'moveLeft', 'moveDown', 'moveRight'].map((a) => k.label(a));
-      const moves = mv.every((l) => l.length === 1) ? mv.join('') : mv.join('/');
-      drawText(ctx, `${moves} MOVER · ${k.label('attack')} ATACAR · ${k.label('throw')} RECOGER/LANZAR`, 6, h - 24, { color: '#7d6f98' });
-      drawText(ctx, `${k.label('kick')} PATEAR · ${k.label('execute')} REMATAR · R REINICIAR · ESC PAUSA · M SONIDO`, 6, h - 13, { color: '#7d6f98' });
-    }
 
     });
     if (this.debug) {
@@ -4452,7 +4329,7 @@ export class Game {
       else { const ss = this.statsSummary(); this.drawStatsPanel(ctx, Math.round(cx - this.statsPanelWidth(ss) / 2), Math.min(Math.round(h / 2) - 26 + bandH + 6, h - this.safe.b - 6 - 53), ss); } // sin pasar de la zona segura inferior
       this.touch.drawScreenButtons(ctx);
     }
-    this.comms.draw(ctx, w, h); // encima de todo el HUD (ayuda de controles incluida)
+    this.comms.draw(ctx, w, h); // encima de todo el HUD
     if (!this.comms.cur) this.fadeHud(ctx, w, h, (c) => this.touch.draw(c));
     if (this.state === 'results') this.drawResults(ctx, w, h);
     this.drawToast(ctx);

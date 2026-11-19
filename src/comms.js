@@ -68,9 +68,7 @@ export class Comms {
     const c = this.cur;
     if (!c) return;
     c.t += dt; c.age += dt;
-    const done = c.t * TYPE_CPS >= c.text.length;
-    if (!click || c.age < GUARD) return;
-    if (!done) { c.t = c.text.length / TYPE_CPS + 0.001; return; }   // clic con el texto a medias: lo completa
+    if (!click || c.age < GUARD) return;   // un clic / Espacio / toque pasa DIRECTAMENTE a la siguiente línea (o cierra), aunque el texto no haya acabado de teclearse
     if (this.queue.length) this.begin(this.queue.shift());
     else { this.cur = null; this.gap = GAP; this.game.player.cooldown = Math.max(this.game.player.cooldown, 0.3); }
   }
@@ -120,36 +118,15 @@ export class Comms {
     ctx.fillStyle = '#14141e'; ctx.fillRect(wx + 5, wy, 1, 6);
     ctx.fillStyle = Math.floor(c.t * (talking ? 10 : 4)) % 2 ? '#ff2a4a' : '#7d3a4a'; ctx.fillRect(wx + 4, wy - 1, 3, 2);
     if (c.age > 0.8) {
-      const txt = talking ? g.hint('CLIC: COMPLETAR', 'TOCA: COMPLETAR') : g.hint('CLIC / ESPACIO ▼', 'TOCA ▼');
-      if (talking || Math.floor(c.age * 2.5) % 2) drawText(ctx, txt.replace('▼', 'v'), bx + bw - 6, by + bh - 11, { color: '#7d6f98', align: 'right' });
+      const txt = g.hint('CLIC / ESPACIO ▼', 'TOCA ▼');
+      if (Math.floor(c.age * 2.5) % 2) drawText(ctx, txt.replace('▼', 'v'), bx + bw - 6, by + bh - 11, { color: '#7d6f98', align: 'right' });
     }
   }
 
   // Máscara que habla: se dibuja entera y, si tiene `jaw` (región de la cuadrícula 12×12 que baja: ver masks.js), esa región se borra y se vuelve a pintar desplazada hacia abajo
   // según la letra que se está tecleando (vocal: abierta; m, b, p y pausas: cerrada; el resto: media), con el hueco oscuro detrás (la boca). Cabecea 1 px en las vocales.
   // Al acabar de teclear cierra la boca. Cada máscara anima solo SU boca (el pico del gallo y del búho, el hocico y el mentón del oso...), no la nariz.
-  drawMaskTalking(ctx, c, x, y, typed, talking) {
-    const ch = talking ? c.text[typed - 1] || ' ' : ' ';
-    const target = !talking ? 0 : VOWELS.includes(ch) ? 2 : /[mbpMBP .,:;¡!¿?]/.test(ch) ? 0 : 1;
-    c.open += (target - c.open) * 0.5;
-    const bob = talking && c.open > 1.2 ? -1 : 0;
-    const mask = c.portrait.mask, cv = bloodyMaskPortrait(mask, c.portrait.level || 0, c.portrait.gender, c.portrait.bits || []); // con la sangre (roja / verde) que lleva encima
-    const k = 32 / cv.width, jaw = Math.round(c.open), J = mask.jaw;
-    ctx.save();
-    ctx.beginPath(); ctx.rect(x, y, 32, 32); ctx.clip();
-    ctx.fillStyle = '#14091f'; ctx.fillRect(x, y, 32, 32);
-    ctx.drawImage(cv, x, y + bob, 32, 32);
-    if (J && jaw > 0) {
-      const PAD = 2, cell = 2;                                        // el retrato tiene 2 px de margen y cada celda del 12×12 mide 2 px
-      const sx = PAD + J.x0 * cell, sw = (J.x1 - J.x0) * cell, sy = PAD + J.y0 * cell, sh = ((J.y1 ?? 12) - J.y0) * cell;
-      const dx = x + sx * k, dy = y + bob + sy * k, dw = sw * k, dh = sh * k;
-      ctx.fillStyle = '#14091f'; ctx.fillRect(dx, dy, dw, dh);          // se borra la región original
-      const inset = (J.x1 - J.x0) > 6 ? 3 * cell * k : 0;
-      ctx.fillStyle = '#05000f'; ctx.fillRect(dx + inset, dy, dw - inset * 2, jaw);   // la boca abierta se ve oscura
-      ctx.drawImage(cv, sx, sy, sw, sh, dx, dy + jaw, dw, dh);          // región desplazada
-    }
-    ctx.restore();
-  }
+  drawMaskTalking(ctx, c, x, y, typed, talking) { drawTalkingMask(ctx, c, x, y, typed, talking); }
 
   // CENTRAL: un walkie grande con ondas de señal que salen de la antena y un ecualizador en la rejilla mientras habla.
   drawRadioTalking(ctx, c, x, y, talking) {
@@ -176,4 +153,29 @@ export class Comms {
       ctx.globalAlpha = 1;
     }
   }
+}
+
+// Retrato de una máscara que habla (compartido con la caja de radio del piso 10): `c = { text, open, portrait: { mask, gender, level, bits } }`; se dibuja en (x, y) a 32×32.
+export function drawTalkingMask(ctx, c, x, y, typed, talking) {
+  c.open = c.open || 0;
+  const ch = talking ? c.text[typed - 1] || ' ' : ' ';
+  const target = !talking ? 0 : VOWELS.includes(ch) ? 2 : /[mbpMBP .,:;¡!¿?]/.test(ch) ? 0 : 1;
+  c.open += (target - c.open) * 0.5;
+  const bob = talking && c.open > 1.2 ? -1 : 0;
+  const mask = c.portrait.mask, cv = bloodyMaskPortrait(mask, c.portrait.level || 0, c.portrait.gender, c.portrait.bits || []); // con la sangre (roja / verde) que lleva encima
+  const k = 32 / cv.width, jaw = Math.round(c.open), J = mask.jaw;
+  ctx.save();
+  ctx.beginPath(); ctx.rect(x, y, 32, 32); ctx.clip();
+  ctx.fillStyle = '#14091f'; ctx.fillRect(x, y, 32, 32);
+  ctx.drawImage(cv, x, y + bob, 32, 32);
+  if (J && jaw > 0) {
+    const PAD = 2, cell = 2;                                        // el retrato tiene 2 px de margen y cada celda del 12×12 mide 2 px
+    const sx = PAD + J.x0 * cell, sw = (J.x1 - J.x0) * cell, sy = PAD + J.y0 * cell, sh = ((J.y1 ?? 12) - J.y0) * cell;
+    const dx = x + sx * k, dy = y + bob + sy * k, dw = sw * k, dh = sh * k;
+    ctx.fillStyle = '#14091f'; ctx.fillRect(dx, dy, dw, dh);          // se borra la región original
+    const inset = (J.x1 - J.x0) > 6 ? 3 * cell * k : 0;
+    ctx.fillStyle = '#05000f'; ctx.fillRect(dx + inset, dy, dw - inset * 2, jaw);   // la boca abierta se ve oscura
+    ctx.drawImage(cv, sx, sy, sw, sh, dx, dy + jaw, dw, dh);          // región desplazada
+  }
+  ctx.restore();
 }
