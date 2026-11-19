@@ -313,7 +313,7 @@ export const LEVELS = [
       ['trash', 30, 10, 1, 1], ['sofa', 1, 1, 3, 1], ['tv', 7, 1, 1, 1], ['sofa', 1, 8, 3, 1],
       ['cardTable', 5, 8, 2, 2], ['sofa', 1, 15, 3, 1], ['tv', 7, 15, 1, 1], ['sofa', 44, 1, 3, 1],
       ['tv', 40, 1, 1, 1], ['sofa', 44, 8, 3, 1], ['cardTable', 40, 8, 2, 2], ['sofa', 44, 15, 3, 1],
-      ['tv', 40, 15, 1, 1], ['barrel', 9, 5, 1, 1], ['crates', 38, 14, 1, 1], ['debris', 9, 15, 1, 1],
+      ['tv', 40, 15, 1, 1], ['barrel', 7, 6, 1, 1], ['crates', 41, 13, 1, 1], ['debris', 9, 15, 1, 1],
       ['stain', 37, 4, 1, 1],
       // Exterior: vestíbulo, calle y la moto (aparcada en la plaza, 2×1 casillas).
       ['counter', 12, 21, 4, 1], ['sofa', 27, 22, 3, 1], ['cabinet', 32, 21, 1, 1],
