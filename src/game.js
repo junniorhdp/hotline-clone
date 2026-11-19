@@ -535,8 +535,12 @@ export class Game {
     if (this.state === 'masks') {
       const back = { ...sized('back', 'VOLVER', 'Escape'), x: 6 + s.l, y: 6 + s.t };
       const records = sized('records', 'RÉCORDS', 'KeyT');
+      // En el prólogo el botón de saltar ocupa el hueco de RÉCORDS (arriba a la derecha): en otro sitio pisaba las tarjetas de máscara.
+      if (this.prologue) {
+        const skip = sized('skip', w < 360 ? 'SALTAR' : 'SALTAR (MANTÉN)', 'KeyP', COLORS.enemy);
+        return [back, { ...skip, x: w - 6 - s.r - skip.w, y: 6 + s.t }];
+      }
       const list = [back, { ...records, x: w - 6 - s.r - records.w, y: 6 + s.t }];
-      if (this.prologue) list.push({ ...sized('skip', w < 360 ? 'SALTAR' : 'SALTAR (MANTÉN)', 'KeyP', COLORS.enemy), x: 6 + s.l, y: 6 + s.t + back.h + 4 });
       return list;
     }
     if (this.state === 'dead') {
