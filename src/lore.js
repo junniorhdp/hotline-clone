@@ -1,7 +1,7 @@
 import { drawText, measureText } from './pixelfont.js';
 import { talkBlips, voiceFor } from './comms.js';
 import { AGENTS } from './portraits.js';
-import { TILE, OUTSKIRT, isSolidAt } from './map.js';
+import { TILE, OUTSKIRT, isSolidAt, lineOfSight } from './map.js';
 import { pixelRect } from './sprites.js';
 import { hostileCivCount, friendlyCivCount } from './street.js';
 import { drawHooks, drawMonitors, drawServiceRoom, drawKarmaStreet, drawBirdCoin, roomGeom, drawSheet, drawStencil, drawLedger, drawPostit, drawWaitingChairs, drawPillarMarks, AMBER } from './lore-art.js';
@@ -317,6 +317,8 @@ export class Lore {
     if (this.smokeT <= 0) { this.smokeT = 0.3; g.particles.smoke(P.x + (Math.random() - 0.5) * 8, P.y - 6); } // la ceniza humea
     if (!P.bodies) return;
     const d = Math.hypot(p.x - P.x, p.y - P.y);
+    // Solo cuenta si ya la VE: tiene que haber salido del edificio y tener la pila a la vista (sin la pared de por medio); desde dentro, junto a la puerta, no pasa nada.
+    if (g.inBuilding(p) || (g.mainDoor && p.y < g.mainDoor.cy + 6) || !lineOfSight(g.map, p.x, p.y, P.x, P.y)) return; // (ni siquiera en el hueco de la puerta: apenas sale)
     if (!P.clicked && d < 128 && !this.hushed()) { P.clicked = true; g.sfx.play('empty', 0.7); }   // a ~4 m: un clic de radio
     if (!P.shock && d < 120 && !p.vomit && !p.exec && !p.doorAnim) {                                // al verla: vómito de impacto (sin culpa, karma ni puntos)
       P.shock = true; P.clicked = true;
