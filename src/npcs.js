@@ -68,6 +68,7 @@ export class Vagrant {
   }
 
   sayOne(list, secs) {
+    if (this.mute) return; // calle muda (la pila de cuerpos del piso 5, ver lore.js)
     this.say = list[Math.floor(Math.random() * list.length)];
     this.sayT = secs;
     this.sayCd = secs + 3 + Math.random() * 2;

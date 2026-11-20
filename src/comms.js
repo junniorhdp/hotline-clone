@@ -49,11 +49,21 @@ export class Comms {
     this.seen.add(id);
     const lines = entries.map((e) => {
       const sp = typeof e.speaker === 'string' ? SPEAKERS[e.speaker] : e.speaker;
-      return { who: sp.name, color: sp.color, text: e.text, portrait: sp.portrait || null, tag: sp.tag || 'RADIO', focus: e.focus || null, t: 0, age: 0, open: 0, urgent: !!opts.urgent };
+      return { who: sp.name, color: sp.color, text: e.text, portrait: sp.portrait || null, tag: sp.tag || 'RADIO', icon: sp.icon || null, focus: e.focus || null, skippable: !!opts.skippable, t: 0, age: 0, open: 0, urgent: !!opts.urgent };
     });
     if (opts.onEnd && lines.length) lines[lines.length - 1].onEnd = opts.onEnd; // se llama al cerrar la última línea
     if (opts.urgent) this.queue.unshift(...lines); else this.queue.push(...lines);
     return true;
+  }
+
+  // Salta toda la conversación que queda (mantener ESPACIO / ENTER: ver Game.update): cierra y llama al `onEnd` de la última línea.
+  skipAll() {
+    const last = this.queue.length ? this.queue[this.queue.length - 1] : this.cur;
+    const had = this.cur && this.cur.focus;
+    this.queue.length = 0; this.cur = null; this.gap = GAP;
+    if (had) this.game.camera.snap(this.game.player.x, this.game.player.y);
+    this.game.player.cooldown = Math.max(this.game.player.cooldown, 0.3);
+    if (last && last.onEnd) last.onEnd();
   }
 
   // ¿Se puede hablar? (sin panel, fundido, forcejeo, vómito, ejecución ni puerta en animación...). Las urgentes no exigen que no haya enemigos en alerta.
@@ -119,6 +129,7 @@ export class Comms {
     if (!c) return;
     const s = g.safe;
     ctx.fillStyle = 'rgba(5, 0, 15, 0.35)'; ctx.fillRect(0, 0, w, h);   // el mundo queda congelado y atenuado
+    if (c.skippable) { const bar = Math.round(14 * Math.min(1, c.age / 0.3 + (this.queue.length ? 1 : 0))); ctx.fillStyle = '#000'; ctx.fillRect(0, 0, w, bar); ctx.fillRect(0, h - bar, w, bar); } // barras de cine (la llamada de CENTRAL)
     const bw = Math.min(w - 20, 330), textW = bw - 44 - 20;
     const rows = this.wrap(c.text, textW);
     const bh = 46 + Math.max(0, rows.length - 2) * 10;
@@ -131,6 +142,7 @@ export class Comms {
     const px = bx + 5, py = by + 6;
     if (c.portrait && c.portrait.civ) drawCivTalking(ctx, c, px, py, typed, talking);
     else if (c.portrait) this.drawMaskTalking(ctx, c, px, py, typed, talking);
+    else if (c.icon === 'phone') this.drawPhoneTalking(ctx, c, px, py, talking);
     else this.drawRadioTalking(ctx, c, px, py, talking);
     ctx.fillStyle = c.color; ctx.fillRect(bx + 4, by + 5, 34, 1); ctx.fillRect(bx + 4, by + 38, 34, 1); ctx.fillRect(bx + 4, by + 5, 1, 34); ctx.fillRect(bx + 37, by + 5, 1, 34);
     drawText(ctx, `${c.who} · ${c.tag}`, bx + 44, by + 5, { color: c.color });
@@ -157,6 +169,24 @@ export class Comms {
   // según la letra que se está tecleando (vocal: abierta; m, b, p y pausas: cerrada; el resto: media), con el hueco oscuro detrás (la boca). Cabecea 1 px en las vocales.
   // Al acabar de teclear cierra la boca. Cada máscara anima solo SU boca (el pico del gallo y del búho, el hocico y el mentón del oso...), no la nariz.
   drawMaskTalking(ctx, c, x, y, typed, talking) { drawTalkingMask(ctx, c, x, y, typed, talking); }
+
+  // CENTRAL por teléfono: un auricular (oreja y micrófono unidos por el asa) con ondas de señal que salen del micrófono mientras habla.
+  drawPhoneTalking(ctx, c, x, y, talking) {
+    const tt = c.t;
+    ctx.fillStyle = '#1a1030'; ctx.fillRect(x, y, 32, 32);
+    ctx.fillStyle = '#14141e'; ctx.fillRect(x + 4, y + 6, 9, 6); ctx.fillRect(x + 19, y + 20, 9, 6);   // oreja y micrófono
+    ctx.fillStyle = '#6b6b85'; ctx.fillRect(x + 5, y + 7, 7, 4); ctx.fillRect(x + 20, y + 21, 7, 4);
+    ctx.fillStyle = '#14141e'; ctx.fillRect(x + 6, y + 12, 3, 8); ctx.fillRect(x + 9, y + 18, 11, 3);   // asa
+    ctx.fillStyle = '#3a3a52'; ctx.fillRect(x + 7, y + 13, 1, 6); ctx.fillRect(x + 9, y + 19, 10, 1);
+    if (talking) {
+      for (let k = 0; k < 3; k++) {
+        const ph = (tt * 2.2 + k / 3) % 1, r = 3 + ph * 8;
+        ctx.globalAlpha = 1 - ph; ctx.fillStyle = c.color;
+        for (let a = -0.8; a <= 0.8; a += 0.4) ctx.fillRect(Math.round(x + 27 + Math.cos(a) * r), Math.round(y + 17 - Math.sin(a) * r), 1, 1);
+      }
+      ctx.globalAlpha = 1;
+    }
+  }
 
   // CENTRAL: un walkie grande con ondas de señal que salen de la antena y un ecualizador en la rejilla mientras habla.
   drawRadioTalking(ctx, c, x, y, talking) {

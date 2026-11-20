@@ -100,10 +100,12 @@ export class StreetLife {
     this.lastCoins = run.coins; this.coinFlash = 0; // contador de monedas: se muestra unos segundos cuando sube
     this.hurtSet = new Set(); this.killedSet = new Set();
     this.ringT = 0.5;
+    // Piso 10 · LA CALLE VACÍA (lore.js): sin vagabundos y con el barril apagado (la fogata no arde); la ceniza y los detalles los dibuja Lore según el karma.
+    if (game.levelIndex === 9 && game.lore && game.lore.decorOn) { game.lore.barrel = st.fire ? { x: st.fire.x, y: st.fire.y } : null; this.npcs = []; this.fires = []; }
   }
 
   get run() { return this.game.streetRun; }
-  get ringing() { return !!this.phone && !this.game.entered && !this.run.phoneDone; }
+  get ringing() { const L = this.game.lore; return !!this.phone && ((!this.game.entered && !this.run.phoneDone && !(L && L.phoneMute()) && !(L && !L.phoneRingOk())) || !!(L && L.callPending)); } // (los pisos 3 y 10 tienen un teléfono que no suena) // (la llamada de CENTRAL del piso 6 hace sonar el teléfono otra vez al despejar el piso)
 
   // Objetivos de interacción: contenedores, máquina, cabina y, si llevas una moneda, los vagabundos a los que se les puede dar.
   targets() {
@@ -236,6 +238,7 @@ export class StreetLife {
       g.sfx.play('pickup', 0.7);
     } else if (t.kind === 'phone') {
       if (this.dialog) { this.dialog = null; return; }
+      if (g.lore && g.lore.callPending) { g.lore.startCall(); return; } // la llamada de CENTRAL (piso 6)
       this.answer();
     }
   }
@@ -243,6 +246,11 @@ export class StreetLife {
   // Contesta la cabina: pista de lore o reto opcional (se resuelve al terminar el piso, ver settle()).
   answer() {
     const g = this.game, run = this.run;
+    if (!run.phoneLines && g.lore) {                 // llamada o grabación fija del piso (lore.js): sustituye a la pista / reto aleatorios
+      const sc = g.lore.phoneScript();
+      if (sc && sc.wait) { this.dialog = { lines: ['LÍNEA OCUPADA.'], t: 3 }; g.sfx.play('empty', 0.7); return; } // aún no toca (separación o presupuesto): se puede volver a probar
+      if (sc) { run.phoneLines = sc.lines; run.challenge = null; }
+    }
     if (!run.phoneLines) {
       if (this.rnd() < 0.6) {
         const def = CHALLENGES[Math.floor(this.rnd() * CHALLENGES.length)];
@@ -254,7 +262,7 @@ export class StreetLife {
       }
     }
     run.phoneDone = true;
-    this.dialog = { lines: run.phoneLines, t: 8 };
+    this.dialog = { lines: run.phoneLines, t: run.phoneLines.length > 2 ? 11 : 8 };
     g.sfx.play('pickup');
   }
 
@@ -354,6 +362,7 @@ export class StreetLife {
       if (!near && tw !== 0) continue;
       px(c.x, c.y, -2, -2, 4, 4, '#b38600'); px(c.x, c.y, -1, -3, 2, 1, '#ffbe0b'); px(c.x, c.y, -1, 2, 2, 1, '#ffbe0b');
       px(c.x, c.y, -2, -2, 1, 1, '#fff6c8');
+      px(c.x, c.y, -1, 0, 1, 1, '#7a5300'); px(c.x, c.y, 1, 0, 1, 1, '#7a5300'); px(c.x, c.y, 0, 1, 1, 1, '#7a5300'); // la silueta del ave (una «v» diminuta): todas las monedas la llevan
       if (tw === 0) { px(c.x, c.y, -1, -6, 1, 2, '#ffffff'); px(c.x, c.y, -1, 5, 1, 2, '#ffffff'); px(c.x, c.y, -6, -1, 2, 1, '#ffffff'); px(c.x, c.y, 4, -1, 2, 1, '#ffffff'); }
     }
     for (const n of this.npcs) n.draw(ctx, this.clock);
@@ -442,6 +451,7 @@ export class StreetLife {
       ctx.fillStyle = '#b38600'; ctx.fillRect(cx0 + 1, cy0 + 1, 8, 8);
       ctx.fillStyle = '#ffbe0b'; ctx.fillRect(cx0 + 2, cy0 + 2, 6, 6);
       ctx.fillStyle = '#fff6c8'; ctx.fillRect(cx0 + 3, cy0 + 3, 1, 3);
+      ctx.fillStyle = '#7a5300'; ctx.fillRect(cx0 + 4, cy0 + 5, 1, 1); ctx.fillRect(cx0 + 6, cy0 + 5, 1, 1); ctx.fillRect(cx0 + 5, cy0 + 6, 1, 1); // el ave
       drawText(ctx, `x${this.run.coins}`, cx0 + 14, cy0 - 1, { color: age < 0.6 ? '#ffffff' : COLORS.enemy, scale: age < 0.25 ? 3 : 2 });
       ctx.restore();
     }

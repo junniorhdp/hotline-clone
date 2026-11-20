@@ -21,6 +21,7 @@ import { Hostages } from './hostages.js';
 import { PROLOGUE_DEF } from './prologue.js';
 import { PrologueFlow } from './prologue-flow.js';
 import { Comms, drawTalkingMask, voiceFor, talkBlips } from './comms.js';
+import { Lore } from './lore.js';
 import { weaponCategory } from './weapons.js';
 import { buildOptionsMenu, buildPauseMenu } from './options-menu.js';
 import { Player, bloodLevelFor, FINISH_RANGE } from './player.js';
@@ -247,6 +248,9 @@ export class Game {
     this.showRecords = false;
     this.levelIndex = 0;
     this.comms = new Comms(this); // líneas cortas de lore no modales (prólogo)
+    this.lore = new Lore(this);   // piezas narrativas cortas entre pisos (viñetas, llamadas y pistas): ver lore.js
+    this.vignette = null;         // viñeta a pantalla completa en curso
+    this.shot = null;             // plano de cámara narrativo en curso
     this.flow = new PrologueFlow(this); // lógica y estado del prólogo / tutorial (instrucciones, salto, fin): prologue-flow.js
     this.finalExit = null; this.ladderRoom = null; this.climb = null; this.emerge = null; this.descent = null; this.sewerRun = null; this.sewerStash = null; this.sewerRoute = null; this.keyRoute = false; this.hasKey = false; this.keyDrop = null; this.keyHintAt = 0; this.shutAt = 0; // piso 3: entrada por la alcantarilla y llave de salida
     this.cineK = 0; // 0..1: cuánto están puestas las barras de cine de llegada / fuga (anima las barras y el fundido del HUD)
@@ -387,6 +391,7 @@ export class Game {
   // Entra en un piso nuevo (el total de puntos acumulado se conserva) pasando antes por la
   // selección de máscara.
   goToLevel(index) {
+    this.lore.enterFloor(index); // presupuesto de piezas narrativas por piso
     this.sfx.pickTrack(); // pista de combate del piso nuevo (sin repetir la última); con R se conserva
     this.levelIndex = index;
     this.streetRun = newStreetRun();
@@ -410,6 +415,7 @@ export class Game {
     this.maskIndex = this.maskList.indexOf(this.mask);
     // Posición inicial del ratón: solo un movimiento real cambia la selección.
     this.maskMouse = this.mouseInternal();
+    this.lore.onMaskSelect(); // V1 (la lista) la primera vez, en el piso 1
   }
 
   confirmMask() {
@@ -902,6 +908,7 @@ export class Game {
   // Al pisar la salida (con la pantalla ya en negro): resultados, Top 5 y estadísticas del piso.
   finishFloor() {
     if (this.prologue) { this.endPrologue(); return; } // el prólogo no tiene resultados ni guarda nada
+    if (this.lore.beforeResults(() => this.finishFloor())) return; // V7 (cara o cruz) antes de los resultados del último piso
     this.state = 'results';
     this.resultsAge = 0;
     const challenge = this.street.settle(); // reto de la cabina telefónica (suma su bonus antes del rango)
@@ -977,6 +984,7 @@ export class Game {
   }
 
   startRunAt(index, prologue = false) {
+    this.lore.startRun(index, prologue); // piezas narrativas: otra partida, vuelven a poder salir (y las de pisos anteriores al de salida se descartan)
     this.sfx.pickTrack(); // pista de combate de la partida nueva (sin repetir la última)
     this.runId = newRunId();
     this.prologue = prologue; this.testRange = false;
@@ -1107,6 +1115,7 @@ export class Game {
     this.particles.clear();
     this.prints.clear();
     this.sewer = new Sewer(this.map.sewers); // easter egg: cocodrilo en la alcantarilla (la tapa de la entrada real se dibuja cerrada y nunca lo suelta: ver Sewer.update)
+    this.lore.onReset(); // la tapa fija del piso 10 queda entreabierta (V6)
     this.sewer.bind(this);
     this.guilt = null;
     this.street = new StreetLife(this); // contenedores, moneda, máquina, cabina y vagabundo de la calle
@@ -1202,9 +1211,12 @@ export class Game {
     const confirm = input.wasPressed('Space') || input.wasPressed('Enter') || input.wasPressed('NumpadEnter');
     const back = input.wasPressed('Escape');
 
+    this.lore.update(dt);
     if (this.fade) { this.updateFade(dt); return; }
     // Menú modal abierto (OPCIONES / PAUSA): el juego está congelado y solo él lee la entrada.
     if (this.panel) { this.panel.update(); return; }
+    if (this.shot) { this.lore.updateShot(dt); return; } // plano de cámara narrativo (V2, V6): se salta manteniendo
+    if (this.vignette) { if (this.vignette.update(dt)) { const v = this.vignette; this.vignette = null; if (v.onEnd) v.onEnd(); } return; } // viñeta narrativa: congela el juego (se salta manteniendo)
     if (this.state === 'menu') { this.menu.update(); return; }
     if (this.state === 'initials') { this.updateInitials(dt); return; }
     if (this.state === 'gameover') {
@@ -1245,7 +1257,7 @@ export class Game {
     if (this.state === 'ascend') { this.updateAscend(dt); return; }
     if (this.state === 'emerge') { this.updateEmerge(dt); return; }
     if (this.state === 'sewer') { this.updateSewer(dt); return; }
-    if (this.comms.cur) { this.comms.step(dt, confirm || input.mousePressed.left); return; } // línea de comunicación del prólogo: el mundo se congela (como la radio del piso 10)
+    if (this.comms.cur) { if (this.comms.cur.skippable && this.holdSkip(this.comms, dt)) this.comms.skipAll(); else this.comms.step(dt, confirm || input.mousePressed.left); return; } // línea de comunicación del prólogo: el mundo se congela (como la radio del piso 10)
     if (this.state === 'ambush') { this.updateAmbush(dt); return; }
     if (this.state === 'exit') { this.updateExit(dt, confirm || input.mousePressed.left); return; }
     if (this.state === 'ending') { this.updateEnding(dt, input.down('Enter')); return; }
@@ -1304,7 +1316,7 @@ export class Game {
     if (this.guilt) {
       const gp = this.player;
       if (!gp.alive || this.state === 'dead') this.guilt = null;
-      else if ((this.state === 'playing' || this.state === 'cleared') && !this.panel && !gp.exec && !gp.vomit && (this.guilt.t -= dt) <= 0) { this.guilt = null; gp.startVomit(this); }
+      else if ((this.state === 'playing' || this.state === 'cleared') && !this.panel && !gp.exec && !gp.vomit && (this.guilt.t -= dt) <= 0) { this.guilt = null; this.lore.noteGuilt(); gp.startVomit(this); }
     }
 
     this.bullets = this.bullets.filter((b) => b.alive);
@@ -1329,6 +1341,7 @@ export class Game {
       // La puerta principal la abre el agente al llegar a ella (animación; `doorPending`). En el piso 10 (trampa y final con la carrera de los dos agentes y el rehén de la IA) se abre sola.
       if (this.trap || (!this.doorAnimOn && this.keyOk())) { this.mainDoor.unlock(); this.sfx.play('unlock'); } else this.doorPending = true; // (con llave por recoger la puerta sigue cerrada)
       this.showCallout('PISO COMPLETADO', COLORS.player, 2.8, '¡EDIFICIO LIMPIO!'); // el objetivo (REGRESA A LA MOTO) sale al apagarse
+      this.lore.onCleared(); // la pila de cuerpos del piso 5 (con la puerta aún cerrada)
     }
     // Junto a la moto con el piso despejado: si no quedan rehenes atados, la fuga arranca sola; si quedan, solo se AVISA (el rescate es opcional) y el jugador decide:
     // ESPACIO / F (BOTA en táctil) para irse igualmente, o volver a por ellos.
@@ -1411,6 +1424,7 @@ export class Game {
         this.cine = null;
         this.state = 'playing';
         this.bannerTimer = INTRO_BANNER_TIME;
+        this.lore.onArrived(); // V2 (el asiento) / V6 (la calle vacía)
       }
     } else {
       if (skip) {
@@ -1473,15 +1487,15 @@ export class Game {
     const p = this.player;
     if (this.state !== 'playing' || !p.alive) return;
     if (this.scuffleGrace > 0) { e.attackCd = 0.4; return; } // acaba de forcejear: ese golpe no cuenta
-    if (e.civ) { this.killPlayer(angle); return; }            // civil hostil: sin forcejeo (son muchos): su golpe te mata y el tuyo, si llega antes, los mata a ellos
+    if (e.civ) { this.killPlayer(angle, e); return; }         // civil hostil: sin forcejeo (son muchos): su golpe te mata y el tuyo, si llega antes, los mata a ellos
     const frontal = Math.abs(angleDiff(angle + Math.PI, p.angle)) < 1.75;
     const pc = this.playerCategory(), ec = e.category;
-    if (!frontal || p.exec || ec === 'gun' || e.kind === 'boss') { this.killPlayer(angle); return; }
+    if (!frontal || p.exec || ec === 'gun' || e.kind === 'boss') { this.killPlayer(angle, e); return; }
     if (pc === 'gun') this.defensiveShot(e);
     else if (pc === 'unarmed' && ec === 'unarmed') this.startScuffle(e, angle, 'fists');
     else if (pc !== 'unarmed' && ec !== 'unarmed') this.startScuffle(e, angle, 'clash');
     else if (pc !== 'unarmed') this.playerCounter(e);   // arma tuya contra sus puños: resuelves tú
-    else this.killPlayer(angle);                        // sus armas contra tus puños: resuelve él
+    else this.killPlayer(angle, e);                     // sus armas contra tus puños: resuelve él
   }
 
   // Categoría de lo que lleva el jugador. Una pistola/escopeta/subfusil sin balas es un palo: cuenta como puños.
@@ -1624,7 +1638,7 @@ export class Game {
     const sc = this.scuffle, e = sc.e, p = this.player;
     const angle = Math.atan2(p.y - e.y, p.x - e.x);
     this.endScuffle();
-    this.killPlayer(angle); // el enemigo lo ejecuta: R reintenta el piso (restartLevel)
+    this.killPlayer(angle, e); // el enemigo lo ejecuta: R reintenta el piso (restartLevel)
   }
 
   // Filtro "VS" sobre la escena (viñeta escalonada de alto contraste, tinte neón agresivo, destellos de color en
@@ -1744,6 +1758,7 @@ export class Game {
         return { id: 'mount', label: 'MOTO', ready: true };
       }
     }
+    if (this.lore.radioReady) return { id: 'interact', label: 'RADIO', ready: true };
     if (this.ventNear()) return { id: 'interact', label: 'ROMPER', ready: true };
     if (this.detNear && this.state === 'cleared') return { id: 'interact', label: 'DETONAR', ready: true }; // piso 10: activar el detonador // piso 10: romper la ventilación (toques repetidos)
     const door = this.doors.some((d) => d.inKickRange(p.x, p.y, p.angle));
@@ -4106,13 +4121,14 @@ export class Game {
   }
 
   // El compañero inactivo cae de un golpe (bala o cuerpo a cuerpo): Game Over con su propio mensaje.
-  killPartner(angle) {
+  killPartner(angle, killer = null) {
     const t = this.partner;
     if (!t || !t.alive || t.immortal || this.state !== 'playing') return; // (en la fase final el aliado es inmortal: la IA no puede pagar su torpeza)
     t.alive = false;
     this.state = 'dead';
     this.deathMsg = 'TU COMPAÑERO HA CAÍDO';
-    this.bleed(t.x, t.y, angle, 1.3, 0.7);
+    const kd = killer && killer.meleeWeapon && WEAPON_DEFS[killer.meleeWeapon];
+    this.bleed(t.x, t.y, angle, 1.3, 0.7, !!(kd && kd.poison)); // arma oxidada: sangre verde
     this.drawCorpse(t.x, t.y, angle, 'playerCorpse');
     this.camera.addShake(10);
     this.fx.kick(1);
@@ -4122,17 +4138,19 @@ export class Game {
 
   partnerStrike(e) {
     const t = this.partner;
-    if (t) this.killPartner(Math.atan2(t.y - e.y, t.x - e.x));
+    if (t) this.killPartner(Math.atan2(t.y - e.y, t.x - e.x), e);
   }
 
-  killPlayer(angle) {
+  // `killer`: el enemigo que lo mata (si lo hay). Con un ARMA OXIDADA en la mano (`poison`: tubo o cuchillo oxidados) la muerte sangra VERDE tóxica; con cualquier otra, roja como siempre.
+  killPlayer(angle, killer = null) {
     if ((this.state !== 'playing' && this.state !== 'sewer') || !this.player.alive || this.player.doorAnim) return; // (el agente es intocable mientras cierra / abre la puerta: ~0,8 s sin control; ver Player.startDoorAnim)
     const p = this.player;
     p.alive = false;
     p.cancelExecution(); // si lo matan a mitad de un remate, el derribado no se queda congelado
     p.vomit = null;
     this.state = 'dead';
-    this.bleed(p.x, p.y, angle, 1.3, 0.7);
+    const kd = killer && killer.meleeWeapon && WEAPON_DEFS[killer.meleeWeapon];
+    this.bleed(p.x, p.y, angle, 1.3, 0.7, !!(kd && kd.poison));
     this.drawCorpse(p.x, p.y, angle, 'playerCorpse');
     if (p.weapon) { const pk = new Pickup(p.weapon.type, p.x, p.y, p.weapon.ammo); pk.blood = p.weapon.blood || null; this.pickups.push(pk); }
     this.camera.addShake(10);
@@ -4531,6 +4549,7 @@ export class Game {
     this.sewer.draw(ctx); // sobre los muebles de la calle: la cabeza nunca queda tapada ni cortada
     this.street.draw(ctx);
     this.hostages.draw(ctx);
+    this.lore.drawWorld(ctx); // decorado narrativo: moneda del asiento, cuarto de servicio y calle vacía
     for (const e of this.enemies) if (e.alive && e.state === 'down') e.draw(ctx, this.time, this);
     this.drawExecuteMarks(ctx);
     this.drawLockMark(ctx);
@@ -4566,6 +4585,7 @@ export class Game {
     ctx.globalAlpha = 1;
     ctx.drawImage(this.wallLayer, 0, 0, pixelW, pixelH);
     if (this.wallBloodDirty && this.goreOn) ctx.drawImage(this.wallBloodLayer, 0, 0, pixelW, pixelH);
+    this.lore.drawWallDecor(ctx); // calendario y taquillas del cuarto de servicio (sobre las paredes)
     this.cams.drawBodies(ctx); // cámaras montadas en las paredes
     this.drawVent(ctx); // ventilación del despacho (piso 10)
     this.drawEnding(ctx); // destrucción del edificio, bolas de fuego y corazones (final)
@@ -5254,6 +5274,7 @@ export class Game {
       this.drawMaskSelect(ctx, w, h);
       if (this.showRecords) this.drawRecordsOverlay(ctx, w, h);
       this.touch.drawScreenButtons(ctx);
+      if (this.vignette) this.vignette.draw(ctx, w, h); // V1 / V3: viñetas narrativas sobre la selección de máscara
       this.drawToast(ctx);
       this.drawPanel(ctx, w, h);
       this.drawCrosshair(ctx);
@@ -5283,6 +5304,7 @@ export class Game {
     this.drawFloatingTexts(ctx);
     this.street.drawHud(ctx, w, h);
     this.hostages.drawHud(ctx, w, h);
+    this.lore.drawHud(ctx, w, h); // la radio del cuarto de servicio
     this.hostages.drawLeaveAsk(ctx, w, h);
     this.drawTrapHud(ctx, w, h);
     this.drawFinalHud(ctx, w, h);
@@ -5390,6 +5412,9 @@ export class Game {
       this.touch.drawScreenButtons(ctx);
     }
     this.comms.draw(ctx, w, h); // encima de todo el HUD
+    if (this.comms.cur && this.comms.cur.skippable && this.comms.cur.age > 0.8) this.drawSkipHint(ctx, w, 10 + this.safe.t, this.comms); // pista de «mantén para saltar» (llamada de CENTRAL)
+    if (this.vignette) this.vignette.draw(ctx, w, h);        // viñeta narrativa a pantalla completa
+    this.lore.drawShot(ctx, w, h);                           // barras y pista de los planos narrativos
     if (!this.comms.cur) this.fadeHud(ctx, w, h, (c) => this.touch.draw(c));
     if (this.state === 'results') this.drawResults(ctx, w, h);
     this.drawToast(ctx);

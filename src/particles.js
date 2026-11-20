@@ -251,9 +251,9 @@ export class Footprints {
     this.list.length = 0;
   }
 
-  add(x, y, angle, intensity) {
+  add(x, y, angle, intensity, tox = false) {
     if (this.list.length >= MAX_PRINTS) this.list.shift();
-    this.list.push({ x, y, angle, intensity, age: 0, life: 6 + 8 * intensity });
+    this.list.push({ x, y, angle, intensity, tox, age: 0, life: 6 + 8 * intensity });
   }
 
   // Compacta en el sitio (sin crear un array nuevo cada fotograma).
@@ -270,7 +270,8 @@ export class Footprints {
     for (const p of this.list) {
       const alpha = p.intensity * Math.min(1, (1 - p.age / p.life) / 0.6);
       if (alpha < 0.03) continue;
-      const sprite = p.intensity > 0.66 ? 'foot' : p.intensity > 0.33 ? 'footMid' : 'footDark';
+      const tone = p.intensity > 0.66 ? '' : p.intensity > 0.33 ? 'Mid' : 'Dark';
+      const sprite = (p.tox ? 'footG' : 'foot') + tone; // verde si pisó sangre tóxica
       drawSprite(ctx, sprite, p.x, p.y, p.angle, { alpha });
     }
   }

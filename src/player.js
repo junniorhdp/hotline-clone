@@ -91,6 +91,7 @@ export class Player {
     this.vomit = null; // { t, dur, spurts, wasMasked }: vomitando por culpa (ver startVomit)
     this.doorAnim = null; // { kind: 'close' | 'open', t, door, fired }: el agente cierra la puerta principal al entrar / la abre al despejar (ver startDoorAnim)
     this.bloodLevel = 0;  // 0..BLOOD_LEVELS: cuánta sangre lleva encima (lo fija Game)
+    this.soleTox = false; // las suelas llevan sangre VERDE (pisó sangre tóxica): las huellas salen verdes
     this.soles = 0;       // pisadas manchadas que le quedan
     this.solesMax = 0;    // las de la carga actual (para saber en qué punto de la secuencia va)
     this.stride = 0;      // distancia recorrida desde la última huella
@@ -257,6 +258,7 @@ export class Player {
     const fluid = game.bloodUnderfoot(this.x, this.y); // 0 nada · 1 sangre roja · 2 sangre verde
     if (fluid) {
       this.wetSoles();
+      this.soleTox = fluid === 2; // el último charco pisado manda: rojo o verde
       game.soak(fluid === 2, this.angle); // pisar un charco también te mancha (y tiñe la máscara del HUD con su color)
       return;
     }
@@ -269,7 +271,7 @@ export class Player {
       this.foot = -this.foot;
       const intensity = 1 - SOLE_FADE * Math.pow(k / Math.max(1, this.solesMax - 1), 0.85);
       game.prints.add(this.x - this.hy * this.foot * FOOT_SPREAD, this.y + this.hx * this.foot * FOOT_SPREAD,
-        Math.atan2(this.hy, this.hx), intensity);
+        Math.atan2(this.hy, this.hx), intensity, this.soleTox);
     }
   }
 
@@ -321,9 +323,10 @@ export class Player {
     if (a.t >= a.dur) { this.doorAnim = null; this.cooldown = Math.max(this.cooldown, 0.15); }
   }
 
-  startVomit(game) {
+  // `shock`: vómito de IMPACTO al ver la pila de cuerpos del piso 5 (lore.js): misma animación, pero NO viene de la culpa (no toca el karma ni la puntuación).
+  startVomit(game, shock = false) {
     if (this.vomit || !this.alive) return;
-    this.vomit = { t: 0, dur: 2.7, spurts: 0, wasMasked: this.masked };
+    this.vomit = { t: 0, dur: 2.7, spurts: 0, wasMasked: this.masked, shock };
     this.masked = false;
     this.moving = false; this.swing = 0; this.recoil = 0; this.muzzle = 0;
     game.sfx.play('maskOn', 0.6);
@@ -446,8 +449,10 @@ export class Player {
       game.woundEnemy(e, angle, style);
       return;
     }
+    const tox = game.isToxicKill(e, 'execution');
     game.killEnemy(e, angle, 'execution');
     this.wetSoles();
+    this.soleTox = tox; // rematar con un arma oxidada (o a un intoxicado) deja huellas verdes
   }
 
   // Suelas empapadas: entre SOLE_MIN y SOLE_MAX huellas al andar.
