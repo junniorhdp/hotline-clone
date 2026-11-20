@@ -22,6 +22,7 @@ const CHASE_SPEED = 192;     // (172)
 // GENIOS no rompe reglas: persiguen a 202 u/s (< 228 del jugador), el golpe aún se ve venir (≥ 0,13 s) y las balas siguen esquivables.
 export const AI = { react: 1, windup: 1, cooldown: 1, spread: 1, speed: 1, view: 1, sense: 1, search: 1 };
 const AI_LEVELS = {
+  dumber: { react: 3.5, windup: 1.8, cooldown: 2.4, spread: 3, speed: 0.78, view: 0.65, sense: 0.6, search: 0.5 }, // BOBOS: la más fácil (reaccionan tarde, golpean y disparan despacio y mal, ven poco y te pierden pronto)
   dumb: { react: 2.2, windup: 1.35, cooldown: 1.6, spread: 1.9, speed: 0.9, view: 0.8, sense: 0.8, search: 0.7 },
   avg: { react: 1, windup: 1, cooldown: 1, spread: 1, speed: 1, view: 1, sense: 1, search: 1 },
   genius: { react: 0.5, windup: 0.8, cooldown: 0.75, spread: 0.55, speed: 1.05, view: 1.12, sense: 1.2, search: 1.3 },

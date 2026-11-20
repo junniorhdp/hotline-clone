@@ -772,7 +772,7 @@ Todo está ajustado para que el combate sea frenético (entre paréntesis, el va
   Si se retoca el ritmo, repetir esa medición.
 
 ### Nivel de IA enemiga (opción IA ENEMIGA, `aiLevel`; `AI` y `setAiLevel` en `enemy.js`)
-Tres niveles con nombre gracioso y efecto real, en OPCIONES → JUEGO (ciclable con Enter / clic / flechas y con un toque en táctil; se guarda en `neonrush.settings.v1` y se aplica al arrancar con `applyAll` → `Game.setAiLevel`; afecta también a la partida en curso). Son **multiplicadores globales** (`AI`) sobre los tiempos y la puntería de todos los enemigos; PROMEDIO = todo ×1 (el comportamiento de siempre, por defecto). El jefe conserva sus ataques y los enemigos `scared` del prólogo siguen paralizándose igual (la prueba de humo pasa en los tres niveles).
+Cuatro niveles (BOBOS, el más fácil, se añadió después: react ×3,5 · windup ×1,8 · cooldown ×2,4 · spread ×3 · speed ×0,78 · view ×0,65 · sense ×0,6 · search ×0,5; la tabla de abajo recoge los otros tres) con nombre gracioso y efecto real, en OPCIONES → JUEGO (ciclable con Enter / clic / flechas y con un toque en táctil; se guarda en `neonrush.settings.v1` y se aplica al arrancar con `applyAll` → `Game.setAiLevel`; afecta también a la partida en curso). Son **multiplicadores globales** (`AI`) sobre los tiempos y la puntería de todos los enemigos; PROMEDIO = todo ×1 (el comportamiento de siempre, por defecto). El jefe conserva sus ataques y los enemigos `scared` del prólogo siguen paralizándose igual (la prueba de humo pasa en los tres niveles).
 
 | Multiplicador | TONTOS | PROMEDIO | GENIOS | Qué afecta |
 |---|---|---|---|---|
