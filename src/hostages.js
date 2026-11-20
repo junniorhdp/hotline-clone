@@ -28,6 +28,7 @@ const TIED = ['¡MMMPH! ¡MMM!', '¡MMM-MMM!', '(SOLLOZOS...)', '¡MMMPH!', '¡M
 const FREED = ['¡GRACIAS!', '¡ME SALVASTE!', '¡CUIDADO, HAY MÁS!', '¡NO ME DEJES AQUÍ!'];
 const RELIEF = ['¡POR FIN LIBRES!', '¡VÁMONOS DE AQUÍ!', '¡GRACIAS POR TODO!'];
 const HIT = '¡MMMPH!!';
+const shade = (hex, k) => { const n = parseInt(hex.slice(1), 16), c = (v) => Math.max(0, Math.min(255, Math.round(v * k))); return '#' + [(n >> 16) & 255, (n >> 8) & 255, n & 255].map((v) => c(v).toString(16).padStart(2, '0')).join(''); };
 // COMPAÑERO del prólogo (`partner`): rehén herido que no pelea. Mientras `protected`, tus golpes y balas lo ignoran (ni muere ni penaliza); al liberarlo pasa a `follow`
 // (te sigue cojeando, sin acercarse más de FOLLOW_GAP) y, con el piso despejado, a `freed`: sale con el flujo normal de extracción (moto, detrás de ti).
 const FOLLOW_GAP = 26, FOLLOW_SPEED = 80, FOLLOW_FAST = 110, FOLLOW_FAR = 130;
@@ -369,9 +370,12 @@ export class Hostages {
     drawText(ctx, a.name, x, y - 34, { color: a.color, scale: WORLD_PX, align: 'center' });
   }
 
+  // Rehén (no el compañero del prólogo): aspecto urbano generado en map.js (`hostageLook`): prenda, peinado, piel, gafas, bufanda y marcas de maltrato; los hombres y las mujeres
+  // se distinguen por el peinado y por un torso algo más estrecho. Atado: cuerdas, mordaza, «!» de socorro, sudor y temblor; tumbado o muerto: de lado con su silla volcada.
   drawOne(ctx, h) {
     if (h.partner) { this.drawPartner(ctx, h); return; }
     const L = h.look, x = Math.round(h.x), y = Math.round(h.y);
+    const garment = L.garment || 'tee', style = L.style || 'short', fem = L.gender === 'f', ol = '#14100a', sk = L.skin, top = L.shirt, t2 = L.shirt2 || shade(top, 0.7);
     const tied = h.state === 'tied', dead = h.state === 'dead';
     const moving = h.state === 'freed' || h.state === 'exiting' || h.state === 'riding' || h.state === 'follow';
     const sh = (tied || moving || h.state === 'waiting') ? Math.round(Math.sin(h.shiver) * (h.state === 'waiting' ? 0.6 : 1)) : 0;
@@ -380,10 +384,14 @@ export class Hostages {
     const px = (ox, oy, w, hh, col) => { ctx.fillStyle = col; pixelRect(ctx, x + (ox + sh) * WORLD_PX, y + oy * WORLD_PX, w, hh); };
     if (dead || h.down) {                           // tumbado (muerto, oscuro; o aturdido por un golpe, con su silla volcada si sigue atado)
       px(-8, 3, 16, 5, 'rgba(5,0,15,0.5)');
-      if (tied || dead) { px(-10, -4, 4, 11, '#14100a'); px(-9, -3, 2, 9, '#5b4a2a'); }  // silla volcada
-      px(-4, -3, 12, 7, '#14100a'); px(-3, -2, 10, 5, L.shirt);
-      px(8, -2, 4, 5, '#14100a'); px(8, -1, 3, 3, L.skin);
-      if (L.gender === 'f') px(7, 1, 4, 2, L.hair);
+      if (tied || dead) { px(-10, -4, 4, 11, ol); px(-9, -3, 2, 9, '#5b4a2a'); }  // silla volcada
+      px(-4, -3, 12, 7, ol); px(-3, -2, 10, 5, garment === 'tank' ? sk : top);
+      if (garment === 'stripes') { px(-1, -2, 1, 5, t2); px(3, -2, 1, 5, t2); }
+      if (garment === 'jacket') px(-3, -2, 10, 1, t2);
+      if (garment === 'vest') px(-1, -2, 4, 5, top);
+      px(8, -2, 4, 5, ol); px(8, -1, 3, 3, sk);
+      if (style !== 'bald' && style !== 'buzz') px(7, -2, 3, 2, style === 'cap' || style === 'beanie' ? L.hat : L.hair);
+      if (style === 'long' || style === 'bob' || fem) px(6, 1, 4, 2, L.hair);
       if (dead) { px(-3, -2, 10, 5, 'rgba(0,0,0,0.4)'); px(8, -1, 3, 3, 'rgba(0,0,0,0.4)'); }
       else if (tied) { px(-3, -1, 10, 1, '#b8864a'); px(9, -1, 2, 1, '#e8e4f0'); }       // cuerdas y mordaza
       ctx.restore();
@@ -394,28 +402,51 @@ export class Hostages {
       ctx.save();
       ctx.translate(x, y);
       ctx.rotate(h.facing);
-      ctx.fillStyle = '#14100a'; pixelRect(ctx, -16, -10, 5, 20);
+      ctx.fillStyle = ol; pixelRect(ctx, -16, -10, 5, 20);
       ctx.fillStyle = '#5b4a2a'; pixelRect(ctx, -15, -9, 3, 18);
       ctx.fillStyle = '#3a2f1a'; pixelRect(ctx, -12, -8, 14, 16);
       ctx.restore();
     }
-    // cuerpo (camisa), cabeza con pelo y la cara (con mordaza si sigue atado)
-    px(-6, -5, 12, 10, '#14100a'); px(-5, -4, 10, 8, L.shirt); px(-5, -4, 10, 2, 'rgba(255,255,255,0.18)');
-    px(-3, -8, 7, 6, '#14100a'); px(-2, -7, 5, 4, L.hair);
-    if (L.gender === 'f') { px(-4, -7, 1, 7, L.hair); px(4, -7, 1, 7, L.hair); }
+    // cuerpo: contorno, prenda y sombreado (las mujeres, torso algo más estrecho)
+    const bx = fem ? -5 : -6, bw = fem ? 10 : 12;
+    px(bx, -5, bw, 10, ol);
+    px(bx + 1, -4, bw - 2, 8, garment === 'tank' ? sk : (garment === 'vest' || garment === 'jacket') ? t2 : top);
+    if (garment === 'hoodie') { px(-4, -6, 8, 2, shade(top, 0.7)); px(-1, -3, 1, 3, '#e8e4f0'); px(1, -3, 1, 3, '#e8e4f0'); px(-3, 1, 6, 2, shade(top, 0.8)); }
+    else if (garment === 'jacket') { px(bx + 1, -4, 3, 8, top); px(bx + bw - 4, -4, 3, 8, top); px(0, -4, 1, 8, shade(top, 0.55)); }
+    else if (garment === 'tank') px(-2, -4, 5, 8, top);
+    else if (garment === 'stripes') { for (const oy of [-3, 0, 3]) px(bx + 1, oy, bw - 2, 1, t2); }
+    else if (garment === 'vest') { px(-3, -4, 6, 8, top); px(-3, -1, 6, 1, '#e8e4f0'); }
+    px(bx + 1, -4, bw - 2, 1, 'rgba(255,255,255,0.18)'); px(bx + 1, 3, bw - 2, 1, 'rgba(0,0,0,0.25)');
+    for (let i = 0; i < (L.dirt || 0); i++) px(((L.dirtSeed || 7) * (i + 3)) % 7 - 3, ((L.dirtSeed || 7) * (i + 5)) % 6 - 3, 2, 1, 'rgba(20,10,5,0.4)'); // roña
+    if (L.scarf) px(-3, -3, 7, 2, L.scarf);
+    if (style === 'long' || style === 'bob') px(-3, -3, 7, style === 'long' ? 3 : 1, L.hair);          // pelo sobre los hombros
+    if (style === 'ponytail') { px(0, -3, 2, 4, L.hair); px(0, -3, 2, 1, '#ff2a85'); }
+    // cabeza
+    px(-3, -8, 7, 6, ol);
+    if (style === 'bald') { px(-2, -7, 5, 4, sk); px(-2, -7, 5, 1, 'rgba(255,255,255,0.25)'); }
+    else if (style === 'buzz') px(-2, -7, 5, 4, shade(sk, 0.55));
+    else if (style === 'mohawk') { px(-2, -7, 5, 4, sk); px(0, -9, 2, 6, L.hair); }
+    else if (style === 'cap') { px(-2, -7, 5, 4, L.hat); px(Math.cos(h.facing) >= 0 ? 2 : -3, -6, 2, 2, shade(L.hat, 0.6)); }
+    else if (style === 'beanie') { px(-3, -8, 7, 5, L.hat); px(-3, -5, 7, 1, shade(L.hat, 1.5)); }
+    else px(-2, -7, 5, 4, L.hair);
+    if (style === 'bun') px(-1, -10, 3, 3, L.hair);
+    if (style === 'long') { px(-4, -7, 1, 8, L.hair); px(4, -7, 1, 8, L.hair); }
+    else if (style === 'bob') { px(-4, -7, 1, 5, L.hair); px(4, -7, 1, 5, L.hair); }
     const fx = Math.cos(h.facing) >= 0 ? 1 : -2;
-    px(fx, -6, 2, 2, L.skin);
+    px(fx, -6, 2, 2, sk);
+    if (L.glasses) px(fx, -6, 2, 1, '#14141e'); else px(fx + (fx > 0 ? 1 : 0), -6, 1, 1, '#140a08'); // gafas u ojo
+    if (L.bruise) px(fx, -5, 2, 1, '#6b2f5a');                              // moretón
     if (tied) {
-      if (!h.partner) px(fx, -6, 2, 1, '#e8e4f0');                          // mordaza (el compañero habla)
-      px(-6, -3, 12, 1, '#b8864a'); px(-6, 1, 12, 1, '#b8864a');           // cuerdas
-      px(-7, -1, 2, 3, L.skin);                                              // manos atadas a la espalda
+      px(fx, -5, 2, 1, '#e8e4f0');                                           // mordaza
+      px(bx, -3, bw, 1, '#b8864a'); px(bx, 1, bw, 1, '#b8864a');             // cuerdas
+      px(-7, -1, 2, 3, sk);                                                  // manos atadas a la espalda
       px(0, -12, 1, 3, '#ffbe0b'); px(0, -8, 1, 1, '#ffbe0b');              // «!» de socorro
+      const sp = Math.floor(h.shiver * 0.35) % 4;                           // gota de sudor frío que resbala por la sien
+      if (sp < 2) px(fx > 0 ? 4 : -5, -7 + sp, 1, 1, '#9ff6ff');
     } else {
-      px(-8, -2, 2, 4, L.skin); px(6, -2, 2, 4, L.skin);                    // brazos sueltos
-    }
-    if (h.partner) {                                                         // herido: venda en la frente, moretón y sangre en la camisa
-      px(-3, -8, 7, 1, '#e8e4f0'); px(fx, -5, 2, 1, '#6b2f5a');
-      px(-3, -2, 3, 2, '#d90429'); px(1, 1, 2, 2, '#8a0a1d');
+      const ax = fem ? 1 : 0, bare = garment === 'tank';                     // brazos sueltos (mangas de la prenda o piel)
+      px(-8 + ax, -2, 2, 4, bare ? sk : top); px(6 - ax, -2, 2, 4, bare ? sk : top);
+      px(-8 + ax, 1, 2, 1, sk); px(6 - ax, 1, 2, 1, sk);
     }
     ctx.restore();
   }

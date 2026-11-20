@@ -1,4 +1,4 @@
-import { segmentIntersectT, seededRandom } from './utils.js';
+import { segmentIntersectT, seededRandom, hashString } from './utils.js';
 
 export const TILE = 32;
 const CORNER_TOLERANCE = 12; // px que se "empuja" al jugador para entrar en huecos (con 8, en una puerta de 32 u solo se entraba a ≤ 14 u del centro; ahora ≈ 18)
@@ -864,6 +864,29 @@ function placeActivities(map, enemies, rnd, occupied, doors) {
 
 // Rehenes: 1 en el piso 1 y 1-2 en los demás, atados a una silla en una SALA (no pasillo) vigilada (hay un enemigo de la misma sala a ≤ 7 casillas),
 // lejos de las puertas y de la entrada. Devuelve [{ tx, ty, x, y, look }].
+// ASPECTO DE LOS REHENES (urbano y crudo, hombres y mujeres): prenda (camiseta, sudadera, chaqueta, tirantes, rayas, chaleco reflectante), peinado (corto, rapado, cresta, calvo, largo, coleta, moño,
+// bob, gorra, gorro), pelo natural o teñido de neón, piel, accesorios (gafas, bufanda) y marcas de maltrato (moretón, manchas de suciedad). Se genera con una semilla propia
+// (posición, piso y las 4 tiradas antiguas), así que NO altera el resto del sorteo del piso: R repite los mismos rehenes y otra partida o piso los cambia.
+const H_TOPS = ['#cfc9bd', '#6b7a4a', '#a8573a', '#4a6a8a', '#c9a03a', '#2a2a34', '#7a2a3a', '#2a7a7a', '#d8508a', '#2ab8c8', '#8a8f98'];
+const H_SKIN = ['#f0c8a0', '#d9a67a', '#b9825a', '#8a5a3a', '#6a4028', '#e8b894'];
+const H_HAIR = ['#140a08', '#2a1a10', '#4a2a14', '#8a6a3a', '#c9a35a', '#b8b0a0', '#7a2a1a'];
+const H_DYE = ['#d8508a', '#2ab8c8', '#8a5ae0', '#7ad84a'];
+const H_STYLES = { m: ['short', 'short', 'buzz', 'mohawk', 'bald', 'cap', 'beanie', 'long'], f: ['long', 'long', 'ponytail', 'bun', 'bob', 'short', 'beanie', 'cap'] };
+const H_GARMENTS = ['tee', 'tee', 'hoodie', 'jacket', 'tank', 'stripes', 'vest'];
+function hostageLook(old, tx, ty, index) {
+  const r = seededRandom((hashString(`${old.shirt}${old.hair}${old.skin}${old.gender}`) ^ Math.imul(tx + 1, 73856093) ^ Math.imul(ty + 1, 19349663) ^ Math.imul(index + 7, 83492791)) >>> 0);
+  const pk = (a) => a[Math.floor(r() * a.length)];
+  const gender = old.gender;
+  const dye = r() < 0.18, top = pk(H_TOPS);
+  const accent = pk(H_TOPS.filter((c) => c !== top));
+  const garment = pk(H_GARMENTS);
+  return {
+    gender, shirt: garment === 'vest' ? pk(['#d8a21a', '#e0701a']) : top, shirt2: garment === 'vest' ? '#2a2a34' : accent, garment,
+    hair: dye ? pk(H_DYE) : pk(H_HAIR), skin: pk(H_SKIN), style: pk(H_STYLES[gender]), hat: pk(['#2a2a34', '#7a2a3a', '#2a4a6a', '#5a5a3a', '#8a8f98', '#a8573a']),
+    glasses: r() < 0.16, scarf: r() < 0.14 ? pk(['#d8508a', '#2ab8c8', '#c9a03a']) : null,
+    bruise: r() < 0.4, dirt: Math.floor(r() * 4), dirtSeed: Math.floor(r() * 1000),
+  };
+}
 function placeHostages(map, enemies, rnd, doors, mainDoorTy, entry, occupied, index) {
   const T = TILE;
   const zoneAt = (tx, ty) => map.zone[ty * map.w + tx];
@@ -909,7 +932,7 @@ function placeHostages(map, enemies, rnd, doors, mainDoorTy, entry, occupied, in
     if (out.length >= want) break;
     if (out.some((h) => Math.hypot(h.tx - tx, h.ty - ty) < 8)) continue;
     out.push({ tx, ty, x: tx * T + T / 2, y: ty * T + T / 2,
-      look: { shirt: pick(['#e8e4f0', '#7aa8d8', '#d8a85a', '#9ad88a', '#d88aa8']), hair: pick(['#140a08', '#4a2a14', '#8a6a3a', '#b8b0a0', '#7a2a1a']), skin: pick(['#d9a67a', '#b9825a', '#8a5a3a', '#f0c8a0']), gender: pick(['m', 'f']) },
+      look: hostageLook({ shirt: pick(['#e8e4f0', '#7aa8d8', '#d8a85a', '#9ad88a', '#d88aa8']), hair: pick(['#140a08', '#4a2a14', '#8a6a3a', '#b8b0a0', '#7a2a1a']), skin: pick(['#d9a67a', '#b9825a', '#8a5a3a', '#f0c8a0']), gender: pick(['m', 'f']) }, tx, ty, index),
       facing: Math.floor(rnd() * 4) * (Math.PI / 2) });
   }
   return out;
