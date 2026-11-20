@@ -1316,7 +1316,7 @@ export class Game {
     if (this.guilt) {
       const gp = this.player;
       if (!gp.alive || this.state === 'dead') this.guilt = null;
-      else if ((this.state === 'playing' || this.state === 'cleared') && !this.panel && !gp.exec && !gp.vomit && (this.guilt.t -= dt) <= 0) { this.guilt = null; gp.startVomit(this); }
+      else if ((this.state === 'playing' || this.state === 'cleared') && !this.panel && !gp.exec && !gp.vomit && (this.guilt.t -= dt) <= 0) { this.guilt = null; this.lore.noteGuilt(); gp.startVomit(this); }
     }
 
     this.bullets = this.bullets.filter((b) => b.alive);
@@ -1341,6 +1341,7 @@ export class Game {
       // La puerta principal la abre el agente al llegar a ella (animación; `doorPending`). En el piso 10 (trampa y final con la carrera de los dos agentes y el rehén de la IA) se abre sola.
       if (this.trap || (!this.doorAnimOn && this.keyOk())) { this.mainDoor.unlock(); this.sfx.play('unlock'); } else this.doorPending = true; // (con llave por recoger la puerta sigue cerrada)
       this.showCallout('PISO COMPLETADO', COLORS.player, 2.8, '¡EDIFICIO LIMPIO!'); // el objetivo (REGRESA A LA MOTO) sale al apagarse
+      this.lore.onCleared(); // la pila de cuerpos del piso 5 (con la puerta aún cerrada)
     }
     // Junto a la moto con el piso despejado: si no quedan rehenes atados, la fuga arranca sola; si quedan, solo se AVISA (el rescate es opcional) y el jugador decide:
     // ESPACIO / F (BOTA en táctil) para irse igualmente, o volver a por ellos.

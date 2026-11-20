@@ -105,7 +105,7 @@ export class StreetLife {
   }
 
   get run() { return this.game.streetRun; }
-  get ringing() { return !!this.phone && ((!this.game.entered && !this.run.phoneDone) || !!(this.game.lore && this.game.lore.callPending)); } // (la llamada de CENTRAL del piso 6 hace sonar el teléfono otra vez al despejar el piso)
+  get ringing() { const L = this.game.lore; return !!this.phone && ((!this.game.entered && !this.run.phoneDone && !(L && L.phoneMute()) && !(L && !L.phoneRingOk())) || !!(L && L.callPending)); } // (los pisos 3 y 10 tienen un teléfono que no suena) // (la llamada de CENTRAL del piso 6 hace sonar el teléfono otra vez al despejar el piso)
 
   // Objetivos de interacción: contenedores, máquina, cabina y, si llevas una moneda, los vagabundos a los que se les puede dar.
   targets() {
@@ -246,6 +246,11 @@ export class StreetLife {
   // Contesta la cabina: pista de lore o reto opcional (se resuelve al terminar el piso, ver settle()).
   answer() {
     const g = this.game, run = this.run;
+    if (!run.phoneLines && g.lore) {                 // llamada o grabación fija del piso (lore.js): sustituye a la pista / reto aleatorios
+      const sc = g.lore.phoneScript();
+      if (sc && sc.wait) { this.dialog = { lines: ['LÍNEA OCUPADA.'], t: 3 }; g.sfx.play('empty', 0.7); return; } // aún no toca (separación o presupuesto): se puede volver a probar
+      if (sc) { run.phoneLines = sc.lines; run.challenge = null; }
+    }
     if (!run.phoneLines) {
       if (this.rnd() < 0.6) {
         const def = CHALLENGES[Math.floor(this.rnd() * CHALLENGES.length)];
@@ -257,7 +262,7 @@ export class StreetLife {
       }
     }
     run.phoneDone = true;
-    this.dialog = { lines: run.phoneLines, t: 8 };
+    this.dialog = { lines: run.phoneLines, t: run.phoneLines.length > 2 ? 11 : 8 };
     g.sfx.play('pickup');
   }
 

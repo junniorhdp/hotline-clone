@@ -323,9 +323,10 @@ export class Player {
     if (a.t >= a.dur) { this.doorAnim = null; this.cooldown = Math.max(this.cooldown, 0.15); }
   }
 
-  startVomit(game) {
+  // `shock`: vómito de IMPACTO al ver la pila de cuerpos del piso 5 (lore.js): misma animación, pero NO viene de la culpa (no toca el karma ni la puntuación).
+  startVomit(game, shock = false) {
     if (this.vomit || !this.alive) return;
-    this.vomit = { t: 0, dur: 2.7, spurts: 0, wasMasked: this.masked };
+    this.vomit = { t: 0, dur: 2.7, spurts: 0, wasMasked: this.masked, shock };
     this.masked = false;
     this.moving = false; this.swing = 0; this.recoil = 0; this.muzzle = 0;
     game.sfx.play('maskOn', 0.6);
