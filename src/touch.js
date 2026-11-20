@@ -319,11 +319,35 @@ export class TouchControls {
     return d <= Math.min(def.range ?? 440, 440) + 10 && p.weapon && p.weapon.ammo > 0;
   }
 
+  // DISPARO AUTOMÁTICO con RATÓN (antes solo funcionaba en táctil: con el teclado y el ratón la opción no hacía nada): si el cursor apunta (cono de ~11° alrededor de la mira) a un enemigo vivo,
+  // a la vista y a tiro del arma (cuerpo a cuerpo: a su alcance; de fuego: hasta 440 u y con munición), el jugador ataca solo a la cadencia del arma. Se marca el objetivo como en táctil.
+  pcAutoFire() {
+    const g = this.game, input = g.input, p = g.player;
+    input.aimFiring = false;
+    this.lock = null;
+    if (!this.config.autoFire || !GAMEPLAY.has(g.state) || g.state === 'scuffle' || g.state === 'sewer' || g.panel || g.comms.cur || g.vignette || g.shot || !p || !p.alive || p.exec || p.vomit) return;
+    const m = g.mouseWorld(), raw = Math.atan2(m.y - p.y, m.x - p.x);
+    let best = null, bestScore = Infinity;
+    for (const e of g.enemies) {
+      if (!e.alive || e.state === 'down' || e.rise) continue;
+      const dx = e.x - p.x, dy = e.y - p.y, d = Math.hypot(dx, dy);
+      if (d > 440 || d < 1) continue;
+      const diff = Math.abs(angleDiff(Math.atan2(dy, dx), raw)), cone = 0.2 * (1 - 0.4 * (d / 440)) * (e === this.prevLock ? 1.25 : 1);
+      if (diff > cone || !lineOfSight(g.map, p.x, p.y, e.x, e.y)) continue;
+      const score = diff + d / 2000;
+      if (score < bestScore) { best = e; bestScore = score; }
+    }
+    this.prevLock = best;
+    if (!best) return;
+    this.lock = best;
+    if (this.autoFireWants()) input.aimFiring = true;
+  }
+
   // Se llama al principio de cada paso de simulación, antes de que el juego lea la entrada.
   update(dt) {
     const g = this.game, input = g.input, cfg = this.config;
     for (const id in this.flash) this.flash[id] = Math.max(0, this.flash[id] - dt);
-    if (!input.touchMode) { if (this.move || this.aim) this.reset(); return; }
+    if (!input.touchMode) { if (this.move || this.aim) this.reset(); this.pcAutoFire(); return; }
 
     if (!GAMEPLAY.has(g.state) || g.panel || g.comms.cur) {   // con una línea de comunicación en pantalla un toque es un clic (sin joysticks)
       if (this.move || this.aim || this.roles.size) this.reset();

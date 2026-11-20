@@ -4767,7 +4767,7 @@ export class Game {
   // disparar. Solo en táctil y mientras el joystick derecho apunta y hay objetivo (`touch.lock`).
   drawLockMark(ctx) {
     const e = this.touch.lock;
-    if (!this.input.touchMode || !e || !e.alive || !this.player.alive || this.panel) return;
+    if ((!this.input.touchMode && !this.touch.config.autoFire) || !e || !e.alive || !this.player.alive || this.panel) return; // táctil, o ratón con el disparo automático
     const t = performance.now() / 1000, R = 15;
     const firing = this.input.aimFiring || this.input.attackHeld;
     ctx.save();
