@@ -13,6 +13,7 @@ import { prologueSeen } from './prologue.js';
 const TITLE_OPTIONS = [
   { label: 'JUGAR', action: (g) => g.transition(() => g.startRunAt(0, !prologueSeen())) }, // la primera vez, el prólogo
   { label: 'PRÓLOGO', action: (g) => g.transition(() => g.startRunAt(0, true)) },
+  { label: 'CAMPO DE PRUEBAS', action: (g) => g.transition(() => g.startTestRange()) }, // nivel exclusivo para probar cada arma (testrange.js)
   { label: 'SELECCIONAR PISO', action: (g) => g.transition(() => g.menu.open('floors'), 0.15) },
   { label: 'RÉCORDS', action: (g) => g.transition(() => g.menu.open('records'), 0.15) },
   { label: 'OPCIONES', action: (g) => g.openOptions() },

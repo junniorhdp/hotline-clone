@@ -259,12 +259,13 @@ export class Enemy {
       if (this.poison > 0) return; // intoxicado: no se levanta (agoniza hasta morir o hasta que lo remates)
       this.timer -= dt;
       if (this.timer <= 0) {
-        this.state = 'alert';
+        this.state = this.dummy ? 'patrol' : 'alert';   // (el maniquí del campo de pruebas se levanta y sigue quieto)
         this.timer = REACTION_TIME * AI.react;
         this.target = { x: game.player.x, y: game.player.y };
       }
       return;
     }
+    if (this.dummy) { this.state = 'patrol'; this.windup = 0; this.aim = 0; this.sees = false; this.attackCd = 1; return; } // CAMPO DE PRUEBAS: quieto, ciego y sin ataque
 
     // Objetivo: el jugador, o el compañero del relevo si es al único que ve (el inactivo es un objetivo válido y vulnerable).
     let p = game.player;

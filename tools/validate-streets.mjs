@@ -5,17 +5,19 @@
 // Se ejecuta con `npm run check:levels` (junto a validate-levels.mjs).
 import { LEVELS, loadLevel, isWallTile, TILE } from '../src/map.js';
 import { PROLOGUE_DEF } from '../src/prologue.js';
+import { TESTRANGE_DEF } from '../src/testrange.js';
 
 let bad = 0;
 const fail = (m) => { bad++; console.log('  ✗ ' + m); };
 const seeds = Array.from({ length: 20 }, (_, k) => (k + 0.5) / 20);
 console.log('Calle exterior (20 semillas por piso)…');
 
-for (let n = 0; n <= LEVELS.length; n++) {
-  const pro = n === LEVELS.length, i = pro ? 0 : n; // el último es el prólogo
+const EXTRAS = [PROLOGUE_DEF, TESTRANGE_DEF]; // el prólogo y el campo de pruebas
+for (let n = 0; n < LEVELS.length + EXTRAS.length; n++) {
+  const ex = n >= LEVELS.length ? EXTRAS[n - LEVELS.length] : null, pro = !!ex, i = pro ? 0 : n;
   for (const sd of seeds) {
-    const L = loadLevel(i, () => sd, pro ? PROLOGUE_DEF : null), { map } = L, st = map.street;
-    const tag = `${pro ? 'prólogo' : 'piso ' + (i + 1)} semilla ${sd}`;
+    const L = loadLevel(i, () => sd, ex), { map } = L, st = map.street;
+    const tag = `${ex ? (ex === TESTRANGE_DEF ? 'campo de pruebas' : 'prólogo') : 'piso ' + (i + 1)} semilla ${sd}`;
     const solid = (tx, ty) => isWallTile(map, tx, ty);
     const start = [Math.floor(L.player.x / TILE), Math.floor(L.player.y / TILE)];
     const seen = new Set([start.join()]), q = [start];

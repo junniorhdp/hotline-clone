@@ -17,6 +17,7 @@ import { BikeExit, EXIT_EXTRA } from './exits.js';
 import { StreetLife, newStreetRun } from './street.js';
 import { Hostages } from './hostages.js';
 import { PROLOGUE_DEF } from './prologue.js';
+import { TESTRANGE_DEF } from './testrange.js';
 import { PrologueFlow } from './prologue-flow.js';
 import { Comms, drawTalkingMask, voiceFor, talkBlips } from './comms.js';
 import { weaponCategory } from './weapons.js';
@@ -248,6 +249,7 @@ export class Game {
     this.flow = new PrologueFlow(this); // lógica y estado del prólogo / tutorial (instrucciones, salto, fin): prologue-flow.js
     this.finalExit = null; this.ladderRoom = null; this.climb = null; this.emerge = null; this.descent = null; this.sewerRun = null; this.sewerStash = null; this.sewerRoute = null; this.keyRoute = false; this.hasKey = false; this.keyDrop = null; this.keyHintAt = 0; this.shutAt = 0; // piso 3: entrada por la alcantarilla y llave de salida
     this.cineK = 0; // 0..1: cuánto están puestas las barras de cine de llegada / fuga (anima las barras y el fundido del HUD)
+    this.testRange = false; // CAMPO DE PRUEBAS (testrange.js): nivel exclusivo para probar armas, fuera de la campaña
     this.prologue = false; // tutorial aparte del piso 1 (ver prologue.js): sin resultados, récords ni estadísticas de campaña
     this.debug = false;
     this.acc = 0;
@@ -616,6 +618,7 @@ export class Game {
     const en = e.kind === 'shield' ? new ShieldGuard(e.x, e.y, e.patrol, weapon, e.melee) : new Enemy(e.x, e.y, e.patrol, weapon, e.kind, e.melee);
     // Portador: solo si su máscara aún no está desbloqueada (si no, es un enemigo normal).
     if (e.carrier && !this.settings.isMaskUnlocked(e.carrier)) en.setCarrier(e.carrier);
+    if (e.dummy) en.dummy = true; // maniquí del campo de pruebas
     if (e.keyCarrier) en.hasKey = true; // lleva la llave de la puerta principal (piso 3): la suelta al caer
     if (e.scared) en.scared = true; // asustado: se paraliza al verte (prólogo; ver Enemy.freeze)
     if (e.activity && e.activity !== 'patrol') en.setActivity(e.activity, e.seatAngle ?? null); // fumando, sentado o vigilando (ver placeActivities en map.js)
@@ -948,10 +951,31 @@ export class Game {
   skipPrologue() { this.flow.skip(); }              // saltarlo (P mantenida, botón táctil o pausa)
 
   // Partida nueva empezando en el piso `index` (desde el menú o el selector de pisos).
+  // CAMPO DE PRUEBAS: se entra directo (sin selección de máscara, llegada en moto ni bloqueo): ya dentro, con la máscara puesta y sin arma. Nada de lo que pase aquí se guarda.
+  startTestRange() {
+    this.sfx.pickTrack();
+    this.runId = newRunId();
+    this.prologue = false; this.testRange = true;
+    this.comms.forget(); this.flow.forget();
+    this.buff = null;
+    this.streetRun = newStreetRun();
+    this.civilianBase = { hurt: 0, killed: 0, gifts: 0 };
+    this.trapRetry = false; this.finalRetry = false; this.finalRole = null; this.trapCheckpoint = null; this.finalCheckpoint = null;
+    this.score.newRun(this.history.best());
+    this.resetStains();
+    this.scuffleCount = 0;
+    this.levelIndex = 0;
+    this.mask = this.mask || MASKS[0];
+    this.entered = true;
+    this.entryWeapon = null;
+    this.reset();
+    this.showCallout('CAMPO DE PRUEBAS', COLORS.player, 3.2, 'ELIGE UN ARMA DEL MOSTRADOR · LOS MANIQUÍES NO SE MUEVEN');
+  }
+
   startRunAt(index, prologue = false) {
     this.sfx.pickTrack(); // pista de combate de la partida nueva (sin repetir la última)
     this.runId = newRunId();
-    this.prologue = prologue;
+    this.prologue = prologue; this.testRange = false;
     this.comms.forget(); this.flow.forget();
     this.buff = null;
     this.streetRun = newStreetRun();
@@ -970,7 +994,7 @@ export class Game {
   openMenu(screen = 'title') {
     if (this.sewerRun) this.restoreFromSewer();
     this.state = 'menu';
-    this.prologue = false;
+    this.prologue = false; this.testRange = false;
     this.showRecords = false;
     this.menu.open(screen);
     this.sfx.setMusic('menu');
@@ -1029,7 +1053,7 @@ export class Game {
     // Armas aleatorias con semilla por partida y piso: al reintentar (R) todo sigue en su sitio;
     // en una partida nueva cambian.
     this.sfx.stopMoto(0.05); // R, piso nuevo...: si la moto sonaba, se corta limpia
-    const level = loadLevel(this.levelIndex, seededRandom(hashString(`${this.runId}:${this.levelIndex}`)), this.prologue ? PROLOGUE_DEF : null);
+    const level = loadLevel(this.levelIndex, seededRandom(hashString(`${this.runId}:${this.levelIndex}`)), this.prologue ? PROLOGUE_DEF : this.testRange ? TESTRANGE_DEF : null);
     if (this.prologue) this.flow.dressPartner(level); // el compañero es el otro agente (la otra máscara se la cedes al liberarlo)
     this.levelName = level.name;
     this.dark = level.dark;       // piso en penumbra (ver map.dark y renderDark)
@@ -1067,7 +1091,8 @@ export class Game {
     this.camera.mul = this.camera.mulTarget = 1;
     this.sfx.setSlowMo(false);
     this.enemies = level.enemies.map((e) => this.makeEnemy(e));
-    this.levelEnemyCount = this.enemies.length; // (los refuerzos de la trampilla se añaden después: ver spawnAmbushEnemy)
+    this.levelEnemyCount = this.enemies.length;
+    this.rangeSlots = level.rangeSlots ? level.rangeSlots.map((s) => ({ ...s, t: 0 })) : null; this.rangeDefs = this.testRange ? level.enemies : null; // campo de pruebas: huecos de armas y definiciones para reaparecer los maniquís // (los refuerzos de la trampilla se añaden después: ver spawnAmbushEnemy)
     this.pickups = level.weapons.map((w) => new Pickup(w.type, w.x, w.y));
     this.doors = level.doors.map((d) => new Door(d.tx, d.ty, d.horizontal, d.main));
     this.mainDoor = this.doors.find((d) => d.main);
@@ -1095,11 +1120,11 @@ export class Game {
     this.results = null;
     this.showRecords = false;
     this.bannerTimer = INTRO_BANNER_TIME;
-    this.sfx.setMusic(retryInside ? 'action' : 'menu'); // la música de combate empieza al entrar
+    this.sfx.setMusic(retryInside && !this.testRange ? 'action' : 'menu'); // la música de combate empieza al entrar (el campo de pruebas, siempre tranquilo)
 
     // Las capas estáticas solo se regeneran al cambiar de piso O de partida: la calle exterior es distinta en cada partida (runId),
     // y con R (mismo piso y partida) se conservan.
-    const layersKey = `${this.levelIndex}${this.prologue ? 'p' : ''}:${this.runId}`;
+    const layersKey = `${this.levelIndex}${this.prologue ? 'p' : ''}${this.testRange ? 't' : ''}:${this.runId}`;
     if (this.layersLevel !== layersKey) {
       this.layersLevel = layersKey;
       this.floorLayer = renderFloor(this.map);
@@ -1284,12 +1309,13 @@ export class Game {
     // El bloqueo solo salta al cruzar el umbral HACIA DENTRO: y por encima del umbral Y dentro de la huella del edificio
     // (la calle de arriba y de los lados también tiene y < lockY, y ahí no se bloquea nada).
     this.updateKey(dt);
+    if (this.testRange) this.updateRange(dt);
     if (this.state === 'playing' && !this.inside && this.player.alive && this.inBuilding(this.player) && !this.sewerRoute) this.beginLockdown(); // (con la ruta de la alcantarilla se entra por la escalera: ver endSewer)
     if (this.trap) this.updateTrap(dt);
     if (this.doorPending && !this.doorAnimOn && this.keyOk()) { this.doorPending = false; this.mainDoor.unlock(); this.sfx.play('unlock'); } // (se desactivó la animación con la puerta pendiente)
     if (this.state === 'cleared' && this.doorPending && this.keyOk() && this.player.alive && !this.player.doorAnim && !this.player.vomit && !this.player.exec
       && Math.hypot(this.player.x - this.mainDoor.cx, this.player.y - this.mainDoor.cy) < 84) { this.doorPending = false; this.player.startDoorAnim(this, 'open', this.mainDoor); }
-    if (this.state === 'playing' && this.inside && this.enemies.every((e) => !e.alive) && (!this.trap || (this.trap.state === 'done' && this.final && this.final.done))) { // con trampa: resolverla, reencontrarse y ganar la fase final antes de dar el piso por despejado
+    if (this.state === 'playing' && this.inside && !this.testRange && this.enemies.every((e) => !e.alive) && (!this.trap || (this.trap.state === 'done' && this.final && this.final.done))) { // con trampa: resolverla, reencontrarse y ganar la fase final antes de dar el piso por despejado
       this.state = 'cleared';
       // Se acabó la adrenalina: `setMusic('empty')` corta la música con el frenazo de cinta y
       // abre el ambiente del edificio vacío, que acompaña hasta la moto. La puerta se desbloquea.
@@ -2812,6 +2838,39 @@ export class Game {
     this.showCallout(role === 'limpieza' ? 'LIMPIEZA' : 'PERÍMETRO', COLORS.player, 2.4, role === 'limpieza' ? 'DESPEJA EL EDIFICIO' : 'DEFIENDE LA CALLE: 2 OLEADAS');
   }
 
+  // --- Campo de pruebas: reposición de armas y reaparición de maniquís -------------------------------------------------------------------------------
+  // Cada hueco del mostrador repone su arma 0,8 s después de que se coja (así se pueden probar todas, las veces que haga falta); los maniquís caídos reaparecen en su sitio a los 2,5 s
+  // (un enemigo nuevo: vida y escudo completos, limpio de veneno), con un destello de neón.
+  updateRange(dt) {
+    if (this.rangeSlots) {
+      for (const s of this.rangeSlots) {
+        if (this.pickups.some((k) => k.alive && k.type === s.type && Math.hypot(k.x - s.x, k.y - s.y) < 22)) { s.t = 0; continue; }
+        s.t += dt;
+        if (s.t >= 0.8) { s.t = 0; this.pickups.push(new Pickup(s.type, s.x, s.y)); this.particles.neon(s.x, s.y, 0, 8, Math.PI * 2); }
+      }
+    }
+    if (this.rangeDefs) {
+      for (let i = 0; i < this.rangeDefs.length; i++) {
+        const e = this.enemies[i];
+        if (!e || e.alive) continue;
+        e.respT = (e.respT || 0) + dt;
+        if (e.respT < 2.5) continue;
+        const n = this.makeEnemy(this.rangeDefs[i]);
+        this.enemies[i] = n;
+        this.particles.neon(n.x, n.y, 0, 10, Math.PI * 2);
+      }
+    }
+  }
+
+  // Los nombres de las armas sobre el mostrador del campo de pruebas.
+  drawRangeLabels(ctx) {
+    if (!this.testRange || !this.rangeSlots) return;
+    this.rangeSlots.forEach((s, i) => {          // en dos alturas alternas: los nombres largos no se pisan con los de al lado
+      const d = WEAPON_DEFS[s.type], name = d.short || d.name;
+      drawText(ctx, name, s.x, s.y + 12 + (i % 2) * 14, { color: '#9d8fb8', scale: WORLD_PX, align: 'center' });
+    });
+  }
+
   // PUNTO DE REPETICIÓN DE LA FASE FINAL: se captura al empezar el asalto (rol elegido y salida hecha) y otra vez al TERMINAR la emboscada de la trampilla (los refuerzos ya van a por ti).
   // R vuelve exactamente a ese momento: los mismos enemigos vivos, en su sitio y con la MISMA conciencia (los que ya iban a por ti siguen yendo a por ti, no «olvidan»), los refuerzos de
   // la trampilla ya fuera y en persecución (la emboscada no se repite) y el agente con el ARMA con la que empezó (y su munición), no con las manos vacías.
@@ -4149,6 +4208,7 @@ export class Game {
     this.drawExecuteMarks(ctx);
     this.drawLockMark(ctx);
     this.drawKey(ctx); // llave de la puerta principal (piso 3)
+    this.drawRangeLabels(ctx); // campo de pruebas: nombre de cada arma
     for (const p of this.pickups) p.draw(ctx, this.time);
     this.drawMaskDrops(ctx);
     for (const b of this.bullets) b.draw(ctx);
