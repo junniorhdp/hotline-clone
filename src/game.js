@@ -17,7 +17,6 @@ import { BikeExit, EXIT_EXTRA } from './exits.js';
 import { StreetLife, newStreetRun } from './street.js';
 import { Hostages } from './hostages.js';
 import { PROLOGUE_DEF } from './prologue.js';
-import { TESTRANGE_DEF } from './testrange.js';
 import { PrologueFlow } from './prologue-flow.js';
 import { Comms, drawTalkingMask, voiceFor, talkBlips } from './comms.js';
 import { weaponCategory } from './weapons.js';
@@ -249,6 +248,7 @@ export class Game {
     this.flow = new PrologueFlow(this); // lógica y estado del prólogo / tutorial (instrucciones, salto, fin): prologue-flow.js
     this.finalExit = null; this.ladderRoom = null; this.climb = null; this.emerge = null; this.descent = null; this.sewerRun = null; this.sewerStash = null; this.sewerRoute = null; this.keyRoute = false; this.hasKey = false; this.keyDrop = null; this.keyHintAt = 0; this.shutAt = 0; // piso 3: entrada por la alcantarilla y llave de salida
     this.cineK = 0; // 0..1: cuánto están puestas las barras de cine de llegada / fuga (anima las barras y el fundido del HUD)
+    this.testRangeDef = null; // definición del campo de pruebas: la inyecta main.js SOLO en desarrollo (import dinámico), nunca en el build publicado
     this.testRange = false; // CAMPO DE PRUEBAS (testrange.js): nivel exclusivo para probar armas, fuera de la campaña
     this.prologue = false; // tutorial aparte del piso 1 (ver prologue.js): sin resultados, récords ni estadísticas de campaña
     this.debug = false;
@@ -953,6 +953,7 @@ export class Game {
   // Partida nueva empezando en el piso `index` (desde el menú o el selector de pisos).
   // CAMPO DE PRUEBAS: se entra directo (sin selección de máscara, llegada en moto ni bloqueo): ya dentro, con la máscara puesta y sin arma. Nada de lo que pase aquí se guarda.
   startTestRange() {
+    if (!this.testRangeDef) return; // el nivel solo se carga en desarrollo (main.js): en el build publicado no existe
     this.sfx.pickTrack();
     this.runId = newRunId();
     this.prologue = false; this.testRange = true;
@@ -1053,7 +1054,7 @@ export class Game {
     // Armas aleatorias con semilla por partida y piso: al reintentar (R) todo sigue en su sitio;
     // en una partida nueva cambian.
     this.sfx.stopMoto(0.05); // R, piso nuevo...: si la moto sonaba, se corta limpia
-    const level = loadLevel(this.levelIndex, seededRandom(hashString(`${this.runId}:${this.levelIndex}`)), this.prologue ? PROLOGUE_DEF : this.testRange ? TESTRANGE_DEF : null);
+    const level = loadLevel(this.levelIndex, seededRandom(hashString(`${this.runId}:${this.levelIndex}`)), this.prologue ? PROLOGUE_DEF : this.testRange ? this.testRangeDef : null);
     if (this.prologue) this.flow.dressPartner(level); // el compañero es el otro agente (la otra máscara se la cedes al liberarlo)
     this.levelName = level.name;
     this.dark = level.dark;       // piso en penumbra (ver map.dark y renderDark)
