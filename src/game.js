@@ -1473,15 +1473,15 @@ export class Game {
     const p = this.player;
     if (this.state !== 'playing' || !p.alive) return;
     if (this.scuffleGrace > 0) { e.attackCd = 0.4; return; } // acaba de forcejear: ese golpe no cuenta
-    if (e.civ) { this.killPlayer(angle); return; }            // civil hostil: sin forcejeo (son muchos): su golpe te mata y el tuyo, si llega antes, los mata a ellos
+    if (e.civ) { this.killPlayer(angle, e); return; }         // civil hostil: sin forcejeo (son muchos): su golpe te mata y el tuyo, si llega antes, los mata a ellos
     const frontal = Math.abs(angleDiff(angle + Math.PI, p.angle)) < 1.75;
     const pc = this.playerCategory(), ec = e.category;
-    if (!frontal || p.exec || ec === 'gun' || e.kind === 'boss') { this.killPlayer(angle); return; }
+    if (!frontal || p.exec || ec === 'gun' || e.kind === 'boss') { this.killPlayer(angle, e); return; }
     if (pc === 'gun') this.defensiveShot(e);
     else if (pc === 'unarmed' && ec === 'unarmed') this.startScuffle(e, angle, 'fists');
     else if (pc !== 'unarmed' && ec !== 'unarmed') this.startScuffle(e, angle, 'clash');
     else if (pc !== 'unarmed') this.playerCounter(e);   // arma tuya contra sus puños: resuelves tú
-    else this.killPlayer(angle);                        // sus armas contra tus puños: resuelve él
+    else this.killPlayer(angle, e);                     // sus armas contra tus puños: resuelve él
   }
 
   // Categoría de lo que lleva el jugador. Una pistola/escopeta/subfusil sin balas es un palo: cuenta como puños.
@@ -1624,7 +1624,7 @@ export class Game {
     const sc = this.scuffle, e = sc.e, p = this.player;
     const angle = Math.atan2(p.y - e.y, p.x - e.x);
     this.endScuffle();
-    this.killPlayer(angle); // el enemigo lo ejecuta: R reintenta el piso (restartLevel)
+    this.killPlayer(angle, e); // el enemigo lo ejecuta: R reintenta el piso (restartLevel)
   }
 
   // Filtro "VS" sobre la escena (viñeta escalonada de alto contraste, tinte neón agresivo, destellos de color en
@@ -4106,13 +4106,14 @@ export class Game {
   }
 
   // El compañero inactivo cae de un golpe (bala o cuerpo a cuerpo): Game Over con su propio mensaje.
-  killPartner(angle) {
+  killPartner(angle, killer = null) {
     const t = this.partner;
     if (!t || !t.alive || t.immortal || this.state !== 'playing') return; // (en la fase final el aliado es inmortal: la IA no puede pagar su torpeza)
     t.alive = false;
     this.state = 'dead';
     this.deathMsg = 'TU COMPAÑERO HA CAÍDO';
-    this.bleed(t.x, t.y, angle, 1.3, 0.7);
+    const kd = killer && killer.meleeWeapon && WEAPON_DEFS[killer.meleeWeapon];
+    this.bleed(t.x, t.y, angle, 1.3, 0.7, !!(kd && kd.poison)); // arma oxidada: sangre verde
     this.drawCorpse(t.x, t.y, angle, 'playerCorpse');
     this.camera.addShake(10);
     this.fx.kick(1);
@@ -4122,17 +4123,19 @@ export class Game {
 
   partnerStrike(e) {
     const t = this.partner;
-    if (t) this.killPartner(Math.atan2(t.y - e.y, t.x - e.x));
+    if (t) this.killPartner(Math.atan2(t.y - e.y, t.x - e.x), e);
   }
 
-  killPlayer(angle) {
+  // `killer`: el enemigo que lo mata (si lo hay). Con un ARMA OXIDADA en la mano (`poison`: tubo o cuchillo oxidados) la muerte sangra VERDE tóxica; con cualquier otra, roja como siempre.
+  killPlayer(angle, killer = null) {
     if ((this.state !== 'playing' && this.state !== 'sewer') || !this.player.alive || this.player.doorAnim) return; // (el agente es intocable mientras cierra / abre la puerta: ~0,8 s sin control; ver Player.startDoorAnim)
     const p = this.player;
     p.alive = false;
     p.cancelExecution(); // si lo matan a mitad de un remate, el derribado no se queda congelado
     p.vomit = null;
     this.state = 'dead';
-    this.bleed(p.x, p.y, angle, 1.3, 0.7);
+    const kd = killer && killer.meleeWeapon && WEAPON_DEFS[killer.meleeWeapon];
+    this.bleed(p.x, p.y, angle, 1.3, 0.7, !!(kd && kd.poison));
     this.drawCorpse(p.x, p.y, angle, 'playerCorpse');
     if (p.weapon) { const pk = new Pickup(p.weapon.type, p.x, p.y, p.weapon.ammo); pk.blood = p.weapon.blood || null; this.pickups.push(pk); }
     this.camera.addShake(10);

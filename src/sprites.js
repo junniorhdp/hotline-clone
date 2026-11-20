@@ -548,6 +548,10 @@ const RECOLORS = {
   bikeShadow: ['bike', { k: '#05000f', V: '#05000f', v: '#05000f', j: '#05000f', L: '#05000f', J: '#05000f', Z: '#05000f', z: '#05000f', w: '#05000f' }],
   footMid: ['foot', { r: COLORS.bloodMid }],
   footDark: ['foot', { r: COLORS.bloodDark }],
+  // Huellas VERDES (pisar sangre tóxica de un enemigo intoxicado o de un arma oxidada): mismos tres tonos que las rojas con la paleta TOXIC de particles.js.
+  footG: ['foot', { r: '#7fb81e' }],
+  footGMid: ['foot', { r: '#5f8f18' }],
+  footGDark: ['foot', { r: '#3d5c12' }],
 };
 
 // Colores de las ARMAS BASE (las letras P/p/q/z/Z de sus cuadrículas se recolorean aquí, sin tocar los demás sprites que las comparten): bate de madera marrón, cuchillo de acero con mango
