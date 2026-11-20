@@ -3380,6 +3380,28 @@ export class Game {
     this.camera.addShake(4);
   }
 
+  // SOLO DESARROLLO (`npm run dev`): salta directo a la fase final del piso 10 con un karma de civiles de prueba, sin jugar la campaña. Uso desde la consola (F12):
+  //   game.devFinal('malo', 'limpieza')   ·   game.devFinal('bueno', 'perimetro')   ·   'mixto' = ambos   ·   role: 'limpieza' | 'perimetro'
+  // Deja 2 enemigos vivos (como si ya hubieras limpiado casi todo), la trampa resuelta y el rol elegido; la partida es la normal (no se guarda nada si abandonas).
+  devFinal(karma = 'malo', role = 'limpieza') {
+    if (!import.meta.env.DEV) return;
+    const look = (i) => ({ gender: i % 2 ? 'f' : 'm', coat: ['#5a4a38', '#3a4a5a', '#5a3a4a', '#4a5a3a', '#6a5a2a', '#3a3a4a'][i % 6], hair: ['#2a1a0a', '#6a4a1a', '#aaaaaa'][i % 3], skin: '#c9966a', hat: ['none', 'beanie', 'cap', 'hood'][i % 4], item: 'none' });
+    const bad = karma === 'malo' || karma === 'mixto', good = karma === 'bueno' || karma === 'mixto';
+    const step = (n) => { for (let i = 0; i < n; i++) { Game.prototype.update.call(this, 1 / 60); this.input.endStep(); } };
+    this.fade = null; this.startRunAt(9, false); this.fade = null;
+    this.maskIndex = 0; this.confirmMask(); if (this.maskPhase === 'support') { this.maskIndex = 1; this.confirmMask(); }
+    step(20); if (this.cine) this.cine.t = 999; step(250);
+    this.civilianBase = { hurt: bad ? 1 : 0, killed: bad ? 3 : 0, gifts: good ? 4 : 0, helped: good ? [0, 1, 2, 3].map(look) : [] };
+    this.civilianRecord = cloneKarma(this.civilianBase);
+    const T = this.trap;
+    this.inside = true; this.entered = true; this.player.putOnMask(this);
+    this.enemies.filter((e) => e.alive).slice(2).forEach((e) => this.killEnemy(e, 0, 'bullet'));
+    step(3); this.player.x = T.center.x; this.player.y = T.center.y; step(2);
+    for (let i = 0; i < 500 && this.state !== 'playing'; i++) step(1);
+    this.trapSolved(); step(2); this.startReunion(); for (let i = 0; i < 200 && this.state !== 'role'; i++) step(1);
+    this.chooseRole(role === 'perimetro' ? 1 : 0);
+  }
+
   // --- Aliados civiles (karma invisible, tanda 3) ---------------------------------------------------------------------------------------------------
   // Con buen karma (`civilianBase.helped`: los civiles a los que diste una moneda, con su aspecto; tope 6) vienen a pelear a tu lado en la fase final: en LIMPIEZA suben por la escalera del
   // cuarto de servicio, en PERÍMETRO esperan en la calle junto a la puerta. Misma vida que un personaje (caen de un golpe) y matan a un enemigo de un golpe. Para igualar las armas de
