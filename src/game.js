@@ -12,7 +12,8 @@ import { Boss, drawBossBar } from './boss.js';
 import { bloodyMaskPortrait, PORTRAIT_PAD, BLOOD_DROPS, villainPortrait, villainDef, AGENTS, drawGenderIcon, drawAgentPreview, drawPadlock } from './portraits.js';
 import { Ads } from './ads.js';
 import { Sewer } from './sewer.js';
-import { civLine } from './barks.js';
+import { civLine, allyLine } from './barks.js';
+import { CivAlly } from './civally.js';
 import { SewerRun } from './tunnel.js';
 import { BikeExit, EXIT_EXTRA } from './exits.js';
 import { StreetLife, newStreetRun } from './street.js';
@@ -48,7 +49,7 @@ import { Sfx } from './audio.js';
 import { ScreenFx } from './effects.js';
 import { drawSprite, pixelDisc, pixelRect, BLOOD_LEVELS, WORLD_PX, playerBody, drawMaskHead } from './sprites.js';
 import { drawText, measureText, CELL_H } from './pixelfont.js';
-import { civiliansHelp, newKarma, cloneKarma, hostileCivCount } from './street.js';
+import { civiliansHelp, newKarma, cloneKarma, hostileCivCount, friendlyCivCount } from './street.js';
 import { COLORS, TAU, rand, clamp, angleDiff, closestOnSegment, seededRandom, hashString } from './utils.js';
 
 const STEP = 1 / 60;       // paso fijo de simulación (60 FPS)
@@ -1094,6 +1095,7 @@ export class Game {
     this.camera.mul = this.camera.mulTarget = 1;
     this.sfx.setSlowMo(false);
     this.enemies = level.enemies.map((e) => this.makeEnemy(e));
+    this.allies = []; // aliados civiles de la fase final del piso 10 (karma bueno: ver spawnAllies)
     this.levelEnemyCount = this.enemies.length;
     this.rangeSlots = level.rangeSlots ? level.rangeSlots.map((s) => ({ ...s, t: 0 })) : null; this.rangeDefs = this.testRange ? level.enemies : null; // campo de pruebas: huecos de armas y definiciones para reaparecer los maniquís // (los refuerzos de la trampilla se añaden después: ver spawnAmbushEnemy)
     this.pickups = level.weapons.map((w) => new Pickup(w.type, w.x, w.y));
@@ -1282,6 +1284,7 @@ export class Game {
     if (this.map.reveal > 0) this.map.reveal -= dt;
     resetAiBudget(this.input.touchMode); // tope de rutas y búsquedas de cobertura por fotograma (reparte el coste de las alarmas)
     for (const e of this.enemies) if (e.alive) e.update(dt, this);
+    for (const a of this.allies) if (a.alive) a.update(dt, this);
     this.cams.update(dt);
 
     this.updateDoors(dt);
@@ -2197,7 +2200,7 @@ export class Game {
     for (const door of this.doors) {
       door.update(dt);
       if (door.slammed) { door.slammed = false; this.slamEffects(door); }
-      for (const e of this.enemies) {
+      for (const e of this.allies.length ? this.enemies.concat(this.allies) : this.enemies) {
         if (!e.standing) continue;
         const hit = door.collide(e, this.map, { pushSpeed: ENEMY_PUSH_SPEED, canPush: () => e.doorContact() });
         if (hit === 'knock') this.doorKnock(door, e);
@@ -2258,6 +2261,11 @@ export class Game {
         }
       } else if (p.alive && segmentPointDistance(b.px, b.py, b.x, b.y, p.x, p.y) < p.r + b.r) {
         this.killPlayer(Math.atan2(b.vy, b.vx));
+        b.alive = false;
+        b.hitWall = false;
+      } else if (this.allies.some((a) => a.alive && !a.rise && segmentPointDistance(b.px, b.py, b.x, b.y, a.x, a.y) < a.r + b.r)) {
+        const a = this.allies.find((q) => q.alive && !q.rise && segmentPointDistance(b.px, b.py, b.x, b.y, q.x, q.y) < q.r + b.r);
+        this.allyHit(a, Math.atan2(b.vy, b.vx)); // las balas enemigas alcanzan a los aliados civiles (la tapa de alcantarilla aguanta)
         b.alive = false;
         b.hitWall = false;
       } else if (this.partner && this.partner.alive && !this.partner.away && segmentPointDistance(b.px, b.py, b.x, b.y, this.partner.x, this.partner.y) < this.partner.r + b.r) {
@@ -2840,6 +2848,7 @@ export class Game {
   // Arranque del asalto final tras situar a los agentes (directo en un reintento, o al acabar la salida animada).
   startFinalPlay(role, retry = false) {
     if (role === 'perimetro') this.supplyDrop(true); // quien defiende la calle empieza armado y con armas a mano
+    this.spawnAllies(role); // karma bueno: civiles ayudados que pelean a tu lado (y mafiosos extra); también tras R
     if (!retry) this.captureFinalCheckpoint(); // PUNTO DE REPETICIÓN de la fase final: así empieza el asalto (ver captureFinalCheckpoint)
     this.camera.snap(this.player.x, this.player.y);
     this.showCallout(role === 'limpieza' ? 'LIMPIEZA' : 'PERÍMETRO', COLORS.player, 2.4, role === 'limpieza' ? 'DESPEJA EL EDIFICIO' : 'DEFIENDE LA CALLE: 2 OLEADAS');
@@ -2913,7 +2922,7 @@ export class Game {
     p.weapon = cp.weapon ? { ...cp.weapon } : null;                                                              // y con tu arma, no sin ella
     for (const c of cp.enemies) {
       if (c.ambushIdx !== undefined) this.spawnAmbushEnemy(c.ambushIdx, { x: c.x, y: c.y });                    // refuerzo de la trampilla (siempre en persecución)
-      else { const e = this.enemies[c.i]; e.x = c.x; e.y = c.y; e.angle = c.angle; e.path = null; if (c.aware) this.alertEnemy(e); }
+      else if (c.i < n0) { const e = this.enemies[c.i]; e.x = c.x; e.y = c.y; e.angle = c.angle; e.path = null; if (c.aware) this.alertEnemy(e); }
     }
   }
 
@@ -3070,6 +3079,7 @@ export class Game {
   }
 
   startEnding() {
+    this.allies = [];
     const F = this.final, T = this.trap, inter = F.role === 'limpieza';
     const runner = inter ? this.player : this.partner, waiter = inter ? this.partner : this.player, M = T.meet;
     this.endingDone = true; this.detNear = false; this.detHold = 0;
@@ -3370,6 +3380,84 @@ export class Game {
     this.camera.addShake(4);
   }
 
+  // --- Aliados civiles (karma invisible, tanda 3) ---------------------------------------------------------------------------------------------------
+  // Con buen karma (`civilianBase.helped`: los civiles a los que diste una moneda, con su aspecto; tope 6) vienen a pelear a tu lado en la fase final: en LIMPIEZA suben por la escalera del
+  // cuarto de servicio, en PERÍMETRO esperan en la calle junto a la puerta. Misma vida que un personaje (caen de un golpe) y matan a un enemigo de un golpe. Para igualar las armas de
+  // la mafia: los enemigos te prefieren a ti (solo se vuelven contra un aliado si te pierden de vista o lo tienen mucho más cerca), apuntan un 30 % más despacio contra ellos, uno de cada
+  // tres lleva una tapa de alcantarilla (escudo frontal que aguanta 3 impactos) y la mafia manda 1 mafioso extra por cada 2 aliados. Con karma mixto salen aliados y civiles hostiles.
+  spawnAllies(role) {
+    this.allies = [];
+    const n = friendlyCivCount(this.civilianBase);
+    if (!n) return;
+    const T = this.trap, rng = seededRandom(hashString(`${this.runId}:ally:${this.levelIndex}`)), L = this.ladderRoom && this.ladderRoom.ladder;
+    for (let i = 0; i < n; i++) {
+      const weapon = CIV_WEAPONS[Math.floor(rng() * CIV_WEAPONS.length)];
+      let x, y;
+      if (role === 'limpieza' && L) { x = L.x; y = L.y; }
+      else { x = T.ext.x + (i - (n - 1) / 2) * 26; y = T.ext.y + 14 + (i % 2) * 18; if (isSolidAt(this.map, x, y)) { x = T.ext.x; y = T.ext.y; } }
+      const a = new CivAlly(x, y, weapon, this.civilianBase.helped[i], i % 3 === 2);
+      if (role === 'limpieza' && L) a.rise = { t: -(1 + i * 0.7) };                  // suben uno tras otro por la escalera, tras un instante de golpes
+      this.allies.push(a);
+    }
+    // Mafiosos extra: 1 por cada 2 aliados (en LIMPIEZA salen por la trampilla —o la escalera—, en PERÍMETRO por los extremos de la calle, con la 1.ª oleada).
+    const extra = Math.floor(n / 2), kinds = [{ kind: 'grunt', weapon: 'smg' }, { kind: 'grunt', weapon: 'gun' }, { kind: 'runner' }, { kind: 'heavy', weapon: 'shotgun' }], H = this.hatch;
+    for (let i = 0; i < extra; i++) {
+      const d = kinds[i % kinds.length];
+      let x, y;
+      if (role === 'limpieza') { const o = H || { x: L.x, y: L.y }; x = o.x + Math.cos(i * 2.1) * 20; y = o.y + Math.sin(i * 2.1) * 20; }
+      else { const sp = T.spawns[i % 2 ? 'w' : 'e'][i % 6]; x = sp.x; y = sp.y; }
+      const en = this.makeEnemy({ x, y, patrol: [{ x, y }], weapon: d.weapon || null, kind: d.kind });
+      this.alertEnemy(en);
+      if (role === 'perimetro') en.wave = 1;
+      this.enemies.push(en);
+    }
+    if (extra) this.addFloat(this.player.x, this.player.y - 30, '¡LA MAFIA REFUERZA!', COLORS.blood, 1, 1.8);
+  }
+
+  // El aliado más cercano (en pie, a la vista y a ≤ 260 u) hacia el que un enemigo puede volverse en vez de ir a por ti.
+  allyFor(e) {
+    let best = null, bd = 260;
+    for (const a of this.allies) {
+      if (!a.alive || a.rise) continue;
+      const d = Math.hypot(a.x - e.x, a.y - e.y);
+      if (d < bd && lineOfSight(this.map, e.x, e.y, a.x, a.y)) { bd = d; best = a; }
+    }
+    return best;
+  }
+
+  // Un enemigo golpea (cuerpo a cuerpo o bala) a un aliado: la tapa aguanta los impactos de frente; si no, cae de un golpe.
+  allyHit(a, angle) {
+    if (!a.alive) return;
+    if (a.shield > 0 && Math.abs(angleDiff(angle + Math.PI, a.angle)) < 1.1) {
+      a.shield--;
+      this.particles.sparks(a.x + Math.cos(a.angle) * 12, a.y + Math.sin(a.angle) * 12, a.angle, 8, 1);
+      this.playAt('ricochet', a.x, a.y, 0.8);
+      if (!a.shield) this.addFloat(a.x, a.y - 22, '¡LA TAPA CEDIÓ!', COLORS.enemy, 1, 1.2);
+      return;
+    }
+    a.alive = false;
+    a.corpse = { x: a.x, y: a.y };
+    this.bleed(a.x, a.y, angle, 1, 0.7);
+    this.drawCorpse(a.x, a.y, angle, 'civCorpse');
+    this.camera.addShake(5);
+    this.playAt('hit', a.x, a.y, 0.8);
+  }
+
+  // Un aliado golpea a un enemigo: lo mata de un golpe (sin puntos ni sangre en ti); los acorazados (escudo, jefe) solo se derriban.
+  allyStrike(a, e) {
+    const ang = Math.atan2(e.y - a.y, e.x - a.x);
+    this.playAt('hit', e.x, e.y, 0.7);
+    if (e.guardKill) { this.knockDown(e, ang, 'melee'); return; }
+    if (!e.alive) return;
+    e.alive = false;
+    this.dropWeapon(e);
+    if (e.hasKey) this.dropKey(e);
+    e.corpse = { x: e.x + Math.cos(ang) * 8, y: e.y + Math.sin(ang) * 8 };
+    this.bleed(e.x, e.y, ang, 1.35, 0.9);
+    this.drawCorpse(e.x, e.y, ang, e.corpseSprite || (e.armed ? 'armedCorpse' : 'enemyCorpse'), e.corpseScale || 1);
+    this.camera.addShake(6);
+  }
+
   // LIMPIEZA: cuenta atrás (solo en juego, así no corre durante la cinemática de la trampilla), ruidos en la alcantarilla y los civiles suben de uno en uno.
   updateCivs(dt) {
     const F = this.final;
@@ -3394,6 +3482,12 @@ export class Game {
       }
       if (K.spawned >= F.civ.length) F.civRumble = null;
     }
+    F.allyShout = (F.allyShout ?? 4) - dt;
+    if (F.allyShout <= 0) {
+      F.allyShout = 5 + Math.random() * 3;
+      const al = this.allies.filter((a) => a.alive && !a.rise);
+      if (al.length) { const a = al[Math.floor(Math.random() * al.length)]; this.addFloat(a.x, a.y - 24, allyLine(this.lastBark), COLORS.player, 1, 1.5); }
+    }
     F.civShout -= dt;                               // de vez en cuando, uno de los que ya vienen a por ti grita algo cruel
     if (F.civShout <= 0) {
       F.civShout = 2.4 + Math.random() * 1.6;
@@ -3405,7 +3499,7 @@ export class Game {
   // Un civil hostil subiendo por la escalera (se hunde y asoma como los agentes: ver drawThroughHole).
   drawRising(ctx, e) {
     const hole = this.ladderRoom ? this.ladderRoom.ladder : { x: e.x, y: e.y };
-    this.drawThroughHole(ctx, e, hole, Math.max(0, 1 - e.rise.t / 0.9), () => e.draw(ctx, this.time, this));
+    this.drawThroughHole(ctx, e, hole, Math.min(1, Math.max(0, 1 - e.rise.t / 0.9)), () => e.draw(ctx, this.time, this));
   }
 
   // IA del aliado (el agente que no controlas): dispara a todo enemigo con visión a ≤ 300 u; en PERÍMETRO avanza por el edificio hacia el enemigo interior más cercano
@@ -4298,6 +4392,7 @@ export class Game {
     this.drawMaskDrops(ctx);
     for (const b of this.bullets) b.draw(ctx);
     for (const e of this.enemies) if (e.standing) { if (e.rise) this.drawRising(ctx, e); else e.draw(ctx, this.time, this); }
+    for (const a of this.allies) if (a.alive) { if (a.rise) this.drawRising(ctx, a); else a.draw(ctx, this.time, this); }
     this.drawPoison(ctx);
     if (this.darkLayer) ctx.drawImage(this.darkLayer, 0, 0, pixelW, pixelH);
     this.drawPartner(ctx); // penumbra: atenúa enemigos y objetos; el jugador se dibuja encima (siempre se ve)

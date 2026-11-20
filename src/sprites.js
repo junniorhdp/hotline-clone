@@ -162,6 +162,8 @@ const DEFS = {
   // Candado de la puerta principal bloqueada (5×5).
   lock: ['.zzz.', 'z...z', 'rrrrr', 'rrkrr', 'rrrrr'],
   // Bota del pisotón (remate sin arma), mirando a +X: banda cian en el talón, puntera clara.
+  // Tapa de alcantarilla como escudo del aliado civil (vista de lado, mirando a +X): placa vertical de acero con borde.
+  allyShield: ['.kk', 'kzZ', 'kzZ', 'kzZ', 'kzZ', 'kzZ', 'kzZ', 'kzZ', '.kk'],
   boot: ['.kkkkkk.', 'kjZZzzzk', 'kjZZzzzk', 'kjZZzzzk', '.kkkkkk.'],
   // Huella de suela, mirando a +X: talón (2 píxeles) y planta (3×3). 6×3 píxeles = 12×6 unidades.
   foot: ['...rr.', 'rr.rrr', '...rr.'],
@@ -562,6 +564,15 @@ const WEAPON_SKINS = {
   crowbar: { z: '#b8bcc8', Z: '#7a8090' }, // (la palanqueta plana de la calle: acero natural; el óxido E/e se queda)
   cleaver: { z: '#d3d8e2', Z: '#8a91a2' },
 };
+
+// Sprite del civil ayudado (aliado, fase final del piso 10) con SU aspecto (`look` del vagabundo: abrigo, pelo y gorro): el del enemigo normal recoloreado y cacheado por aspecto.
+export function civSpriteName(look) {
+  const hat = look.hat === 'beanie' ? '#6a2a2a' : look.hat === 'cap' ? '#2a3a5a' : look.hat === 'hood' ? shadeHex(look.coat, 0.55) : look.hair;
+  const name = `civ_${look.coat}_${hat}`.replace(/#/g, '');
+  const cache = sprites();
+  if (!cache[name]) cache[name] = buildSprite(DEFS.enemy, { y: look.coat, Y: shadeHex(look.coat, 0.62), u: shadeHex(look.coat, 1.35), c: hat, C: shadeHex(hat, 0.6), m: shadeHex(hat, 1.5) });
+  return name;
+}
 
 // Variantes de color del civil hostil: abrigo (y/Y/u = base, sombra y luz) y gorro (c/C/m).
 function shadeHex(hex, k) {

@@ -279,6 +279,9 @@ export class Enemy {
     this.sees = p.alive && this.canSee(p, game.map);
     const pt = game.partner;
     if (!this.sees && pt && pt.alive && !pt.away && this.canSee(pt, game.map)) { p = pt; this.sees = true; }
+    // ALIADOS CIVILES: el jugador tiene prioridad; un aliado solo se vuelve el objetivo si te pierde de vista o lo tiene muy encima (ver Game.allyFor).
+    const al = game.allyFor ? game.allyFor(this) : null;
+    if (al && (!this.sees || Math.hypot(al.x - this.x, al.y - this.y) < 0.45 * Math.hypot(p.x - this.x, p.y - this.y))) { p = al; this.sees = true; }
     this.focus = p;
     if (this.state !== 'patrol') { this.seated = false; this.smoking = false; } // se levanta / tira el cigarrillo en cuanto pasa algo
     if (this.sees) {
@@ -462,7 +465,7 @@ export class Enemy {
         if (this.attackCd <= 0) {
           if (this.aim === 0) game.playAt('aim', this.x, this.y);
           this.aim += dt;
-          if (this.aim >= def.windup * AI.windup) {
+          if (this.aim >= this.aimTime()) {
             this.aim = 0;
             this.burstLeft = def.burst;
             this.burstTimer = 0;
@@ -484,6 +487,7 @@ export class Enemy {
           this.attackCd = ATTACK_COOLDOWN * AI.cooldown;
           this.swingT = 0.15;
           if (p === game.partner) game.partnerStrike(this); // el compañero inactivo no forcejea: cae de un golpe
+          else if (p.isAlly) game.allyHit(p, angleToPlayer); // un aliado civil: cae de un golpe (o la tapa aguanta)
       else game.enemyStrike(this, angleToPlayer); // frontal = forcejeo; por la espalda mata
         }
       }
@@ -674,6 +678,9 @@ export class Enemy {
     return false;
   }
 
+  // Tiempo de apuntado antes de disparar: contra un aliado civil tarda un 30 % más (parte de lo que iguala las armas de los mafiosos).
+  aimTime() { return this.gunDef.windup * AI.windup * (this.focus && this.focus.isAlly ? 1.3 : 1); }
+
   // Llamado por la puerta al tocarla: ¿puede empujarla ya? Si no, empieza la pausa.
   doorContact() {
     if (this.doorPushTime > 0) return true;
@@ -705,7 +712,7 @@ export class Enemy {
     // Mira láser durante el wind-up del disparo: avisa de que va a disparar.
     if (this.aim > 0) {
       // Línea de puntos pixelada que se va llenando: avisa de que va a disparar.
-      const t = this.aim / (this.gunDef.windup * AI.windup);
+      const t = this.aim / this.aimTime();
       const len = castRay(game.map, this.x, this.y, this.angle, this.gunDef.range + 80);
       const cos = Math.cos(this.angle), sin = Math.sin(this.angle);
       ctx.save();
