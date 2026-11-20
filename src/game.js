@@ -2362,10 +2362,12 @@ export class Game {
     if (e.hasKey) this.dropKey(e);
     e.corpse = { x: e.x + Math.cos(angle) * 8, y: e.y + Math.sin(angle) * 8 }; // donde se estampa el cadáver
     const tox = this.isToxicKill(e, cause);
-    this.bleed(e.x, e.y, angle, feel.power, feel.wide, tox);
-    this.stainPlayer(feel.power, angle, tox);
+    const wd = this.player.weapon && WEAPON_DEFS[this.player.weapon.type];
+    const power = feel.power * ((cause === 'melee' || cause === 'execution') && wd && wd.gore ? wd.gore : 1); // el bate con clavos (`gore`) es más sangriento
+    this.bleed(e.x, e.y, angle, power, feel.wide, tox);
+    this.stainPlayer(power, angle, tox);
     // El arma que llevas se mancha con lo que mata: golpe, remate o disparo TUYO (las balas del aliado no manchan tu arma).
-    if (cause === 'melee' || cause === 'execution' || (cause === 'bullet' && src && src.src && !src.ally && this.player.weapon && src.src === this.player.weapon.type)) this.stainWeapon(feel.power, tox);
+    if (cause === 'melee' || cause === 'execution' || (cause === 'bullet' && src && src.src && !src.ally && this.player.weapon && src.src === this.player.weapon.type)) this.stainWeapon(power, tox);
     this.drawCorpse(e.x, e.y, angle, e.corpseSprite || (e.armed ? 'armedCorpse' : 'enemyCorpse'), e.corpseScale || 1);
     this.camera.addShake(feel.shake);
     this.fx.kick(feel.fx);

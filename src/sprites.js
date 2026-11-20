@@ -25,6 +25,7 @@ const PALETTE = {
   r: COLORS.blood,                           // huella de sangre (footMid y footDark la recolorean)
   1: '#4fbf4a', 2: '#2a7a3a', 3: '#a8f08a', 4: '#e8e6b0', 5: '#ffd23a', 7: '#ffffff', // cocodrilo
   6: '#d88a8a', 8: '#6a5a4a', // rata
+  W: '#a8723a', T: '#5a3418', // madera clara y oscura (bate con clavos)
 };
 
 // Cuerpo del jugador (plantilla): vista cenital, hombros perpendiculares a la mirada, mangas
@@ -165,6 +166,8 @@ const DEFS = {
   // Huella de suela, mirando a +X: talón (2 píxeles) y planta (3×3). 6×3 píxeles = 12×6 unidades.
   foot: ['...rr.', 'rr.rrr', '...rr.'],
   bat: ['.......PPPPP.', 'PPPPPPPpqqqpP', '.......PPPPP.'],
+  // Bate con clavos (contenedores): madera marrón con clavos de acero que sobresalen de la cabeza.
+  nailbat: ['........z.z..', '.......TTTTT.', 'TTTTTTTWzWzWT', '.......TTTTT.', '........z.z..'],
   gun: ['PPPPPPPP', 'PqqqqqqP', 'PpPPPPPP', 'PP......'],
   shotgun: ['PPPP..........', 'PpqpPPPPPPPPPP', 'PPPPPPP.......'],
   knife: ['PPPpqqqqq', 'PPPpqqqq.'],

@@ -37,7 +37,7 @@ export const EXEC_STYLES = {
   burst: { time: 0.52, hits: [0.24, 0.31, 0.38] },  // subfusil: ráfaga de tres
 };
 // Armas con la misma ejecución y gesto de ataque que una base (las improvisadas de la calle).
-const STYLE_ALIAS = { rustpipe: 'pipe', crowbar: 'pipe', rustknife: 'knife', cleaver: 'pipe' };
+const STYLE_ALIAS = { rustpipe: 'pipe', crowbar: 'pipe', rustknife: 'knife', cleaver: 'pipe', nailbat: 'bat' };
 // El cuchillo de carnicero tiene su propia ejecución (EXEC_STYLES.cleaver) pero se anima como el tubo (levanta y golpea).
 const POSE_STYLE = { cleaver: 'pipe' };
 // Retroceso al disparar (segundos que dura, empuje del arma hacia atrás y del cuerpo, y si bombea).
@@ -601,9 +601,9 @@ export class Player {
           swingOffset = 0.12 * this.punchSide * p;
           bodyLean = 2 * p;
         } else {
-          const e = type === 'bat' ? Math.pow(t, 1.6) : t;
+          const e = (STYLE_ALIAS[type] || type) === 'bat' ? Math.pow(t, 1.6) : t;
           swingOffset = (e - 0.5) * def.arc * this.punchSide;
-          bodyLean = (type === 'bat' ? 3 : 2) * Math.sin(t * Math.PI);
+          bodyLean = ((STYLE_ALIAS[type] || type) === 'bat' ? 3 : 2) * Math.sin(t * Math.PI);
         }
       } else if (this.recoil > 0 && RECOIL[type]) {
         const rc = RECOIL[type], u = this.recoil / this.recoilMax; // 1 → 0
