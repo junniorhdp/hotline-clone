@@ -42,6 +42,9 @@ export const OPTIONS = [
     apply: (g, v) => g.setAiLevel(v) },
   // Sin la animación, la puerta principal se cierra al cruzar el umbral y se abre al despejar el piso al instante (como antes), sin que el agente se pare a cerrarla / abrirla.
   { id: 'doorAnim', section: 'JUEGO', label: 'ANIMACIÓN DE LA PUERTA', type: 'toggle', default: true },
+  // Piezas narrativas cortas (viñetas, llamadas y pistas) entre pisos. En NO solo queda el esqueleto mínimo: la lista (V1), la llamada de CENTRAL del piso 6 y la moneda final (V7). Ver lore.js.
+  { id: 'loreHints', section: 'JUEGO', label: 'PISTAS DE HISTORIA', type: 'toggle', default: true,
+    apply: (g, v) => { if (g.lore) g.lore.hintsOn = !!v; } },
   { id: 'goreEnabled', section: 'JUEGO', label: 'SANGRE', type: 'toggle', default: true,
     apply: (g) => g.refreshGore() },
   // --- Controles táctiles: escriben en `TouchControls.config` (TOUCH_CONFIG) ---

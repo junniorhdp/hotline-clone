@@ -21,6 +21,7 @@ import { Hostages } from './hostages.js';
 import { PROLOGUE_DEF } from './prologue.js';
 import { PrologueFlow } from './prologue-flow.js';
 import { Comms, drawTalkingMask, voiceFor, talkBlips } from './comms.js';
+import { Lore } from './lore.js';
 import { weaponCategory } from './weapons.js';
 import { buildOptionsMenu, buildPauseMenu } from './options-menu.js';
 import { Player, bloodLevelFor, FINISH_RANGE } from './player.js';
@@ -247,6 +248,8 @@ export class Game {
     this.showRecords = false;
     this.levelIndex = 0;
     this.comms = new Comms(this); // líneas cortas de lore no modales (prólogo)
+    this.lore = new Lore(this);   // piezas narrativas cortas entre pisos (viñetas, llamadas y pistas): ver lore.js
+    this.vignette = null;         // viñeta a pantalla completa en curso
     this.flow = new PrologueFlow(this); // lógica y estado del prólogo / tutorial (instrucciones, salto, fin): prologue-flow.js
     this.finalExit = null; this.ladderRoom = null; this.climb = null; this.emerge = null; this.descent = null; this.sewerRun = null; this.sewerStash = null; this.sewerRoute = null; this.keyRoute = false; this.hasKey = false; this.keyDrop = null; this.keyHintAt = 0; this.shutAt = 0; // piso 3: entrada por la alcantarilla y llave de salida
     this.cineK = 0; // 0..1: cuánto están puestas las barras de cine de llegada / fuga (anima las barras y el fundido del HUD)
@@ -387,6 +390,7 @@ export class Game {
   // Entra en un piso nuevo (el total de puntos acumulado se conserva) pasando antes por la
   // selección de máscara.
   goToLevel(index) {
+    this.lore.enterFloor(index); // presupuesto de piezas narrativas por piso
     this.sfx.pickTrack(); // pista de combate del piso nuevo (sin repetir la última); con R se conserva
     this.levelIndex = index;
     this.streetRun = newStreetRun();
@@ -410,6 +414,7 @@ export class Game {
     this.maskIndex = this.maskList.indexOf(this.mask);
     // Posición inicial del ratón: solo un movimiento real cambia la selección.
     this.maskMouse = this.mouseInternal();
+    this.lore.onMaskSelect(); // V1 (la lista) la primera vez, en el piso 1
   }
 
   confirmMask() {
@@ -902,6 +907,7 @@ export class Game {
   // Al pisar la salida (con la pantalla ya en negro): resultados, Top 5 y estadísticas del piso.
   finishFloor() {
     if (this.prologue) { this.endPrologue(); return; } // el prólogo no tiene resultados ni guarda nada
+    if (this.lore.beforeResults(() => this.finishFloor())) return; // V7 (cara o cruz) antes de los resultados del último piso
     this.state = 'results';
     this.resultsAge = 0;
     const challenge = this.street.settle(); // reto de la cabina telefónica (suma su bonus antes del rango)
@@ -977,6 +983,7 @@ export class Game {
   }
 
   startRunAt(index, prologue = false) {
+    this.lore.startRun(index, prologue); // piezas narrativas: otra partida, vuelven a poder salir (y las de pisos anteriores al de salida se descartan)
     this.sfx.pickTrack(); // pista de combate de la partida nueva (sin repetir la última)
     this.runId = newRunId();
     this.prologue = prologue; this.testRange = false;
@@ -1202,9 +1209,11 @@ export class Game {
     const confirm = input.wasPressed('Space') || input.wasPressed('Enter') || input.wasPressed('NumpadEnter');
     const back = input.wasPressed('Escape');
 
+    this.lore.update(dt);
     if (this.fade) { this.updateFade(dt); return; }
     // Menú modal abierto (OPCIONES / PAUSA): el juego está congelado y solo él lee la entrada.
     if (this.panel) { this.panel.update(); return; }
+    if (this.vignette) { if (this.vignette.update(dt)) { const v = this.vignette; this.vignette = null; if (v.onEnd) v.onEnd(); } return; } // viñeta narrativa: congela el juego (se salta manteniendo)
     if (this.state === 'menu') { this.menu.update(); return; }
     if (this.state === 'initials') { this.updateInitials(dt); return; }
     if (this.state === 'gameover') {
@@ -1245,7 +1254,7 @@ export class Game {
     if (this.state === 'ascend') { this.updateAscend(dt); return; }
     if (this.state === 'emerge') { this.updateEmerge(dt); return; }
     if (this.state === 'sewer') { this.updateSewer(dt); return; }
-    if (this.comms.cur) { this.comms.step(dt, confirm || input.mousePressed.left); return; } // línea de comunicación del prólogo: el mundo se congela (como la radio del piso 10)
+    if (this.comms.cur) { if (this.comms.cur.skippable && this.holdSkip(this.comms, dt)) this.comms.skipAll(); else this.comms.step(dt, confirm || input.mousePressed.left); return; } // línea de comunicación del prólogo: el mundo se congela (como la radio del piso 10)
     if (this.state === 'ambush') { this.updateAmbush(dt); return; }
     if (this.state === 'exit') { this.updateExit(dt, confirm || input.mousePressed.left); return; }
     if (this.state === 'ending') { this.updateEnding(dt, input.down('Enter')); return; }
@@ -5393,6 +5402,8 @@ export class Game {
       this.touch.drawScreenButtons(ctx);
     }
     this.comms.draw(ctx, w, h); // encima de todo el HUD
+    if (this.comms.cur && this.comms.cur.skippable && this.comms.cur.age > 0.8) this.drawSkipHint(ctx, w, 10 + this.safe.t, this.comms); // pista de «mantén para saltar» (llamada de CENTRAL)
+    if (this.vignette) this.vignette.draw(ctx, w, h);        // viñeta narrativa a pantalla completa
     if (!this.comms.cur) this.fadeHud(ctx, w, h, (c) => this.touch.draw(c));
     if (this.state === 'results') this.drawResults(ctx, w, h);
     this.drawToast(ctx);

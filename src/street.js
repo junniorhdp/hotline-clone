@@ -103,7 +103,7 @@ export class StreetLife {
   }
 
   get run() { return this.game.streetRun; }
-  get ringing() { return !!this.phone && !this.game.entered && !this.run.phoneDone; }
+  get ringing() { return !!this.phone && ((!this.game.entered && !this.run.phoneDone) || !!(this.game.lore && this.game.lore.callPending)); } // (la llamada de CENTRAL del piso 6 hace sonar el teléfono otra vez al despejar el piso)
 
   // Objetivos de interacción: contenedores, máquina, cabina y, si llevas una moneda, los vagabundos a los que se les puede dar.
   targets() {
@@ -236,6 +236,7 @@ export class StreetLife {
       g.sfx.play('pickup', 0.7);
     } else if (t.kind === 'phone') {
       if (this.dialog) { this.dialog = null; return; }
+      if (g.lore && g.lore.callPending) { g.lore.startCall(); return; } // la llamada de CENTRAL (piso 6)
       this.answer();
     }
   }

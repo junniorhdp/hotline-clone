@@ -49,11 +49,21 @@ export class Comms {
     this.seen.add(id);
     const lines = entries.map((e) => {
       const sp = typeof e.speaker === 'string' ? SPEAKERS[e.speaker] : e.speaker;
-      return { who: sp.name, color: sp.color, text: e.text, portrait: sp.portrait || null, tag: sp.tag || 'RADIO', focus: e.focus || null, t: 0, age: 0, open: 0, urgent: !!opts.urgent };
+      return { who: sp.name, color: sp.color, text: e.text, portrait: sp.portrait || null, tag: sp.tag || 'RADIO', focus: e.focus || null, skippable: !!opts.skippable, t: 0, age: 0, open: 0, urgent: !!opts.urgent };
     });
     if (opts.onEnd && lines.length) lines[lines.length - 1].onEnd = opts.onEnd; // se llama al cerrar la última línea
     if (opts.urgent) this.queue.unshift(...lines); else this.queue.push(...lines);
     return true;
+  }
+
+  // Salta toda la conversación que queda (mantener ESPACIO / ENTER: ver Game.update): cierra y llama al `onEnd` de la última línea.
+  skipAll() {
+    const last = this.queue.length ? this.queue[this.queue.length - 1] : this.cur;
+    const had = this.cur && this.cur.focus;
+    this.queue.length = 0; this.cur = null; this.gap = GAP;
+    if (had) this.game.camera.snap(this.game.player.x, this.game.player.y);
+    this.game.player.cooldown = Math.max(this.game.player.cooldown, 0.3);
+    if (last && last.onEnd) last.onEnd();
   }
 
   // ¿Se puede hablar? (sin panel, fundido, forcejeo, vómito, ejecución ni puerta en animación...). Las urgentes no exigen que no haya enemigos en alerta.
