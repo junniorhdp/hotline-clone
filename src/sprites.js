@@ -527,6 +527,8 @@ const RECOLORS = {
   enemyDown: ['lying', {}],
   enemyCorpse: ['lying', { b: '#8c6a00', B: '#5c4500', s: '#9a5a40', S: '#6e3c2a' }],
   // Corredor (rosa, cuerpo a cuerpo) y guardia pesado (chaleco granate y mangas de acero).
+  // CIVILES HOSTILES (fase final del piso 10): el sprite del enemigo normal con abrigos de vagabundo (los de `npcs.js`) y gorro; 6 variantes y un cadáver.
+  ...civilianRecolors(),
   enemyRunner: ['enemy', { y: '#ff4fa3', Y: '#a31f66', u: '#ffc2e0', c: '#05d9e8', C: '#037f8c', m: '#9ff6ff' }],
   enemyOperator: ['enemy', { y: '#2ab7a9', Y: '#187a70' }], // operador de cámaras: camisa verde azulada
   enemyShield: ['enemyArmed', { v: '#3d4f66', V: '#202b38', y: '#8fa3ba', Y: '#566a82' }], // blindado: chaleco y mangas de acero azulado
@@ -560,6 +562,22 @@ const WEAPON_SKINS = {
   crowbar: { z: '#b8bcc8', Z: '#7a8090' }, // (la palanqueta plana de la calle: acero natural; el óxido E/e se queda)
   cleaver: { z: '#d3d8e2', Z: '#8a91a2' },
 };
+
+// Variantes de color del civil hostil: abrigo (y/Y/u = base, sombra y luz) y gorro (c/C/m).
+function shadeHex(hex, k) {
+  const n = parseInt(hex.slice(1), 16), ch = (v) => Math.max(0, Math.min(255, Math.round(v * k)));
+  return '#' + [(n >> 16) & 255, (n >> 8) & 255, n & 255].map((v) => ch(v).toString(16).padStart(2, '0')).join('');
+}
+function civilianRecolors() {
+  const CIV_COATS = ['#5a4a38', '#3a4a5a', '#5a3a4a', '#4a5a3a', '#6a5a2a', '#3a3a4a'], CIV_HATS = ['#2a2a3a', '#7a2a1a', '#4a2a14', '#1f3a2a', '#5a5a6a', '#3a1f4a']; // (dentro: RECOLORS se evalúa antes que las constantes del módulo)
+  const out = {};
+  CIV_COATS.forEach((coat, i) => {
+    const hat = CIV_HATS[i];
+    out[`enemyCiv${i}`] = ['enemy', { y: coat, Y: shadeHex(coat, 0.62), u: shadeHex(coat, 1.35), c: hat, C: shadeHex(hat, 0.6), m: shadeHex(hat, 1.5) }];
+  });
+  out.civCorpse = ['lying', { b: '#5a4a38', B: '#3a2e22', s: '#9a5a40', S: '#6e3c2a' }];
+  return out;
+}
 
 // Crea un bitmap a partir de filas de texto; `overrides` sustituye colores de la paleta base.
 export function buildSprite(rows, overrides = {}) {

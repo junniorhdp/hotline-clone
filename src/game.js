@@ -12,6 +12,7 @@ import { Boss, drawBossBar } from './boss.js';
 import { bloodyMaskPortrait, PORTRAIT_PAD, BLOOD_DROPS, villainPortrait, villainDef, AGENTS, drawGenderIcon, drawAgentPreview, drawPadlock } from './portraits.js';
 import { Ads } from './ads.js';
 import { Sewer } from './sewer.js';
+import { civLine } from './barks.js';
 import { SewerRun } from './tunnel.js';
 import { BikeExit, EXIT_EXTRA } from './exits.js';
 import { StreetLife, newStreetRun } from './street.js';
@@ -41,13 +42,13 @@ const WAVES = [
 const RUNOVER_FLIGHT = 0.7; // s que tarda el jugador atropellado en estamparse contra la «pantalla»
 const ALARM_REACH = 18; // casillas de recorrido (a través de puertas) a las que llega un grito de alerta
 import { Door, ENEMY_PUSH_SPEED } from './doors.js';
-import { Pickup, Bullet, ENEMY_WEAPONS, WEAPON_DEFS, segmentPointDistance, weaponGore, newWeaponBlood, stainWeaponBlood } from './weapons.js';
+import { Pickup, Bullet, ENEMY_WEAPONS, WEAPON_DEFS, CIV_WEAPONS, segmentPointDistance, weaponGore, newWeaponBlood, stainWeaponBlood } from './weapons.js';
 import { Particles, Footprints, GIB_COLORS, TOXIC, RED, TOXIC_GIBS, VOMIT, palOf } from './particles.js';
 import { Sfx } from './audio.js';
 import { ScreenFx } from './effects.js';
 import { drawSprite, pixelDisc, pixelRect, BLOOD_LEVELS, WORLD_PX, playerBody, drawMaskHead } from './sprites.js';
 import { drawText, measureText, CELL_H } from './pixelfont.js';
-import { civiliansHelp, newKarma, cloneKarma } from './street.js';
+import { civiliansHelp, newKarma, cloneKarma, hostileCivCount } from './street.js';
 import { COLORS, TAU, rand, clamp, angleDiff, closestOnSegment, seededRandom, hashString } from './utils.js';
 
 const STEP = 1 / 60;       // paso fijo de simulación (60 FPS)
@@ -1469,6 +1470,7 @@ export class Game {
     const p = this.player;
     if (this.state !== 'playing' || !p.alive) return;
     if (this.scuffleGrace > 0) { e.attackCd = 0.4; return; } // acaba de forcejear: ese golpe no cuenta
+    if (e.civ) { this.killPlayer(angle); return; }            // civil hostil: sin forcejeo (son muchos): su golpe te mata y el tuyo, si llega antes, los mata a ellos
     const frontal = Math.abs(angleDiff(angle + Math.PI, p.angle)) < 1.75;
     const pc = this.playerCategory(), ec = e.category;
     if (!frontal || p.exec || ec === 'gun' || e.kind === 'boss') { this.killPlayer(angle); return; }
@@ -2826,9 +2828,12 @@ export class Game {
         far.slice(FINAL_KEEP).forEach((e) => { e.alive = false; });
       }
     }
-    this.final = { role, wave: 0, stage: 'wait', timer: 3.5, done: false, montage: null, ambushPending: false };
+    this.final = { role, wave: 0, stage: 'wait', timer: 3.5, done: false, montage: null, ambushPending: false, civ: this.makeCivCast(), civPending: false, civRumble: null, civT: 0, civShout: 3 };
+    this.final.civPending = this.final.civ.length > 0;
     // Emboscada: solo si juegas LIMPIEZA (dentro) y al elegirlo quedan menos de AMBUSH_MIN enemigos vivos; con 3 o más no ocurre nunca (y con R, que deja 6, tampoco).
     if (role === 'limpieza' && this.hatch && !this.hatch.used && this.enemies.filter((e) => e.alive).length < AMBUSH_MIN) this.final.ambushPending = true;
+    // Civiles hostiles en LIMPIEZA: tras la emboscada de la trampilla (o a los pocos segundos si no hay emboscada) suben por la escalera del cuarto de servicio.
+    this.final.civT = this.final.civPending ? (this.hatch && this.hatch.used ? 4 : this.final.ambushPending ? 5.5 : 8) : 0;
     if (animated) this.beginExit(out, role); else this.startFinalPlay(role, retry);
   }
 
@@ -2983,12 +2988,12 @@ export class Game {
 
   // Un agente que sube (sink 1 → 0) o baja (0 → 1) por una boca: recortado por el borde del hueco, desplazado hacia abajo, algo más pequeño cuanto más hondo y con las manos
   // agarradas al borde mientras asoma.
-  drawThroughHole(ctx, agent, hole, sink) {
+  drawThroughHole(ctx, agent, hole, sink, fn = null) {
     const s = 0.82 + 0.18 * (1 - sink);
     ctx.save();
     ctx.beginPath(); ctx.rect(hole.x - 120, hole.y - 160, 240, 176); ctx.clip();
     ctx.translate(agent.x, agent.y + sink * 28); ctx.scale(s, s); ctx.translate(-agent.x, -agent.y);
-    agent.draw(ctx);
+    if (fn) fn(); else agent.draw(ctx);
     ctx.restore();
     if (sink > 0.12 && sink < 0.92) {                           // las manos sobre el borde de la boca
       for (const side of [-1, 1]) {
@@ -3005,14 +3010,20 @@ export class Game {
     this.updateAlly(dt);
     if (F.ambushPending) { F.ambushPending = false; this.startAmbush(); return; } // antes de comprobar si el piso está despejado
     if (F.done) return;
-    if (F.role === 'limpieza') { if (this.enemies.every((e) => !e.alive)) F.done = true; return; }
+    this.updateCivs(dt);
+    if (F.role === 'limpieza') { if (!F.civPending && !F.civRumble && this.enemies.every((e) => !e.alive)) F.done = true; return; }
     // PERÍMETRO: oleadas por la calle; al caer la segunda, el compañero termina la limpieza interior
     const waveAlive = this.enemies.some((e) => e.alive && e.wave === F.wave);
     if (F.stage === 'wait') { F.timer -= dt; if (F.timer <= 0) this.spawnWave(1); }
     else if (F.stage === 'fight' && !waveAlive) {
       if (F.wave < WAVES.length) { F.stage = 'gap'; F.timer = 5; this.supplyDrop(false); this.addFloat(this.player.x, this.player.y - 26, `OLEADA ${F.wave}/${WAVES.length} DERROTADA`, COLORS.player, 1, 1.6); }
       else { F.stage = 'secure'; F.montage = { t: 0 }; this.showCallout('PERÍMETRO ASEGURADO', COLORS.player, 2.6, 'TU COMPAÑERO TERMINA LA LIMPIEZA'); this.sfx.play('unlock'); }
-    } else if (F.stage === 'gap') { F.timer -= dt; if (F.timer <= 0) this.spawnWave(F.wave + 1); }
+    } else if (F.stage === 'gap') {
+      F.timer -= dt;
+      if (F.timer <= 0) { if (F.civPending && F.wave === 1) this.spawnCivGroup(); else this.spawnWave(F.wave + 1); } // entre la 1.ª y la 2.ª oleada llegan los civiles (si los hay)
+    } else if (F.stage === 'civ') {
+      if (!this.enemies.some((e) => e.alive && e.civ)) { F.stage = 'gap'; F.timer = 3.5; this.supplyDrop(false); }
+    }
     else if (F.stage === 'secure') {
       F.montage.t -= dt;
       if (F.montage.t <= 0) {
@@ -3323,6 +3334,78 @@ export class Game {
     this.showCallout(`OLEADA ${n}/${WAVES.length}`, COLORS.blood, 2.2, '¡REFUERZOS EN LA CALLE!');
     this.playAt('alert', p.x, p.y, 1);
     this.camera.addShake(5);
+  }
+
+  // --- Civiles hostiles de la fase final (karma invisible, tanda 2) ------------------------------------------------------------------------------------
+  // Si en los pisos anteriores se hizo daño a civiles (`civilianBase`, el karma CONFIRMADO: ver street.js hostileCivCount), en la fase final llegan civiles ANÓNIMOS reclutados por la mafia:
+  // cuerpo a cuerpo con armas de la calle, mensajes crueles, mortales (sin forcejeo) y de la misma vida que cualquiera (caen de un golpe). Defenderse no tiene castigo (son enemigos).
+  // Determinista (semilla de la partida y el piso): R (punto de repetición de la fase final) repite el mismo reparto. LIMPIEZA: suben uno a uno por la escalera del cuarto de servicio
+  // (la misma por la que llegó el compañero) y cruzan el edificio; PERÍMETRO: entran por los dos extremos de la calle entre la 1.ª y la 2.ª oleada.
+  makeCivCast() {
+    const n = hostileCivCount(this.civilianBase);
+    if (!n) return [];
+    const rng = seededRandom(hashString(`${this.runId}:civ:${this.levelIndex}`));
+    const off = rng() < 0.5 ? 0 : 1;                // los lados se alternan (empezando por uno al azar): nunca todos por el mismo extremo
+    return Array.from({ length: n }, (_, i) => ({ weapon: CIV_WEAPONS[Math.floor(rng() * CIV_WEAPONS.length)], side: (i + off) % 2 ? 'w' : 'e' }));
+  }
+
+  makeCivEnemy(c, x, y) {
+    const p = this.player;
+    const en = this.makeEnemy({ x, y, patrol: [{ x, y }], weapon: null, kind: 'civ', melee: c.weapon });
+    en.found = true; en.alarmed = true; en.state = 'chase'; en.target = { x: p.x, y: p.y }; en.attackCd = 0.6; en.wave = 'civ';
+    this.enemies.push(en);
+    return en;
+  }
+
+  spawnCivGroup() {                                // PERÍMETRO: por los extremos de la calle
+    const F = this.final, T = this.trap, p = this.player, used = { w: 0, e: 0 };
+    F.civPending = false; F.stage = 'civ';
+    for (const c of F.civ) {
+      const sp = T.spawns[c.side][used[c.side]++ % 6];
+      this.makeCivEnemy(c, sp.x, sp.y);
+      this.particles.dust(sp.x, sp.y, 5);
+    }
+    this.showCallout('¡VIENE MÁS GENTE!', COLORS.blood, 2.2, 'POR LOS DOS LADOS DE LA CALLE');
+    this.playAt('alert', p.x, p.y, 1);
+    this.camera.addShake(4);
+  }
+
+  // LIMPIEZA: cuenta atrás (solo en juego, así no corre durante la cinemática de la trampilla), ruidos en la alcantarilla y los civiles suben de uno en uno.
+  updateCivs(dt) {
+    const F = this.final;
+    if (F.role === 'limpieza' && F.civPending && !F.ambushPending) {
+      F.civT -= dt;
+      if (F.civT <= 0 && this.ladderRoom) {
+        F.civPending = false;
+        F.civRumble = { t: 0, spawned: 0 };
+        this.showCallout('RUIDOS EN LA ALCANTARILLA', COLORS.blood, 2.4, 'ALGUIEN SUBE');
+        const L = this.ladderRoom.ladder; this.playAt('manholeScrape', L.x, L.y, 1);
+      }
+    }
+    const K = F.civRumble;
+    if (K) {                                       // 1,5 s de golpes en la escalera y después, uno cada 0,7 s
+      K.t += dt;
+      const L = this.ladderRoom.ladder;
+      if (K.t < 1.5) { if (Math.floor(K.t / 0.3) !== Math.floor((K.t - dt) / 0.3)) { this.playAt('knock', L.x, L.y, 1); this.camera.addShake(0.8); } }
+      else if (K.spawned < F.civ.length && K.t >= 1.5 + K.spawned * 0.7) {
+        const en = this.makeCivEnemy(F.civ[K.spawned++], L.x, L.y);
+        en.rise = { t: 0 }; en.state = 'chase';
+        this.particles.dust(L.x, L.y, 6); this.playAt('knock', L.x, L.y, 1);
+      }
+      if (K.spawned >= F.civ.length) F.civRumble = null;
+    }
+    F.civShout -= dt;                               // de vez en cuando, uno de los que ya vienen a por ti grita algo cruel
+    if (F.civShout <= 0) {
+      F.civShout = 2.4 + Math.random() * 1.6;
+      const alive = this.enemies.filter((e) => e.alive && e.civ && !e.rise);
+      if (alive.length) this.bark(alive[Math.floor(Math.random() * alive.length)], civLine(this.civilianBase ? this.civilianBase.killed : 0, this.lastBark));
+    }
+  }
+
+  // Un civil hostil subiendo por la escalera (se hunde y asoma como los agentes: ver drawThroughHole).
+  drawRising(ctx, e) {
+    const hole = this.ladderRoom ? this.ladderRoom.ladder : { x: e.x, y: e.y };
+    this.drawThroughHole(ctx, e, hole, Math.max(0, 1 - e.rise.t / 0.9), () => e.draw(ctx, this.time, this));
   }
 
   // IA del aliado (el agente que no controlas): dispara a todo enemigo con visión a ≤ 300 u; en PERÍMETRO avanza por el edificio hacia el enemigo interior más cercano
@@ -4214,7 +4297,7 @@ export class Game {
     for (const p of this.pickups) p.draw(ctx, this.time);
     this.drawMaskDrops(ctx);
     for (const b of this.bullets) b.draw(ctx);
-    for (const e of this.enemies) if (e.standing) e.draw(ctx, this.time, this);
+    for (const e of this.enemies) if (e.standing) { if (e.rise) this.drawRising(ctx, e); else e.draw(ctx, this.time, this); }
     this.drawPoison(ctx);
     if (this.darkLayer) ctx.drawImage(this.darkLayer, 0, 0, pixelW, pixelH);
     this.drawPartner(ctx); // penumbra: atenúa enemigos y objetos; el jugador se dibuja encima (siempre se ve)

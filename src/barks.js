@@ -29,6 +29,14 @@ const pick = (list, avoid) => {
 
 // Enemigo asustado y paralizado (marca `scared`, prólogo): balbucea, con alguna pista del lore (la Organización, los nombres que faltan).
 const SCARED = ['¡N-NO ME MATES!', '¡ES LA ORGANIZACIÓN!', '¡YO SOLO FUMABA!', '¡NO DISPARES!', '¡DIJERON QUE YA NO QUEDABA NADIE!', '¡NO ES NADA PERSONAL, ¿EH?!', '¡ELLOS DIJERON QUE VENDRÍAS!'];
+// Mensajes de los CIVILES HOSTILES de la fase final del piso 10 (los reclutó la mafia): crueles y personales, sin números ni explicar nada. Con muertos entre los suyos, algunos van más al grano.
+const CRUEL = ['¡ASESINO!', '¡MONSTRUO!', '¡NOS TRATASTE COMO BASURA!', '¡PAGARÁS POR LO QUE HICISTE!', '¡LA MAFIA NOS DA DE COMER!', '¡NADIE TE VA A LLORAR!', '¡PERRO DE LA ORGANIZACIÓN!', '¡MUERE, ENMASCARADO!', '¡TE VAMOS A ABRIR EN DOS!', '¡NO TE TENEMOS MIEDO!', '¡ESTA CALLE ES NUESTRA!'];
+const CRUEL_KILLED = ['¡MATASTE A UNO DE LOS NUESTROS!', '¡LES QUITASTE LA VIDA!', '¡NO TIENES PERDÓN!', '¡ERES UN CARNICERO!'];
+export function civLine(killed, avoid) {
+  const pool = killed > 0 && Math.random() < 0.45 ? CRUEL_KILLED : CRUEL;
+  return pick(pool, avoid);
+}
+
 export function scaredLine(avoid) {
   return pick(SCARED, avoid);
 }

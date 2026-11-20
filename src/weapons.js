@@ -51,11 +51,17 @@ export function weaponCategory(type) {
 // Armas cuerpo a cuerpo que pueden llevar los enemigos: alcance extra sobre el hueco normal (`reach`) y tiempo
 // de preparación del golpe (`windup`, la ventana para esquivar o adelantarse). El bate llega más lejos y tarda más.
 export const ENEMY_MELEE = {
+  // Armas de la CALLE en manos de los civiles hostiles de la fase final del piso 10 (ver CIV_WEAPONS): los enemigos normales no las recogen del suelo.
+  rustpipe: { reach: 19, windup: 0.24 },
+  rustknife: { reach: 12, windup: 0.18 },
+  nailbat: { reach: 22, windup: 0.28 },
+  crowbar: { reach: 20, windup: 0.3 },
   bat: { reach: 22, windup: 0.28 },
   pipe: { reach: 19, windup: 0.22 },
   knife: { reach: 12, windup: 0.16 },
 };
 
+export const CIV_WEAPONS = ['rustpipe', 'rustknife', 'nailbat', 'crowbar']; // las que llevan los civiles hostiles (y los aliados, más adelante)
 const THROW_DECEL = 900;      // px/s² de frenado del arma lanzada
 const HURT_THROW_SPEED = 160; // por encima de esto, el arma lanzada derriba
 

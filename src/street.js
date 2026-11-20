@@ -463,6 +463,13 @@ export class StreetLife {
   }
 }
 
+// Cuántos civiles ANÓNIMOS atacan en la fase final del piso 10 según el karma CONFIRMADO (el de `Game.civilianBase`, hasta el piso 9: el del piso en curso aún no cuenta):
+// el primer herido se perdona (un golpe accidental no condena); cada herido de más suma 1 y cada muerto 2; tope 8. Sin daño a civiles: 0 (la fase final es la de siempre).
+export function hostileCivCount(rec) {
+  if (!rec) return 0;
+  return Math.min(8, Math.max(0, rec.hurt - 1) + 2 * rec.killed);
+}
+
 // Base para el futuro (piso 10): ¿ayudarían, serían neutrales o estorbarían los civiles de la calle en los flancos exteriores según cómo se ha tratado a los vagabundos durante la
 // partida? `rec` = el karma invisible (ver newKarma: heridos, muertos, monedas dadas y el aspecto de los ayudados). TODAS las reglas viven aquí: de momento no las usa nadie más que el debug (F1).
 export function civiliansHelp(rec) {

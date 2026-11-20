@@ -1,5 +1,5 @@
 import { moveAndSlide, lineOfSight, thickLineClear, castRay, findPath, tileKey, isSolidAt, isWallTile, TILE } from './map.js';
-import { ENEMY_WEAPONS, ENEMY_MELEE, WEAPON_DEFS, drawWeaponShape, weaponCategory } from './weapons.js';
+import { ENEMY_WEAPONS, ENEMY_MELEE, WEAPON_DEFS, CIV_WEAPONS, drawWeaponShape, weaponCategory } from './weapons.js';
 import { COLORS, TAU, angleDiff, clamp } from './utils.js';
 import { drawSprite, pixelRect, pixelDisc, maskHead, WORLD_PX } from './sprites.js';
 import { drawText } from './pixelfont.js';
@@ -27,6 +27,7 @@ const AI_LEVELS = {
   genius: { react: 0.5, windup: 0.8, cooldown: 0.75, spread: 0.55, speed: 1.05, view: 1.12, sense: 1.2, search: 1.3 },
 };
 export function setAiLevel(level) { Object.assign(AI, AI_LEVELS[level] || AI_LEVELS.avg); }
+const RISE_TIME = 0.9; // s que tarda un civil hostil en subir por la escalera
 const FROZEN_MAX = 8;       // s que un enemigo `scared` aguanta paralizado de miedo antes de reaccionar
 const REACTION_TIME = 0.18;  // pausa entre verte y empezar a perseguir (0,3)
 const ATTACK_REACH = 14;     // hueco entre cuerpos para poder golpear
@@ -90,7 +91,8 @@ export class Enemy {
     this.focus = null;      // a quién persigue: el jugador o el compañero del relevo (ver update)
     this.radioT = 0;        // (operador) s que le quedan de aviso por el walkie-talkie
     this.sprite = kind === 'shield' ? 'enemyShield' : kind === 'operator' ? 'enemyOperator' : kind === 'runner' ? 'enemyRunner' : kind === 'heavy' ? 'enemyHeavy' : (weapon ? 'enemyArmed' : 'enemy');
-    this.corpseSprite = kind === 'shield' ? 'shieldCorpse' : kind === 'runner' ? 'runnerCorpse' : kind === 'heavy' ? 'heavyCorpse' : (weapon ? 'armedCorpse' : 'enemyCorpse');
+    if (kind === 'civ') { this.civ = true; this.civVariant = Math.floor(Math.random() * 6); this.sprite = `enemyCiv${this.civVariant}`; } // CIVIL HOSTIL (fase final del piso 10): anónimo, cuerpo a cuerpo con un arma de la calle
+    this.corpseSprite = kind === 'civ' ? 'civCorpse' : kind === 'shield' ? 'shieldCorpse' : kind === 'runner' ? 'runnerCorpse' : kind === 'heavy' ? 'heavyCorpse' : (weapon ? 'armedCorpse' : 'enemyCorpse');
     this.gunDef = weapon ? ENEMY_WEAPONS[weapon.type] : null;
     this.burstLeft = 0;     // balas que quedan de la ráfaga en curso
     this.burstTimer = 0;
@@ -253,6 +255,11 @@ export class Enemy {
       this.poisonTick = (this.poisonTick || 0) - dt;
       if (this.poisonTick <= 0) { this.poisonTick = 0.4; game.particles.blood(this.x, this.y, Math.random() * 6.28, 2, 3, true); } // gotitas verdes
       if (this.poison <= 0) { game.killEnemy(this, this.poisonAngle || 0, 'poison'); return; }
+    }
+    if (this.rise) {                                    // asoma por la escalera (civiles hostiles en LIMPIEZA): hasta que sale no hace nada
+      this.rise.t += dt;
+      if (this.rise.t < RISE_TIME) return;
+      this.rise = null; this.state = 'chase'; this.attackCd = 0.5;
     }
     if (this.state === 'down') {
       if (this.executing) return; // el temblor del golpe que viene: el aturdimiento se congela
@@ -601,7 +608,7 @@ export class Enemy {
     for (const k of game.pickups) {
       if (!k.alive || k.flying) continue;
       const def = WEAPON_DEFS[k.type];
-      if (!def || (!def.melee && !(k.ammo > 0)) || (def.melee && !ENEMY_MELEE[k.type])) continue;
+      if (!def || (!def.melee && !(k.ammo > 0)) || (def.melee && (!ENEMY_MELEE[k.type] || CIV_WEAPONS.includes(k.type)))) continue; // (las armas de la calle no las recogen los enemigos)
       if (Math.hypot(k.x - p.x, k.y - p.y) < 40) continue;
       const d = Math.hypot(k.x - this.x, k.y - this.y);
       if (d >= bestD) continue;
