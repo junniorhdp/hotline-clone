@@ -467,11 +467,11 @@ export class StreetLife {
 // el primer herido se perdona (un golpe accidental no condena); cada herido de más suma 1 y cada muerto 2; tope 8. Sin daño a civiles: 0 (la fase final es la de siempre).
 export function hostileCivCount(rec) {
   if (!rec) return 0;
-  return Math.min(8, Math.max(0, rec.hurt - 1) + 2 * rec.killed);
+  return Math.min(10, Math.max(0, rec.hurt - 1) + 2 * rec.killed);
 }
 
 // Cuántos civiles ayudados vienen a pelear a tu lado en la fase final (los de las monedas dadas, con su aspecto; tope 6). Por cada 2 aliados la mafia manda 1 mafioso extra.
-export function friendlyCivCount(rec) { return rec ? Math.min(6, rec.helped.length) : 0; }
+export function friendlyCivCount(rec) { return rec ? Math.min(8, rec.helped.length) : 0; }
 
 // Base para el futuro (piso 10): ¿ayudarían, serían neutrales o estorbarían los civiles de la calle en los flancos exteriores según cómo se ha tratado a los vagabundos durante la
 // partida? `rec` = el karma invisible (ver newKarma: heridos, muertos, monedas dadas y el aspecto de los ayudados). TODAS las reglas viven aquí: de momento no las usa nadie más que el debug (F1).

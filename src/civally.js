@@ -40,6 +40,14 @@ export class CivAlly extends Enemy {
     this.attackCd = Math.max(0, this.attackCd - dt);
     this.swingT = Math.max(0, this.swingT - dt);
     if (this.doorWait > 0) { this.doorWait -= dt; if (this.doorWait <= 0) this.doorPushTime = 0.6; } else this.doorPushTime = Math.max(0, this.doorPushTime - dt);
+    if (this.leave) {                                // DESPEDIDA: se va (por la escalera o por la calle) tras dar las gracias
+      const L = this.leave;
+      L.t += dt;
+      if (this.sink) { this.sink.t += dt; if (this.sink.t >= 0.9) { this.alive = false; this.gone = true; } return; }
+      if (Math.hypot(L.x - this.x, L.y - this.y) < 14 || L.t > 14) { if (L.hole) this.sink = { t: 0 }; else { this.alive = false; this.gone = true; } return; }
+      this.goTo(L.x, L.y, SPEED, dt, game.map);
+      return;
+    }
     this.retarget -= dt;
     if (!this.tgt || !this.tgt.alive || !this.tgt.standing || this.retarget <= 0) { this.tgt = this.pickTarget(game); this.retarget = 0.4; }
     const t = this.tgt;
@@ -67,8 +75,5 @@ export class CivAlly extends Enemy {
     super.draw(ctx, time, game);
     if (!this.alive) return;
     if (this.shield > 0) drawSprite(ctx, 'allyShield', this.x + Math.cos(this.angle) * 13, this.y + Math.sin(this.angle) * 13, this.angle); // la tapa de alcantarilla, de frente
-    const b = Math.round(Math.sin(time * 6)) * WORLD_PX;                                                                                     // marca cian sobre la cabeza: es de los nuestros
-    ctx.fillStyle = COLORS.player;
-    pixelRect(ctx, this.x - 1, this.y - this.r - 9 + b, 3, 1); pixelRect(ctx, this.x, this.y - this.r - 7 + b, 1, 1);
   }
 }
