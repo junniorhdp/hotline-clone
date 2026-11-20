@@ -39,6 +39,15 @@ export function civLine(killed, avoid) {
   return pick(pool, avoid);
 }
 
+// Frases según el comportamiento de la IA enemiga (nivel de IA): desconcierto (BOBOS), te pierden (BOBOS), no pueden rodear un obstáculo (TONTOS) y flanqueo (GENIOS).
+const TIER = {
+  daze: ['¿EH?', '¿QUÉ...?', '¿DÓNDE ESTOY?', 'ZZZ... ¿QUÉ?'],
+  lost: ['¿DÓNDE SE FUE?', 'BAH, SE FUE...', '¿ERA UN FANTASMA?'],
+  stuck: ['¿POR DÓNDE...?', '¡NO PUEDO PASAR!', '¡ESTA PARED!'],
+  flank: ['¡POR EL FLANCO!', '¡LO RODEAMOS!', '¡POR DETRÁS!'],
+};
+export function tierLine(kind, avoid) { return pick(TIER[kind], avoid); }
+
 export function scaredLine(avoid) {
   return pick(SCARED, avoid);
 }
