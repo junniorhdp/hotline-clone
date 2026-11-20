@@ -1,5 +1,5 @@
 import { moveAndSlide, lineOfSight, thickLineClear, castRay, findPath, tileKey, isSolidAt, isWallTile, TILE } from './map.js';
-import { ENEMY_WEAPONS, ENEMY_MELEE, WEAPON_DEFS, drawWeaponShape, weaponCategory } from './weapons.js';
+import { ENEMY_WEAPONS, ENEMY_MELEE, WEAPON_DEFS, CIV_WEAPONS, drawWeaponShape, weaponCategory } from './weapons.js';
 import { COLORS, TAU, angleDiff, clamp } from './utils.js';
 import { drawSprite, pixelRect, pixelDisc, maskHead, WORLD_PX } from './sprites.js';
 import { drawText } from './pixelfont.js';
@@ -27,6 +27,7 @@ const AI_LEVELS = {
   genius: { react: 0.5, windup: 0.8, cooldown: 0.75, spread: 0.55, speed: 1.05, view: 1.12, sense: 1.2, search: 1.3 },
 };
 export function setAiLevel(level) { Object.assign(AI, AI_LEVELS[level] || AI_LEVELS.avg); }
+const RISE_TIME = 0.9; // s que tarda un civil hostil en subir por la escalera
 const FROZEN_MAX = 8;       // s que un enemigo `scared` aguanta paralizado de miedo antes de reaccionar
 const REACTION_TIME = 0.18;  // pausa entre verte y empezar a perseguir (0,3)
 const ATTACK_REACH = 14;     // hueco entre cuerpos para poder golpear
@@ -90,7 +91,8 @@ export class Enemy {
     this.focus = null;      // a quién persigue: el jugador o el compañero del relevo (ver update)
     this.radioT = 0;        // (operador) s que le quedan de aviso por el walkie-talkie
     this.sprite = kind === 'shield' ? 'enemyShield' : kind === 'operator' ? 'enemyOperator' : kind === 'runner' ? 'enemyRunner' : kind === 'heavy' ? 'enemyHeavy' : (weapon ? 'enemyArmed' : 'enemy');
-    this.corpseSprite = kind === 'shield' ? 'shieldCorpse' : kind === 'runner' ? 'runnerCorpse' : kind === 'heavy' ? 'heavyCorpse' : (weapon ? 'armedCorpse' : 'enemyCorpse');
+    if (kind === 'civ') { this.civ = true; this.civVariant = Math.floor(Math.random() * 6); this.sprite = `enemyCiv${this.civVariant}`; } // CIVIL HOSTIL (fase final del piso 10): anónimo, cuerpo a cuerpo con un arma de la calle
+    this.corpseSprite = kind === 'civ' ? 'civCorpse' : kind === 'shield' ? 'shieldCorpse' : kind === 'runner' ? 'runnerCorpse' : kind === 'heavy' ? 'heavyCorpse' : (weapon ? 'armedCorpse' : 'enemyCorpse');
     this.gunDef = weapon ? ENEMY_WEAPONS[weapon.type] : null;
     this.burstLeft = 0;     // balas que quedan de la ráfaga en curso
     this.burstTimer = 0;
@@ -254,23 +256,32 @@ export class Enemy {
       if (this.poisonTick <= 0) { this.poisonTick = 0.4; game.particles.blood(this.x, this.y, Math.random() * 6.28, 2, 3, true); } // gotitas verdes
       if (this.poison <= 0) { game.killEnemy(this, this.poisonAngle || 0, 'poison'); return; }
     }
+    if (this.rise) {                                    // asoma por la escalera (civiles hostiles en LIMPIEZA): hasta que sale no hace nada
+      this.rise.t += dt;
+      if (this.rise.t < RISE_TIME) return;
+      this.rise = null; this.state = 'chase'; this.attackCd = 0.5;
+    }
     if (this.state === 'down') {
       if (this.executing) return; // el temblor del golpe que viene: el aturdimiento se congela
       if (this.poison > 0) return; // intoxicado: no se levanta (agoniza hasta morir o hasta que lo remates)
       this.timer -= dt;
       if (this.timer <= 0) {
-        this.state = 'alert';
+        this.state = this.dummy ? 'patrol' : 'alert';   // (el maniquí del campo de pruebas se levanta y sigue quieto)
         this.timer = REACTION_TIME * AI.react;
         this.target = { x: game.player.x, y: game.player.y };
       }
       return;
     }
+    if (this.dummy) { this.state = 'patrol'; this.windup = 0; this.aim = 0; this.sees = false; this.attackCd = 1; return; } // CAMPO DE PRUEBAS: quieto, ciego y sin ataque
 
     // Objetivo: el jugador, o el compañero del relevo si es al único que ve (el inactivo es un objetivo válido y vulnerable).
     let p = game.player;
     this.sees = p.alive && this.canSee(p, game.map);
     const pt = game.partner;
     if (!this.sees && pt && pt.alive && !pt.away && this.canSee(pt, game.map)) { p = pt; this.sees = true; }
+    // ALIADOS CIVILES: el jugador tiene prioridad; un aliado solo se vuelve el objetivo si te pierde de vista o lo tiene muy encima (ver Game.allyFor).
+    const al = game.allyFor ? game.allyFor(this) : null;
+    if (al && (!this.sees || Math.hypot(al.x - this.x, al.y - this.y) < 0.45 * Math.hypot(p.x - this.x, p.y - this.y))) { p = al; this.sees = true; }
     this.focus = p;
     if (this.state !== 'patrol') { this.seated = false; this.smoking = false; } // se levanta / tira el cigarrillo en cuanto pasa algo
     if (this.sees) {
@@ -454,7 +465,7 @@ export class Enemy {
         if (this.attackCd <= 0) {
           if (this.aim === 0) game.playAt('aim', this.x, this.y);
           this.aim += dt;
-          if (this.aim >= def.windup * AI.windup) {
+          if (this.aim >= this.aimTime()) {
             this.aim = 0;
             this.burstLeft = def.burst;
             this.burstTimer = 0;
@@ -476,6 +487,7 @@ export class Enemy {
           this.attackCd = ATTACK_COOLDOWN * AI.cooldown;
           this.swingT = 0.15;
           if (p === game.partner) game.partnerStrike(this); // el compañero inactivo no forcejea: cae de un golpe
+          else if (p.isAlly) game.allyHit(p, angleToPlayer); // un aliado civil: cae de un golpe (o la tapa aguanta)
       else game.enemyStrike(this, angleToPlayer); // frontal = forcejeo; por la espalda mata
         }
       }
@@ -600,7 +612,7 @@ export class Enemy {
     for (const k of game.pickups) {
       if (!k.alive || k.flying) continue;
       const def = WEAPON_DEFS[k.type];
-      if (!def || (!def.melee && !(k.ammo > 0)) || (def.melee && !ENEMY_MELEE[k.type])) continue;
+      if (!def || (!def.melee && !(k.ammo > 0)) || (def.melee && (!ENEMY_MELEE[k.type] || CIV_WEAPONS.includes(k.type)))) continue; // (las armas de la calle no las recogen los enemigos)
       if (Math.hypot(k.x - p.x, k.y - p.y) < 40) continue;
       const d = Math.hypot(k.x - this.x, k.y - this.y);
       if (d >= bestD) continue;
@@ -666,6 +678,9 @@ export class Enemy {
     return false;
   }
 
+  // Tiempo de apuntado antes de disparar: contra un aliado civil tarda un 30 % más (parte de lo que iguala las armas de los mafiosos).
+  aimTime() { return this.gunDef.windup * AI.windup * (this.focus && this.focus.isAlly ? 1.3 : 1); }
+
   // Llamado por la puerta al tocarla: ¿puede empujarla ya? Si no, empieza la pausa.
   doorContact() {
     if (this.doorPushTime > 0) return true;
@@ -697,7 +712,7 @@ export class Enemy {
     // Mira láser durante el wind-up del disparo: avisa de que va a disparar.
     if (this.aim > 0) {
       // Línea de puntos pixelada que se va llenando: avisa de que va a disparar.
-      const t = this.aim / (this.gunDef.windup * AI.windup);
+      const t = this.aim / this.aimTime();
       const len = castRay(game.map, this.x, this.y, this.angle, this.gunDef.range + 80);
       const cos = Math.cos(this.angle), sin = Math.sin(this.angle);
       ctx.save();

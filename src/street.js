@@ -16,15 +16,20 @@ import { COLORS, clamp, seededRandom, hashString } from './utils.js';
 const INTERACT_GAP = 28;      // distancia (al borde del objeto) para poder interactuar
 const COIN_RADIUS = 18;
 const BUFF_TIME = 45;         // segundos de lata, contados solo dentro del edificio
-const PENALTY_HURT = 400, PENALTY_KILL = 1500; // puntos que resta cada civil herido / muerto al final del piso
-const GIFT_POINTS = 300;      // puntos por darle una moneda a un vagabundo
 const GUILT_DELAY = 3;        // s hasta que el jugador vomita tras matar a un civil
 const MOURN_RANGE = 340;      // los civiles que ven morir a otro (a menos de esto) entran en pánico profundo
 const COIN_SHOW = 3.5;        // s que se ve el contador de monedas tras subir
 
 export function newStreetRun() {
-  return { taken: [], coins: 0, phoneDone: false, phoneLines: null, challenge: null };
+  return { taken: [], coins: 0, giftSpent: 0, phoneDone: false, phoneLines: null, challenge: null }; // giftSpent: monedas dadas a vagabundos en este piso (R las devuelve: ver Game.restartLevel)
 }
+
+// KARMA INVISIBLE (nunca se muestra: ni números, ni barra, ni puntos, ni avisos). Es el registro de cómo se ha tratado a los civiles de la calle: `hurt` heridos (vivos), `killed` muertos
+// (o envenenados sin remedio), `gifts` monedas dadas y `helped` el aspecto de cada civil al que se ayudó (para que sean ellos quienes ayuden más adelante). Los heridos y los muertos
+// son EXCLUYENTES (un civil muerto cuenta como muerto, no también como herido). Es TRANSACCIONAL: lo que pase en un piso solo se confirma al completarlo; R lo descarta junto con la moneda
+// gastada (ver Game.restartLevel). Un civil no puntúa ni penaliza: lo único inmediato es la culpa (el vómito).
+export const newKarma = () => ({ hurt: 0, killed: 0, gifts: 0, helped: [] });
+export const cloneKarma = (r) => ({ hurt: r.hurt, killed: r.killed, gifts: r.gifts, helped: r.helped.map((l) => ({ ...l })) });
 
 const LORE = [
   'HAN CERRADO EL EDIFICIO CON TODOS DENTRO. LA ÚNICA SALIDA ES LA MOTO.',
@@ -223,14 +228,12 @@ export class StreetLife {
       g.sfx.play('can');
       g.addFloat(t.x, t.y - 38, '¡LATA NEÓN! +VELOCIDAD +CADENCIA', COLORS.player, 1, 1.8);
     } else if (t.kind === 'npc') {
-      // Darle una moneda a un vagabundo: se pone feliz y agradecido y da puntos extra (una vez por persona).
+      // Darle una moneda a un vagabundo: se pone feliz y agradecido (una vez por persona). Sin puntos ni avisos: solo su reacción; el gesto queda en el karma invisible.
       if (!t.n.gift()) return;
-      if (g.civilianRecord) g.civilianRecord.gifts++;
-      this.run.coins--;
-      g.score.addBonus(GIFT_POINTS);
+      if (g.civilianRecord) { g.civilianRecord.gifts++; g.civilianRecord.helped.push({ ...t.n.look }); }
+      this.run.coins--; this.run.giftSpent = (this.run.giftSpent || 0) + 1;
       g.sfx.play('coin');
       g.sfx.play('pickup', 0.7);
-      g.addFloat(t.n.x, t.n.y - 26, `+${GIFT_POINTS} ¡BUENA ACCIÓN!`, COLORS.enemy, 1, 1.8);
     } else if (t.kind === 'phone') {
       if (this.dialog) { this.dialog = null; return; }
       this.answer();
@@ -273,16 +276,21 @@ export class StreetLife {
     const g = this.game, poison = !!(def && def.poison);
     const res = poison ? n.poisonHit(g, angle, def.poisonTime) : n.hurt(g, dmg, angle);
     if (!res) return;
-    if (res.first) { if (rec) rec.hurt++; this.hurtSet.add(n); g.addFloat(n.x, n.y - 22, `¡CIVIL${poison ? ' ENVENENADO' : ''}! -${PENALTY_HURT} AL FINAL`, COLORS.blood, 1, 1.6); }
-    if (res.poisoned) this.startGuilt(); // herida mortal: la culpa empieza ya
+    if (res.poisoned) { this.markKilled(n); this.startGuilt(); } // herida mortal (veneno): ya cuenta como muerto y la culpa empieza ya
+    else if (res.first && !res.killed) { if (rec) rec.hurt++; this.hurtSet.add(n); }  // herido y vivo (si muere, `die` → civilianDied lo cuenta como muerto)
   }
 
-  // Un civil ha muerto (golpe, bala o veneno): penalización, culpa del jugador y pánico profundo en los demás.
+  // Un civil cuenta como MUERTO una sola vez (si antes estaba herido, deja de contar como herido).
+  markKilled(n) {
+    if (this.killedSet.has(n)) return;
+    const rec = this.game.civilianRecord;
+    if (rec) { if (this.hurtSet.has(n)) rec.hurt--; rec.killed++; }
+    this.hurtSet.delete(n); this.killedSet.add(n);
+  }
+
+  // Un civil ha muerto (golpe, bala o veneno): al karma invisible, culpa del jugador (el vómito) y pánico profundo en los demás. Sin puntos ni avisos.
   civilianDied(n) {
-    const g = this.game;
-    if (g.civilianRecord) g.civilianRecord.killed++;
-    this.hurtSet.add(n); this.killedSet.add(n);
-    g.addFloat(n.x, n.y - 30, `¡CIVIL ABATIDO! -${PENALTY_KILL} AL FINAL`, COLORS.blood, 1, 2);
+    this.markKilled(n);
     this.startGuilt();
     for (const m of this.npcs) if (m !== n && m.alive && Math.hypot(m.x - n.x, m.y - n.y) < MOURN_RANGE) m.mourn(n.x, n.y);
   }
@@ -311,14 +319,6 @@ export class StreetLife {
       return true;
     }
     return false;
-  }
-
-  // Resumen para el final del piso: civiles heridos (no muertos), muertos y puntos que restan.
-  civilianPenalty() {
-    // Los que agonizan envenenados ya cuentan como muertos (no hay vuelta atrás) aunque el piso acabe antes de que mueran.
-    const dying = [...this.hurtSet].filter((n) => n.state === 'agony' && !this.killedSet.has(n)).length;
-    const killed = this.killedSet.size + dying, hurt = this.hurtSet.size - killed;
-    return { hurt, killed, penalty: hurt * PENALTY_HURT + killed * PENALTY_KILL };
   }
 
   // --- Dibujo ------------------------------------------------------------------------------------
@@ -463,8 +463,18 @@ export class StreetLife {
   }
 }
 
+// Cuántos civiles ANÓNIMOS atacan en la fase final del piso 10 según el karma CONFIRMADO (el de `Game.civilianBase`, hasta el piso 9: el del piso en curso aún no cuenta):
+// el primer herido se perdona (un golpe accidental no condena); cada herido de más suma 1 y cada muerto 2; tope 8. Sin daño a civiles: 0 (la fase final es la de siempre).
+export function hostileCivCount(rec) {
+  if (!rec) return 0;
+  return Math.min(8, Math.max(0, rec.hurt - 1) + 2 * rec.killed);
+}
+
+// Cuántos civiles ayudados vienen a pelear a tu lado en la fase final (los de las monedas dadas, con su aspecto; tope 6). Por cada 2 aliados la mafia manda 1 mafioso extra.
+export function friendlyCivCount(rec) { return rec ? Math.min(6, rec.helped.length) : 0; }
+
 // Base para el futuro (piso 10): ¿ayudarían, serían neutrales o estorbarían los civiles de la calle en los flancos exteriores según cómo se ha tratado a los vagabundos durante la
-// partida? `rec` = { hurt, killed, gifts } (heridos, muertos y monedas dadas). TODAS las reglas viven aquí: de momento no las usa nadie más que el debug (F1).
+// partida? `rec` = el karma invisible (ver newKarma: heridos, muertos, monedas dadas y el aspecto de los ayudados). TODAS las reglas viven aquí: de momento no las usa nadie más que el debug (F1).
 export function civiliansHelp(rec) {
   if (!rec) return 'neutral';
   if (rec.killed >= 1 || rec.hurt >= 2) return 'hinder';

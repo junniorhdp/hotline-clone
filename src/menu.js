@@ -10,6 +10,7 @@ import { prologueSeen } from './prologue.js';
 //   'floors'  tarjetas de pisos con miniatura, récord y rango (bloqueados hasta completar el anterior)
 //   'records' Top 5 histórico
 // Los cambios de pantalla pasan por `game.transition()` (fundido).
+// El CAMPO DE PRUEBAS (testrange.js) es EXCLUSIVO DEL EQUIPO: no tiene opción en el título (ni en la versión publicada ni en desarrollo); se abre solo con `npm run dev` (ver main.js).
 const TITLE_OPTIONS = [
   { label: 'JUGAR', action: (g) => g.transition(() => g.startRunAt(0, !prologueSeen())) }, // la primera vez, el prólogo
   { label: 'PRÓLOGO', action: (g) => g.transition(() => g.startRunAt(0, true)) },

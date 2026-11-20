@@ -1,6 +1,6 @@
 import { rectHitsWall, isSolidAt } from './map.js';
 import { COLORS, TAU, angleDiff } from './utils.js';
-import { drawSprite, pixelDisc, pixelRect, WORLD_PX } from './sprites.js';
+import { drawSprite, drawBitmap, weaponSprite, pixelDisc, pixelRect, WORLD_PX } from './sprites.js';
 
 // `knockdown: true` = derriba en vez de matar (luego hay que rematar).
 export const WEAPON_DEFS = {
@@ -21,6 +21,9 @@ export const WEAPON_DEFS = {
   // Palanca (contenedores): pesada y sin veneno; derriba siempre (no mata) con un arco amplio y deja al enemigo aturdido un 60 % más de tiempo
   // (más ventana para rematar o huir). Lenta de recuperar.
   crowbar: { name: 'PALANCA', melee: true, knockdown: true, downMul: 1.6, range: 38, arc: Math.PI * 0.9, cooldown: 0.46, swingTime: 0.17, shake: 4 },
+  // Bate con clavos (contenedores de la calle): como el bate (mata de un golpe, mismo gesto y ejecución) pero un poco más rápido y MUY sangriento: cada baja con él suelta ×1,5 de sangre
+  // y restos (`gore`) y mancha más al personaje y al arma. Contra el jefe pega más que el bate. Los enemigos no lo recogen.
+  nailbat: { name: 'BATE CON CLAVOS', short: 'BATE C/ CLAVOS', melee: true, knockdown: false, range: 40, arc: Math.PI * 0.85, cooldown: 0.4, swingTime: 0.17, shake: 4, gore: 1.5 },
   // Cuchillo de carnicero: EXCLUSIVO de la máscara BLADE (tiburón), que empieza cada piso con él; no está en el reparto de armas ni en los contenedores.
   // Ventajas sobre el cuchillo normal: más alcance (38 contra 30), arco más amplio, golpe más pesado y una EJECUCIÓN mucho más rápida (2 hachazos en 0,44 s
   // contra 3 puñaladas en 0,7 s); contra el jefe quita más vida. Los enemigos no lo recogen.
@@ -40,7 +43,7 @@ export const ENEMY_WEAPONS = {
 
 // Categorías de armamento (matriz de combate, ver Game.enemyStrike): `unarmed` (puños), `blunt` (bate, tubo),
 // `blade` (cuchillo) y `gun` (pistola, escopeta, subfusil). `null`/undefined = puños.
-const CATEGORY = { bat: 'blunt', pipe: 'blunt', rustpipe: 'blunt', crowbar: 'blunt', rustknife: 'blade', cleaver: 'blade', knife: 'blade', gun: 'gun', shotgun: 'gun', smg: 'gun' };
+const CATEGORY = { bat: 'blunt', nailbat: 'blunt', pipe: 'blunt', rustpipe: 'blunt', crowbar: 'blunt', rustknife: 'blade', cleaver: 'blade', knife: 'blade', gun: 'gun', shotgun: 'gun', smg: 'gun' };
 export function weaponCategory(type) {
   return CATEGORY[type] || 'unarmed';
 }
@@ -48,11 +51,17 @@ export function weaponCategory(type) {
 // Armas cuerpo a cuerpo que pueden llevar los enemigos: alcance extra sobre el hueco normal (`reach`) y tiempo
 // de preparación del golpe (`windup`, la ventana para esquivar o adelantarse). El bate llega más lejos y tarda más.
 export const ENEMY_MELEE = {
+  // Armas de la CALLE en manos de los civiles hostiles de la fase final del piso 10 (ver CIV_WEAPONS): los enemigos normales no las recogen del suelo.
+  rustpipe: { reach: 19, windup: 0.24 },
+  rustknife: { reach: 12, windup: 0.18 },
+  nailbat: { reach: 22, windup: 0.28 },
+  crowbar: { reach: 20, windup: 0.3 },
   bat: { reach: 22, windup: 0.28 },
   pipe: { reach: 19, windup: 0.22 },
   knife: { reach: 12, windup: 0.16 },
 };
 
+export const CIV_WEAPONS = ['rustpipe', 'rustknife', 'nailbat', 'crowbar']; // las que llevan los civiles hostiles (y los aliados, más adelante)
 const THROW_DECEL = 900;      // px/s² de frenado del arma lanzada
 const HURT_THROW_SPEED = 160; // por encima de esto, el arma lanzada derriba
 
@@ -75,11 +84,27 @@ export function segmentPointDistance(x0, y0, x1, y1, px, py) {
 
 // Dibuja un arma en coordenadas locales; (x, y) es la empuñadura y apunta hacia +X.
 // Píxel del sprite que hace de empuñadura (el resto del arma se extiende hacia +X).
-const GRIP = { bat: [1, 1], gun: [1, 2], shotgun: [3, 1], knife: [1, 1], pipe: [1, 1], rustpipe: [1, 1], rustknife: [1, 1], crowbar: [1, 1], cleaver: [1, 1], smg: [1, 1] };
+const GRIP = { bat: [1, 1], nailbat: [1, 2], gun: [1, 2], shotgun: [3, 1], knife: [1, 1], pipe: [1, 1], rustpipe: [1, 1], rustknife: [1, 1], crowbar: [5, 2], cleaver: [1, 1], smg: [1, 1] };
 
-export function drawWeaponShape(ctx, type, x, y, angle, dim = false, scale = WORLD_PX) {
-  const [ox, oy] = GRIP[type];
-  drawSprite(ctx, type, x, y, angle, { ox, oy, alpha: dim ? 0.45 : 1, scale });
+// SANGRE DEL ARMA: cada arma (en mano o en el suelo) lleva su propio historial en `blood` = { gore, accT, accG, bits }: `gore` acumula la fuerza de cada golpe / baja, y cada vez
+// que cruza un escalón (WEAPON_STEPS) sube un nivel (limpia → salpicada → … → empapada, 5 niveles) y se anota si ese nivel salió roja ('R') o verde ('G') según la mezcla de sangre
+// recibida desde el último escalón (igual que `maskBits` en las máscaras). `weaponGore.on` = la opción de sangre del juego: apagada, las armas se dibujan limpias.
+export const weaponGore = { on: true };
+const WEAPON_STEPS = [1, 2.4, 4.2, 6.5, 9];
+export function newWeaponBlood() { return { gore: 0, accT: 0, accG: 0, bits: '' }; }
+export function stainWeaponBlood(b, power, tox = false) {
+  b.gore += power; b.accT += power; if (tox) b.accG += power;
+  let level = 0;
+  while (level < WEAPON_STEPS.length && b.gore >= WEAPON_STEPS[level]) level++;
+  while (b.bits.length < level) { b.bits += Math.random() < (b.accT > 0 ? b.accG / b.accT : 0) ? 'G' : 'R'; b.accT = b.accG = 0; }
+  return b.bits.length;
+}
+export const weaponBloodLevel = (b) => (b && weaponGore.on ? Math.min(5, b.bits.length) : 0);
+
+export function drawWeaponShape(ctx, type, x, y, angle, dim = false, scale = WORLD_PX, blood = null) {
+  const [ox, oy] = GRIP[type], lv = weaponBloodLevel(blood);
+  if (lv) drawBitmap(ctx, weaponSprite(type, lv, blood.bits), x, y, angle, { ox, oy, alpha: dim ? 0.45 : 1, scale });
+  else drawSprite(ctx, type, x, y, angle, { ox, oy, alpha: dim ? 0.45 : 1, scale });
 }
 
 // Arma en el suelo o volando tras ser lanzada.
@@ -96,6 +121,7 @@ export class Pickup {
     this.spin = 0;
     this.flying = false;
     this.alive = true;
+    this.blood = null;       // historial de sangre de esta arma (ver newWeaponBlood): viaja con ella al soltarla, lanzarla o recogerla
   }
 
   get speed() {
@@ -155,7 +181,7 @@ export class Pickup {
       ctx.restore();
     }
     const empty = WEAPON_DEFS[this.type].maxAmmo > 0 && this.ammo <= 0;
-    drawWeaponShape(ctx, this.type, this.x - Math.cos(this.angle) * 8, this.y - Math.sin(this.angle) * 8, this.angle, empty);
+    drawWeaponShape(ctx, this.type, this.x - Math.cos(this.angle) * 8, this.y - Math.sin(this.angle) * 8, this.angle, empty, WORLD_PX, this.blood);
   }
 }
 
@@ -210,4 +236,4 @@ export class Bullet {
 }
 
 // Armas improvisadas que se encuentran en los contenedores de la calle (reparto con pesos). Todas son cuerpo a cuerpo y exclusivas del exterior.
-export const STREET_LOOT = [['rustpipe', 4], ['rustknife', 3], ['crowbar', 3]];
+export const STREET_LOOT = [['rustpipe', 4], ['rustknife', 3], ['crowbar', 3], ['nailbat', 3]];

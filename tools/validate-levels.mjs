@@ -7,16 +7,18 @@
 // Uso: `npm run check:levels` (sale con error si algo falla).
 import { LEVELS, loadLevel, isWallTile, TILE, findPath } from '../src/map.js';
 import { PROLOGUE_DEF } from '../src/prologue.js';
+import { TESTRANGE_DEF } from '../src/testrange.js';
 import { buildTunnelMap, TUNNEL_PILLARS } from '../src/tunnel-map.js';
 let bad = 0;
 let prevEnemies = 0;
 const fail = (m) => { bad++; console.log('  ✗ ' + m); };
 // El prólogo (src/prologue.js) se valida como un piso más (índice LEVELS.length: usa los datos del piso 1 salvo `override`).
-for (let n = 0; n <= LEVELS.length; n++) {
-  const pro = n === LEVELS.length, i = pro ? 0 : n;
-  const L = loadLevel(i, () => 0.5, pro ? PROLOGUE_DEF : null);
+const EXTRAS = [PROLOGUE_DEF, TESTRANGE_DEF]; // niveles aparte (índices LEVELS.length y LEVELS.length + 1)
+for (let n = 0; n < LEVELS.length + EXTRAS.length; n++) {
+  const ex = n >= LEVELS.length ? EXTRAS[n - LEVELS.length] : null, pro = !!ex, i = pro ? 0 : n;
+  const L = loadLevel(i, () => 0.5, ex);
   const { map } = L;
-  const rows = (pro ? PROLOGUE_DEF : LEVELS[i]).rows;
+  const rows = (ex || LEVELS[i]).rows;
   console.log(`\n${L.name}: ${map.w}×${map.h} · ${L.enemies.length} enemigos · ${L.doors.length} puertas · armas ${L.weapons.length}`);
   const free = (tx, ty) => !isWallTile(map, tx, ty);
   // 1) las dos casillas de paso de cada puerta, libres

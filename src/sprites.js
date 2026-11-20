@@ -25,6 +25,7 @@ const PALETTE = {
   r: COLORS.blood,                           // huella de sangre (footMid y footDark la recolorean)
   1: '#4fbf4a', 2: '#2a7a3a', 3: '#a8f08a', 4: '#e8e6b0', 5: '#ffd23a', 7: '#ffffff', // cocodrilo
   6: '#d88a8a', 8: '#6a5a4a', // rata
+  W: '#a8723a', T: '#5a3418', // madera clara y oscura (bate con clavos)
 };
 
 // Cuerpo del jugador (plantilla): vista cenital, hombros perpendiculares a la mirada, mangas
@@ -161,18 +162,23 @@ const DEFS = {
   // Candado de la puerta principal bloqueada (5×5).
   lock: ['.zzz.', 'z...z', 'rrrrr', 'rrkrr', 'rrrrr'],
   // Bota del pisotón (remate sin arma), mirando a +X: banda cian en el talón, puntera clara.
+  // Tapa de alcantarilla como escudo del aliado civil (vista de lado, mirando a +X): placa vertical de acero con borde.
+  allyShield: ['.kk', 'kzZ', 'kzZ', 'kzZ', 'kzZ', 'kzZ', 'kzZ', 'kzZ', '.kk'],
   boot: ['.kkkkkk.', 'kjZZzzzk', 'kjZZzzzk', 'kjZZzzzk', '.kkkkkk.'],
   // Huella de suela, mirando a +X: talón (2 píxeles) y planta (3×3). 6×3 píxeles = 12×6 unidades.
   foot: ['...rr.', 'rr.rrr', '...rr.'],
   bat: ['.......PPPPP.', 'PPPPPPPpqqqpP', '.......PPPPP.'],
+  // Bate con clavos (contenedores): madera marrón con clavos de acero que sobresalen de la cabeza.
+  nailbat: ['........z.z..', '.......TTTTT.', 'TTTTTTTWzWzWT', '.......TTTTT.', '........z.z..'],
   gun: ['PPPPPPPP', 'PqqqqqqP', 'PpPPPPPP', 'PP......'],
-  shotgun: ['PPPP..........', 'PpqpPPPPPPPPPP', 'PPPPPPP.......'],
+  shotgun: ['TTTT..........', 'TWWTPPPqqqPPPP', 'TTTTTTT.......'],   // culata y bomba de madera (T/W), cañón de acero oscuro
   knife: ['PPPpqqqqq', 'PPPpqqqq.'],
   pipe: ['kzzzzzzzzzzzzk', 'kZZZZZZZZZZZZk'],
   rustpipe: ['kEeEeeZeEeeEnk', 'kEEeEEeEEZEEnk'],
   rustknife: ['EEEeZZZZZ', 'EEEEeeeeZ'],
   cleaver: ['..kkkkkkkkk..', 'vvvzzzzzzzzzk', 'VVvzzzzZZZZZk', '..kkkkkkkkk..'],
-  crowbar: ['kZZZZZZZZZZZZkk', 'kzzzzzzzzzzZZEk', '...........EEk.'],
+  // Palanqueta plana (calle): barra de acero plana con el extremo curvo de uña (izquierda, con ranura) y el otro en pala; algo de óxido.
+  crowbar: ['.kkkk......kkkk..', 'kzzZZkkkkkkkzzzzk', 'kZEzzzzzzzzZZEZZk', '.kkkkkkkkkkkkkkk.'],
   smg: ['PPPPPPPPPP', 'PqqqqqqqPP', 'PpPPpP....', 'PP..PP....', '....PP....'],
   door: ['dddddddddddddddd', 'dDDDDDDDDDDDDDDd', 'kkkkkkkkkkkkkkkk'],
   muzzle: ['..w..', '.wow.', 'wooow', '.wow.', '..w..'],
@@ -459,6 +465,45 @@ function bloodAtLevel(timeline, level) {
 }
 
 // Copia de un bitmap con la sangre encima.
+// --- Sangre en las ARMAS ---------------------------------------------------------------------------------------------------------------------------
+// Mismo sistema que las máscaras (plan de manchas fijo por sprite, que solo CRECE: cada nivel contiene al anterior), pero sobre el sprite del arma y con el color de cada nivel
+// (roja o verde tóxica) guardado en `bits` ('R'/'G' por nivel). Los bitmaps se hornean la primera vez que se piden (tipo × nivel × mezcla) y se cachean: dibujar cuesta un drawImage.
+const WEAPON_BLOOD = { k: 2, fractions: [0.14, 0.3, 0.48, 0.68, 0.88], clots: [0, 0, 1, 1, 2], drops: 0.5 };
+const WEAPON_PAL = {
+  R: { blood: COLORS.blood, mid: COLORS.bloodMid, dark: COLORS.bloodDark, wet: COLORS.bloodWet, clot: COLORS.gore },
+  G: { blood: '#7fb81e', mid: '#5f8f18', dark: '#3d5c12', wet: '#c6ee55', clot: '#2a3f0c' },
+};
+const weaponTimelines = {}, weaponCache = new Map();
+function weaponBloodAt(timeline, level, bits) {
+  const out = new Map();
+  for (const [key, { level: born, kind }] of timeline) {
+    if (born > level) continue;
+    const pal = WEAPON_PAL[bits[born - 1] === 'G' ? 'G' : 'R'], age = level - born;
+    let color;
+    if (kind === 'clot') color = age === 0 ? pal.dark : pal.clot;
+    else if (kind === 'single') color = age === 0 ? pal.blood : pal.dark;
+    else if (age === 0) { const [x, y] = key.split(',').map(Number); color = cellNoise(y, x, 7) < 0.14 ? pal.wet : pal.blood; }
+    else color = age === 1 ? pal.mid : pal.dark;
+    out.set(key, color);
+  }
+  return out;
+}
+// Bitmap del arma `type` con `level` (1..5) de sangre y la mezcla `bits` (nivel 0 = el sprite limpio).
+export function weaponSprite(type, level, bits = '') {
+  const base = sprites()[type];
+  if (!level) return base;
+  const lv = Math.min(BLOOD_LEVELS, level), key = `${type}:${lv}:${bits.slice(0, lv)}`;
+  let img = weaponCache.get(key);
+  if (img) return img;
+  if (!weaponTimelines[type]) {
+    const rows = DEFS[type], stainable = [...new Set(rows.join(''))].filter((c) => c !== 'k' && c !== '.').join('');   // todo menos el contorno y el vacío
+    weaponTimelines[type] = bloodTimeline(planBlood(rows, stainable, `weapon:${type}`, WEAPON_BLOOD.k), WEAPON_BLOOD);
+  }
+  img = withBlood(base, weaponBloodAt(weaponTimelines[type], lv, bits));
+  weaponCache.set(key, img);
+  return img;
+}
+
 function withBlood(base, pixels) {
   const c = document.createElement('canvas');
   c.width = base.width;
@@ -484,6 +529,8 @@ const RECOLORS = {
   enemyDown: ['lying', {}],
   enemyCorpse: ['lying', { b: '#8c6a00', B: '#5c4500', s: '#9a5a40', S: '#6e3c2a' }],
   // Corredor (rosa, cuerpo a cuerpo) y guardia pesado (chaleco granate y mangas de acero).
+  // CIVILES HOSTILES (fase final del piso 10): el sprite del enemigo normal con abrigos de vagabundo (los de `npcs.js`) y gorro; 6 variantes y un cadáver.
+  ...civilianRecolors(),
   enemyRunner: ['enemy', { y: '#ff4fa3', Y: '#a31f66', u: '#ffc2e0', c: '#05d9e8', C: '#037f8c', m: '#9ff6ff' }],
   enemyOperator: ['enemy', { y: '#2ab7a9', Y: '#187a70' }], // operador de cámaras: camisa verde azulada
   enemyShield: ['enemyArmed', { v: '#3d4f66', V: '#202b38', y: '#8fa3ba', Y: '#566a82' }], // blindado: chaleco y mangas de acero azulado
@@ -502,6 +549,46 @@ const RECOLORS = {
   footMid: ['foot', { r: COLORS.bloodMid }],
   footDark: ['foot', { r: COLORS.bloodDark }],
 };
+
+// Colores de las ARMAS BASE (las letras P/p/q/z/Z de sus cuadrículas se recolorean aquí, sin tocar los demás sprites que las comparten): bate de madera marrón, cuchillo de acero con mango
+// oscuro, pistola y subfusil de metal oscuro (empuñadura marrón en la pistola), escopeta de cañón de acero con culata y bomba de madera, tubo y cuchillo de carnicero de acero gris.
+// (Antes salían violeta y rosa: las letras P/p/q se reutilizaron para el pelo y la raya rosa de VEX y las armas heredaron esos colores.) Las armas de la calle no se tocan.
+const GUNMETAL = { P: '#2c313d', q: '#7d879e' };
+const WEAPON_SKINS = {
+  bat: { P: '#8a5a2e', p: '#a8723a', q: '#c9955a' },
+  gun: { ...GUNMETAL, p: '#4a2f1c' },
+  shotgun: { ...GUNMETAL },
+  smg: { ...GUNMETAL, p: '#454c5c' },
+  knife: { P: '#3a2616', p: '#9aa0b8', q: '#dfe6f2' },
+  pipe: { z: '#b8bcc8', Z: '#7a8090' },
+  crowbar: { z: '#b8bcc8', Z: '#7a8090' }, // (la palanqueta plana de la calle: acero natural; el óxido E/e se queda)
+  cleaver: { z: '#d3d8e2', Z: '#8a91a2' },
+};
+
+// Sprite del civil ayudado (aliado, fase final del piso 10) con SU aspecto (`look` del vagabundo: abrigo, pelo y gorro): el del enemigo normal recoloreado y cacheado por aspecto.
+export function civSpriteName(look) {
+  const hat = look.hat === 'beanie' ? '#6a2a2a' : look.hat === 'cap' ? '#2a3a5a' : look.hat === 'hood' ? shadeHex(look.coat, 0.55) : look.hair;
+  const name = `civ_${look.coat}_${hat}`.replace(/#/g, '');
+  const cache = sprites();
+  if (!cache[name]) cache[name] = buildSprite(DEFS.enemy, { y: look.coat, Y: shadeHex(look.coat, 0.62), u: shadeHex(look.coat, 1.35), c: hat, C: shadeHex(hat, 0.6), m: shadeHex(hat, 1.5) });
+  return name;
+}
+
+// Variantes de color del civil hostil: abrigo (y/Y/u = base, sombra y luz) y gorro (c/C/m).
+function shadeHex(hex, k) {
+  const n = parseInt(hex.slice(1), 16), ch = (v) => Math.max(0, Math.min(255, Math.round(v * k)));
+  return '#' + [(n >> 16) & 255, (n >> 8) & 255, n & 255].map((v) => ch(v).toString(16).padStart(2, '0')).join('');
+}
+function civilianRecolors() {
+  const CIV_COATS = ['#5a4a38', '#3a4a5a', '#5a3a4a', '#4a5a3a', '#6a5a2a', '#3a3a4a'], CIV_HATS = ['#2a2a3a', '#7a2a1a', '#4a2a14', '#1f3a2a', '#5a5a6a', '#3a1f4a']; // (dentro: RECOLORS se evalúa antes que las constantes del módulo)
+  const out = {};
+  CIV_COATS.forEach((coat, i) => {
+    const hat = CIV_HATS[i];
+    out[`enemyCiv${i}`] = ['enemy', { y: coat, Y: shadeHex(coat, 0.62), u: shadeHex(coat, 1.35), c: hat, C: shadeHex(hat, 0.6), m: shadeHex(hat, 1.5) }];
+  });
+  out.civCorpse = ['lying', { b: '#5a4a38', B: '#3a2e22', s: '#9a5a40', S: '#6e3c2a' }];
+  return out;
+}
 
 // Crea un bitmap a partir de filas de texto; `overrides` sustituye colores de la paleta base.
 export function buildSprite(rows, overrides = {}) {
@@ -524,7 +611,7 @@ let cache = null;
 export function sprites() {
   if (!cache) {
     cache = {};
-    for (const [name, rows] of Object.entries(DEFS)) cache[name] = buildSprite(rows);
+    for (const [name, rows] of Object.entries(DEFS)) cache[name] = buildSprite(rows, WEAPON_SKINS[name] || {});
     for (const [name, [base, colors]] of Object.entries(RECOLORS)) cache[name] = buildSprite(DEFS[base], colors);
     for (const [id, rows] of Object.entries(MASK_HEADS)) {
       cache[`head_${id}`] = buildSprite(rows, MASK_SKINS[id]);
@@ -548,8 +635,12 @@ export function sprites() {
 
 // Dibuja un sprite en coordenadas del mundo. (ox, oy) = píxel del sprite que cae en (x, y)
 // (por defecto el centro). Se rota alrededor de ese punto.
-export function drawSprite(ctx, name, x, y, angle = 0, { ox, oy, alpha = 1, scale = WORLD_PX } = {}) {
-  const img = sprites()[name];
+export function drawSprite(ctx, name, x, y, angle = 0, opts = {}) {
+  drawBitmap(ctx, sprites()[name], x, y, angle, opts);
+}
+
+// Igual que drawSprite pero con un bitmap ya hecho (p. ej. un arma manchada).
+export function drawBitmap(ctx, img, x, y, angle = 0, { ox, oy, alpha = 1, scale = WORLD_PX } = {}) {
   const cx = ox ?? img.width / 2, cy = oy ?? img.height / 2;
   ctx.save();
   ctx.translate(x, y);

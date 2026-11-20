@@ -1184,6 +1184,13 @@ export function loadLevel(index = 0, rng = Math.random, override = null) {
       pool.reduce((best, e) => (far(e) > far(best) ? e : best)).keyCarrier = true;
     }
   }
+  // Campo de pruebas (`def.pickups`: [tipo, x, y] en casillas de LEVELS): todas las armas colocadas a mano; `rangeSlots` = esos huecos (el juego repone cada arma al cogerla).
+  let rangeSlots = null;
+  if (def.pickups) {
+    rangeSlots = def.pickups.map(([type, x, y]) => ({ type, x: (x + OUTSKIRT) * TILE + TILE / 2, y: (y + OUTSKIRT) * TILE + TILE / 2 }));
+    for (const s of rangeSlots) weapons.push({ type: s.type, x: s.x, y: s.y });
+  }
+  if (def.dummies) for (const e of enemies) e.dummy = true; // maniquís: quietos, ciegos y sin ataque (ver Enemy.dummy)
   // Huecos aleatorios barajados: los primeros reciben las armas garantizadas.
   for (let i = randomSlots.length - 1; i > 0; i--) {
     const j = Math.floor(rng() * (i + 1));
@@ -1232,7 +1239,7 @@ export function loadLevel(index = 0, rng = Math.random, override = null) {
   const fixedHostage = def.hostage ? [{ tx: def.hostage[0] + OUTSKIRT, ty: def.hostage[1] + OUTSKIRT, x: (def.hostage[0] + OUTSKIRT) * TILE + TILE / 2, y: (def.hostage[1] + OUTSKIRT) * TILE + TILE / 2,
     look: { shirt: '#05d9e8', hair: '#140a08', skin: '#d9a67a', gender: 'm' }, facing: Math.PI, partner: true }] : null;
   const hostages = fixedHostage || (def.noHostages ? [] : placeHostages(map, enemies, actRnd, doors, mainDoor.ty, entry, occupied, index));
-  return { name: def.name, par: def.par, sewerRoute, ladderRoom, key: !!def.key, trap: map.trap, noHostages: !!def.noHostages, duo: !!def.duo, cameras: map.cameras, dark: !!def.dark, strobe: !!def.strobe, boss: !!def.boss, map, player, bike, mainDoor, entry, enemies, weapons, doors, hostages };
+  return { name: def.name, par: def.par, rangeSlots, sewerRoute, ladderRoom, key: !!def.key, trap: map.trap, noHostages: !!def.noHostages, duo: !!def.duo, cameras: map.cameras, dark: !!def.dark, strobe: !!def.strobe, boss: !!def.boss, map, player, bike, mainDoor, entry, enemies, weapons, doors, hostages };
 }
 
 // Patrulla de ida y vuelta: en el eje más despejado, o en el vertical si se fuerza.

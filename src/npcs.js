@@ -9,7 +9,7 @@ import { pixelRect, WORLD_PX } from './sprites.js';
 //   agony   envenenado por un arma oxidada: cae al suelo y agoniza hasta morir (sangre verde)
 //   mourn   ha visto morir a otro civil: pánico profundo, corre junto al cuerpo y se acurruca llorando
 //   happy   le has dado una moneda: feliz y agradecido (con corazón) · dead
-// No son enemigos: no entran en game.enemies ni puntúan; dañarlos (o matarlos) penaliza al final del piso (ver StreetLife.civilianPenalty).
+// No son enemigos: no entran en game.enemies ni puntúan; dañarlos o matarlos va al karma invisible (ver newKarma en street.js) y provoca la culpa (vómito), pero no puntúa ni penaliza.
 
 const SCARE_DIST = 150, TALK_DIST = 90, ROAM = 30, MAX_HP = 3, FLEE_TIME = 5, FLEE_SPEED = 150, HAPPY_TIME = 7, MOURN_SPEED = 55, MOURN_GAP = 24;
 
