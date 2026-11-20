@@ -264,7 +264,7 @@ export class Hostages {
     }
     h.state = 'freed';
     h.down = false;
-    h.say = FREED[Math.floor(Math.random() * FREED.length)]; h.sayT = 2.4; h.sayCd = 6;
+    h.say = (this.game.lore && this.game.lore.tryPiece('hostageAsk')) ? '¿CUÁNTO TE PAGAN POR ESTO?' : FREED[Math.floor(Math.random() * FREED.length)]; h.sayT = 2.4; h.sayCd = 6; // el primer rehén liberado de la partida (con las pistas activas) pregunta lo que nadie pregunta
     g.score.addBonus(RESCUE_POINTS);
     g.sfx.play('unlock');
     g.sfx.play('pickup', 0.8);

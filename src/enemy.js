@@ -307,7 +307,12 @@ export class Enemy {
         this.timer = (this.alarmed ? REACTION_TIME * 0.4 : REACTION_TIME + relaxed) * AI.react; // en estado de combate (alarma) reacciona al instante
         game.playAt('alert', this.x, this.y);
         if (AI.alarm >= 1 || Math.random() < AI.alarm) game.raiseAlarm(this, p.x, p.y); // da la voz a las salas contiguas (BOBOS casi nunca)
-        if (!this.spotted) { this.spotted = true; game.bark(this, spotLine(game.player.gender, game.mask && game.mask.id, game.lastBark)); }
+        if (!this.spotted) {
+          this.spotted = true;
+          const rick = game.lore && game.lore.rickOn();
+          if (rick) this.timer += 0.25; // con la máscara de Rick, un instante de duda
+          game.bark(this, rick && Math.random() < 0.45 ? '¿OTRA VEZ EL ÁGUILA?' : spotLine(game.player.gender, game.mask && game.mask.id, game.lastBark));
+        }
       }
     }
     this.attackCd = Math.max(0, this.attackCd - dt);

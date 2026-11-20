@@ -33,7 +33,7 @@ const SCARED = ['¡N-NO ME MATES!', '¡ES LA ORGANIZACIÓN!', '¡YO SOLO FUMABA!
 const CRUEL = ['¡ASESINO!', '¡MONSTRUO!', '¡NOS TRATASTE COMO BASURA!', '¡PAGARÁS POR LO QUE HICISTE!', '¡LA MAFIA NOS DA DE COMER!', '¡NADIE TE VA A LLORAR!', '¡PERRO DE LA ORGANIZACIÓN!', '¡MUERE, ENMASCARADO!', '¡TE VAMOS A ABRIR EN DOS!', '¡NO TE TENEMOS MIEDO!', '¡ESTA CALLE ES NUESTRA!'];
 const CRUEL_KILLED = ['¡MATASTE A UNO DE LOS NUESTROS!', '¡LES QUITASTE LA VIDA!', '¡NO TIENES PERDÓN!', '¡ERES UN CARNICERO!'];
 const ALLY = ['¡POR LA MONEDA, AMIGO!', '¡TE DEBEMOS UNA!', '¡AGUANTA, YO TE CUBRO!', '¡LA CALLE ESTÁ CONTIGO!', '¡NO ESTÁS SOLO!', '¡A POR ELLOS!'];
-export function allyLine(avoid) { return pick(ALLY, avoid); }
+export function allyLine(avoid, rick = false) { return rick && Math.random() < 0.7 ? pick(['OTRA VEZ...', 'ESA MÁSCARA... OTRA VEZ.'], avoid) : pick(ALLY, avoid); } // con la máscara de Rick, murmuran
 export function civLine(killed, avoid) {
   const pool = killed > 0 && Math.random() < 0.45 ? CRUEL_KILLED : CRUEL;
   return pick(pool, avoid);

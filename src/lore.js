@@ -1,10 +1,10 @@
 import { drawText, measureText } from './pixelfont.js';
 import { talkBlips, voiceFor } from './comms.js';
 import { AGENTS } from './portraits.js';
-import { TILE, OUTSKIRT } from './map.js';
+import { TILE, OUTSKIRT, isSolidAt } from './map.js';
 import { pixelRect } from './sprites.js';
 import { hostileCivCount, friendlyCivCount } from './street.js';
-import { drawHooks, drawMonitors, drawServiceRoom, drawKarmaStreet, drawBirdCoin, roomGeom, AMBER } from './lore-art.js';
+import { drawHooks, drawMonitors, drawServiceRoom, drawKarmaStreet, drawBirdCoin, roomGeom, drawSheet, drawStencil, drawLedger, drawPostit, drawWaitingChairs, drawPillarMarks, AMBER } from './lore-art.js';
 
 // SISTEMA NARRATIVO DE PISTAS Y VIÑETAS. Piezas cortas y misteriosas entre bloques o pisos; este módulo decide CUÁNDO puede salir cada una y reproduce las viñetas.
 //
@@ -29,6 +29,14 @@ export const PIECES = {
   v6: { level: A, floor: 9, moments: ['arrival'] },                                // LA CALLE VACÍA: llegada al piso 10
   v4echo: { level: C, floor: 9, moments: ['explore'] },                            // el eco: la radio del cuarto de servicio del piso 10
   v7: { level: A, floor: 9, skeleton: true, exempt: true, moments: ['results'] },  // CARA O CRUZ: tras la salida del final, antes de los resultados
+  // Micro-pistas (cuarta tanda): nivel B = ambiente sin pausa ni texto; nivel C = interactivas a pie de objeto (PATEAR/INTERACTUAR a ~44 u). El decorado fijo (sin evento) no gasta presupuesto.
+  sheet: { level: C, floor: 1, moments: ['explore'] },      // hoja de turnos del piso 2
+  djloop: { level: B, floor: 3, moments: ['explore'] },     // la muestra del DJ del piso 4: «uno... do-» y un instante de silencio
+  ledger: { level: C, floor: 5, moments: ['explore'] },     // libro de cuentas del piso 6
+  whisper: { level: B, floor: 6, moments: ['explore'] },    // el susurro «tres» del apagón del piso 7
+  postit: { level: C, floor: 7, moments: ['explore'] },     // post-it del monitor del piso 8
+  coldline: { level: B, floor: null, moments: ['explore'] },   // la frase fría de CENTRAL: solo tras el vómito POR CULPA
+  hostageAsk: { level: B, floor: null, moments: ['explore'] }, // el primer rehén liberado: «¿Cuánto te pagan por esto?»
   pile: { level: B, floor: 4, moments: ['cleared'] },                              // LA PILA DE CUERPOS: al despejar el piso 5, con la puerta aún cerrada
   // Teléfonos de la calle: una llamada o grabación fija por piso (nivel C: interactivas a pie de objeto). El piso 6 no tiene: allí llama CENTRAL tras el jefe (`call6`).
   ph1: { level: C, floor: 0, moments: ['explore'] }, ph2: { level: C, floor: 1, moments: ['explore'] }, ph3: { level: C, floor: 2, moments: ['explore'] },
@@ -127,6 +135,16 @@ class Vignette {
   }
 }
 
+// Objetos interactivos (nivel C): posición en el mundo ((casilla + OUTSKIRT) * 32), texto de la caja y piso. Se usan con PATEAR/INTERACTUAR a ≤ 44 u (están sobre muebles sólidos).
+const NOTES = {
+  sheet: { floor: 1, x: 404, y: 270, lines: ['HOJA DE TURNOS', 'R. ... TACHADO.', 'TERCERA COLUMNA: UNA CELDA EN BLANCO.'] },
+  ledger: { floor: 5, x: 960, y: 244, lines: ['LIBRO DE CUENTAS', 'MARCAS DE CINCO EN CINCO.', 'LA ÚLTIMA TANDA NO CIERRA.'] },
+  postit: { floor: 7, x: 1592, y: 238, lines: ['NO MIRAR EL ARCHIVO 03.'] },
+};
+const DJ = { x: 896, y: 240 };                       // cabina de DJ del club (piso 4)
+const RICK_ALLY = ['OTRA VEZ...', 'ESA MÁSCARA... OTRA VEZ.'];
+export { RICK_ALLY };
+
 export class Lore {
   constructor(game) {
     this.game = game;
@@ -144,6 +162,8 @@ export class Lore {
     this.pile = null;         // la pila de cuerpos del piso 5: { x, y, barrel, helped[], coin, clicked, shock, windT }
     this.guiltSeen = false;   // ¿ha vomitado por culpa en esta partida? (variante de la grabación del piso 4)
     this.hushUntil = 0;       // silencio absoluto del walkie tras el vómito de impacto
+    this.voiceQ = [];         // sílabas sueltas programadas (el susurro y la muestra del DJ): { at, ch, vol, voice }
+    this.djOn = false; this.djT = 0; this.dark = null; this.use = null; // muestra del DJ en bucle, zona más oscura del piso 7 y objeto interactivo a mano
   }
 
   // Partida nueva (o prólogo): todo vuelve a poder salir. El prólogo no cuenta como parte de la campaña.
@@ -151,19 +171,19 @@ export class Lore {
     this.seen.clear();
     this.startFloor = index; this.prologueRun = !!prologue;
     this.clock = 0; this.lastAt = -Infinity; this.callPending = false;
-    this.radio = null; this.seatCoin = null; this.pile = null; this.guiltSeen = false; this.hushUntil = 0;
+    this.radio = null; this.seatCoin = null; this.pile = null; this.guiltSeen = false; this.hushUntil = 0; this.voiceQ = []; this.djOn = false; this.dark = null;
     this.enterFloor(index);
   }
 
   // Piso nuevo: el presupuesto por piso se renueva (con R NO: el mismo intento sigue gastando el suyo).
-  enterFloor() { this.floorCount = { A: 0, BC: 0 }; this.callPending = false; this.radio = null; this.seatCoin = null; this.pile = null; }
+  enterFloor() { this.floorCount = { A: 0, BC: 0 }; this.callPending = false; this.radio = null; this.seatCoin = null; this.pile = null; this.voiceQ = []; this.djOn = false; this.dark = null; this.use = null; }
 
   // ¿Puede salir ahora esta pieza? `moment`: 'arrival' | 'masks' | 'explore' | 'cleared' | 'results'.
   canFire(id, moment) {
     const P = PIECES[id], g = this.game;
     if (!P || this.seen.has(id) || this.prologueRun || g.testRange) return false;
     if (!this.hintsOn && !P.skeleton) return false;                 // con PISTAS DE HISTORIA en NO, solo el esqueleto
-    if (P.floor < this.startFloor || P.floor !== g.levelIndex) return false; // pisos anteriores al de salida: descartada
+    if (P.floor != null && (P.floor < this.startFloor || P.floor !== g.levelIndex)) return false; // pisos anteriores al de salida: descartada (`floor: null` = cualquier piso)
     if (!P.moments.includes(moment)) return false;
     if (CALM.includes(moment) && g.enemies.some((e) => e.alive && (e.state === 'chase' || e.state === 'alert'))) return false; // nunca en combate
     if (!P.exempt) {
@@ -199,6 +219,7 @@ export class Lore {
     }
     this.updateRadio(dt);
     this.updatePile(dt);
+    this.updateAmbient(dt);
     if (!p || g.state !== 'playing' || !p.alive || g.prologue) return;
     // V5: al acercarte por primera vez a los monitores de la sala de control (piso 8).
     if (g.levelIndex === 7 && g.inside && this.canFire('v5', 'explore')) {
@@ -402,12 +423,102 @@ export class Lore {
     return bad && good ? 'mixed' : bad ? 'bad' : good ? 'good' : 'none';
   }
 
+  // --- Micro-pistas ambientales e interactivas (cuarta tanda) ------------------------------------------------------------------------------------------------------------------------
+  // Sílabas sueltas programadas (el susurro y la muestra del DJ): se oyen como chirridos de radio muy bajos, sin texto.
+  speak(text, delay, voice, vol) {
+    for (let i = 0; i < text.length; i++) this.voiceQ.push({ at: this.clock + delay + i * 0.13, ch: text[i], vol, voice });
+  }
+
+  updateAmbient(dt) {
+    const g = this.game, p = g.player;
+    this.noteReady = null;
+    if (this.voiceQ.length) {
+      const keep = [];
+      for (const v of this.voiceQ) { if (v.at <= this.clock) g.sfx.play('blip', v.vol, { ...v.voice, vowel: 'aeiou'.includes(v.ch) }); else keep.push(v); }
+      this.voiceQ = keep;
+    }
+    if (!this.decorOn || !p || !p.alive || g.prologue || (g.state !== 'playing' && g.state !== 'cleared') || !g.inside) return;
+    const calm = !g.enemies.some((e) => e.alive && (e.state === 'chase' || e.state === 'alert'));
+    // Interactivos (hoja de turnos, libro de cuentas, post-it): aviso a pie de objeto y caja de texto.
+    if (!g.comms.cur && !this.radio) {
+      for (const id of Object.keys(NOTES)) {
+        const N = NOTES[id];
+        if (N.floor !== g.levelIndex || Math.hypot(p.x - N.x, p.y - N.y) > 44 || !this.canFire(id, 'explore')) continue;
+        this.noteReady = { id, x: N.x, y: N.y };
+        if (g.keys.pressed('kick')) this.showNote(id);
+      }
+    }
+    // Piso 4 · la muestra del DJ: «uno... do-» y un instante de silencio, en bucle mientras estés en el club y sin combate (atenuada por la distancia).
+    if (g.levelIndex === 3) {
+      const d = Math.hypot(p.x - DJ.x, p.y - DJ.y);
+      if (!this.djOn && d < 420 && this.canFire('djloop', 'explore')) { this.consume('djloop'); this.djOn = true; this.djT = 0; }
+      if (this.djOn && d < 420 && calm) {
+        this.djT -= dt;
+        if (this.djT <= 0) { this.djT = 7.5; const vol = 0.45 * (1 - d / 420), v = { f: 150, rough: true }; this.speak('uno', 0, v, vol); this.speak('do', 1.3, v, vol); } // se corta: no llega a «dos»
+      }
+    }
+    // Piso 7 · al pisar la zona más oscura, una sola vez, una voz susurra «tres» y se calla (sin texto).
+    if (g.levelIndex === 6 && g.map.dark && g.map.lights) {
+      if (!this.dark) this.dark = this.darkestSpot();
+      if (this.dark && calm && Math.hypot(p.x - this.dark.x, p.y - this.dark.y) < 70 && this.canFire('whisper', 'explore')) { this.consume('whisper'); this.speak('tres', 0, { f: 85, rough: true }, 0.5); }
+    }
+  }
+
+  // La casilla a oscuras más lejana de cualquier luz (y transitable).
+  darkestSpot() {
+    const m = this.game.map;
+    let best = null, bd = -1;
+    for (let ty = 0; ty < m.h; ty++) for (let tx = 0; tx < m.w; tx++) {
+      if (!m.dark[ty * m.w + tx]) continue;
+      const x = tx * TILE + TILE / 2, y = ty * TILE + TILE / 2;
+      if (isSolidAt(m, x, y)) continue;
+      let md = 1e9;
+      for (const l of m.lights) md = Math.min(md, Math.hypot(l.x - x, l.y - y));
+      if (md > bd) { bd = md; best = { x, y }; }
+    }
+    return best;
+  }
+
+  showNote(id) {
+    this.consume(id);
+    this.showBox({ title: 'NOTA', color: '#9d8fb8', voice: voiceFor(null, null), lines: NOTES[id].lines.map((text, i) => ({ at: 0.2 + i * 1.1, text })), dur: 2 + NOTES[id].lines.length * 1.6, cues: [0.1] });
+  }
+
+  // Caja pequeña no modal (la misma de la radio): { title, color, voice, lines: [{ at, text }], dur, cues }.
+  showBox(o) { this.radio = { t: 0, cueIdx: 0, cues: [], ...o }; this.game.sfx.play('pickup', 0.6); }
+
+  // Pieza suelta de ambiente (sin escena): si puede salir ahora, la gasta y devuelve true.
+  tryPiece(id, moment = 'explore') {
+    if (!this.canFire(id, moment)) return false;
+    this.consume(id);
+    return true;
+  }
+
+  // El vómito POR CULPA acaba: la frase fría de CENTRAL (reservada solo a él: el vómito de impacto de la pila del piso 5 no la dispara).
+  onGuiltVomitEnd() {
+    if (!this.decorOn || !this.tryPiece('coldline')) return;
+    this.showBox({ title: 'CENTRAL · RADIO', color: '#ffbe0b', voice: voiceFor(null, null), lines: [{ at: 0.5, text: 'Nadie te pidió que lo hicieras.' }], dur: 5.5, cues: [0.1, 4.8] });
+  }
+
+  // Máscara de Rick equipada (con las pistas de historia activas): reacciones breves y ambiguas de enemigos, civiles y aliados.
+  rickOn() { const g = this.game; return !!(this.decorOn && g.mask && g.mask.id === 'aguila'); }
+
+  // Tras recoger una moneda con la máscara de Rick: el agente se mira la mano un segundo (sin texto; ver Player.draw).
+  onCoinPicked() { if (this.rickOn()) this.game.player.handT = 1; }
+
   // --- Decorado en el mundo (se dibuja bajo las entidades) y radio del cuarto de servicio (V4 y su eco en el piso 10) -------------------------------------------------------------------------
   drawWorld(ctx) {
     const g = this.game, now = performance.now() / 1000;
     if (this.seatCoin) drawBirdCoin(ctx, this.seatCoin.x, this.seatCoin.y, Math.max(0, 1 - this.seatCoin.age / 0.8) * 0.9);
     if (!this.decorOn) return;
     this.drawPile(ctx);
+    const L = g.levelIndex;
+    if (L === 1) drawSheet(ctx, 404, 270);
+    else if (L === 4) drawStencil(ctx, 1280, 294);
+    else if (L === 5) drawLedger(ctx, 960, 246);
+    else if (L === 7) drawPostit(ctx, 1592, 238);
+    else if (L === 8) drawWaitingChairs(ctx, 272, 720);
+    if (this.noteReady) drawText(ctx, `${g.hint(g.keys.label('kick'), 'BOTA')} · EXAMINAR`, this.noteReady.x, this.noteReady.y - 26, { color: '#9be32a', scale: 2, align: 'center', shadow: '#140a24' });
     if (g.levelIndex === 9 && g.street && g.street.phone) {                          // piso 10: el auricular del teléfono cuelga descolgado, balanceándose
       const ph = g.street.phone, sw = Math.round(Math.sin(now * 1.4) * 1.5), P2 = (x, y, w, h, c) => { ctx.fillStyle = c; pixelRect(ctx, x, y, w, h); };
       P2(ph.x + 10, ph.y - 4, 1, 6, '#14100a'); P2(ph.x + 10 + sw, ph.y + 8, 1, 4, '#14100a'); P2(ph.x + 8 + sw, ph.y + 14, 5, 3, '#14141e'); P2(ph.x + 9 + sw, ph.y + 15, 3, 1, '#6b6b85');
@@ -421,6 +532,12 @@ export class Lore {
   }
 
   // Lo que va colgado de la pared norte del cuarto de servicio (calendario y taquillas con el rótulo raspado): se dibuja DESPUÉS de la capa de paredes.
+  // Piso 3 · el pilar de la alcantarilla con las muescas de palanca y el ave torpe (se dibuja sobre el túnel; ver Game.renderSewer).
+  drawTunnel(ctx) {
+    if (!this.decorOn || this.game.levelIndex !== 2) return;
+    drawPillarMarks(ctx, 9 * TILE, 3 * TILE);
+  }
+
   drawWallDecor(ctx) {
     const g = this.game;
     if (!this.decorOn || !(g.levelIndex === 2 || g.levelIndex === 9)) return;
