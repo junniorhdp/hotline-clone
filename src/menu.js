@@ -10,7 +10,7 @@ import { prologueSeen } from './prologue.js';
 //   'floors'  tarjetas de pisos con miniatura, récord y rango (bloqueados hasta completar el anterior)
 //   'records' Top 5 histórico
 // Los cambios de pantalla pasan por `game.transition()` (fundido).
-// El CAMPO DE PRUEBAS (testrange.js) está ESCONDIDO: no sale en el título de la versión publicada. Se abre con `?pruebas` en la URL, o con la opción extra que añade `npm run dev`.
+// El CAMPO DE PRUEBAS (testrange.js) es EXCLUSIVO DEL EQUIPO: no tiene opción en el título (ni en la versión publicada ni en desarrollo); se abre solo con `npm run dev` (ver main.js).
 const TITLE_OPTIONS = [
   { label: 'JUGAR', action: (g) => g.transition(() => g.startRunAt(0, !prologueSeen())) }, // la primera vez, el prólogo
   { label: 'PRÓLOGO', action: (g) => g.transition(() => g.startRunAt(0, true)) },
@@ -18,7 +18,6 @@ const TITLE_OPTIONS = [
   { label: 'RÉCORDS', action: (g) => g.transition(() => g.menu.open('records'), 0.15) },
   { label: 'OPCIONES', action: (g) => g.openOptions() },
 ];
-if (import.meta.env.DEV) TITLE_OPTIONS.splice(2, 0, { label: 'CAMPO DE PRUEBAS', action: (g) => g.transition(() => g.startTestRange()) }); // solo en desarrollo
 const RANK_COLORS = { S: COLORS.player, A: COLORS.weapon, B: COLORS.enemy, C: COLORS.blood };
 const DIM = '#7d6f98';
 /* global __APP_VERSION__ */
