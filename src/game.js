@@ -2851,7 +2851,6 @@ export class Game {
     this.spawnAllies(role); // karma bueno: civiles ayudados que pelean a tu lado (y mafiosos extra); también tras R
     if (!retry) this.captureFinalCheckpoint(); // PUNTO DE REPETICIÓN de la fase final: así empieza el asalto (ver captureFinalCheckpoint)
     this.camera.snap(this.player.x, this.player.y);
-    this.showCallout(role === 'limpieza' ? 'LIMPIEZA' : 'PERÍMETRO', COLORS.player, 2.4, role === 'limpieza' ? 'DESPEJA EL EDIFICIO' : 'DEFIENDE LA CALLE: 2 OLEADAS');
   }
 
   // --- Campo de pruebas: reposición de armas y reaparición de maniquís -------------------------------------------------------------------------------
@@ -3440,6 +3439,19 @@ export class Game {
     if (this.final) this.final.allyScene = true; // escena de su llegada (ver civScene)
   }
 
+  // Lo que dice cada agente (personalidad): JACK sereno y agradecido, VEX seca y con ironía. `key` = ally | hostile | thanks | leaveIn | leaveOut.
+  agentSays(key) {
+    const vex = (this.player.gender === 'female');
+    const T = {
+      ally: [ '¡Ustedes! No tenían por qué venir... Gracias.', 'Vaya, vaya. No pedí refuerzos... pero los acepto.' ],
+      hostile: [ 'No quería esto... pero no pienso morir aquí.', 'Qué pena. Yo tampoco quería esto. Vengan, entonces.' ],
+      thanks: [ 'Sin ustedes no lo habría logrado. Gracias, de verdad.', 'No suelo dar las gracias... pero lo hicieron bien. Gracias.' ],
+      leaveIn: [ 'Salgan de aquí, amigos. Todo esto va a volar.', 'Fuera de aquí, ya. Esto va a volar por los aires.' ],
+      leaveOut: [ 'Aléjense del edificio, amigos. Va a estallar.', 'Lejos del edificio, ¡ya! Va a estallar.' ],
+    };
+    return T[key][vex ? 1 : 0];
+  }
+
   // Retrato de un civil para las cajas de diálogo (ayudado: su aspecto; hostil: los colores de su variante).
   civPortrait(kind, who) {
     if (kind === 'ally') {
@@ -3463,7 +3475,7 @@ export class Game {
       const sp = (a) => ({ name: 'AMIGO', color: COLORS.player, tag: 'DE LA CALLE', portrait: this.civPortrait('ally', a) });
       lines = [
         { speaker: sp(a1), text: '¡Eh, tú! ¿Te acuerdas de la moneda? Hoy te devolvemos el favor.', focus: at(a1) },
-        { speaker: me, text: '¡Ustedes! No tenían por qué venir...', focus: at(p) },
+        { speaker: me, text: this.agentSays('ally'), focus: at(p) },
         { speaker: sp(a2), text: F && F.civ.length ? 'Ojo: la mafia ha reclutado a otros como nosotros. ¡Pero aquí estamos!' : 'Nadie nos había tratado así. ¡Vamos con ustedes!', focus: at(a2) },
       ];
       onEnd = () => this.showCallout('¡TE AYUDAN!', COLORS.player, 2.4, 'LOS CIVILES A LOS QUE AYUDASTE');
@@ -3472,9 +3484,9 @@ export class Game {
       const sp = (h) => ({ name: 'CIVIL', color: '#ff2a4a', tag: 'DE LA MAFIA', portrait: this.civPortrait('hostile', h) });
       const killed = this.civilianBase && this.civilianBase.killed > 0, al = this.allies.find((a) => a.alive);
       lines = [
-        { speaker: sp(h1), text: killed ? '¡Es él! ¡El que mató a los nuestros!' : '¡Ahí está! ¡El que nos hizo daño en la calle!', focus: at(h1) },
+        { speaker: sp(h1), text: p.gender === 'female' ? (killed ? '¡Es ella! ¡La que mató a los nuestros!' : '¡Ahí está! ¡La que nos hizo daño en la calle!') : (killed ? '¡Es él! ¡El que mató a los nuestros!' : '¡Ahí está! ¡El que nos hizo daño en la calle!'), focus: at(h1) },
         { speaker: sp(h2), text: 'La mafia nos da de comer. Hoy cobramos tu deuda.', focus: at(h2) },
-        { speaker: me, text: 'No quería esto... pero no pienso morir aquí.', focus: at(p) },
+        { speaker: me, text: this.agentSays('hostile'), focus: at(p) },
       ];
       if (al) lines.push({ speaker: { name: 'AMIGO', color: COLORS.player, tag: 'DE LA CALLE', portrait: this.civPortrait('ally', al) }, text: '¡Tranquilo! ¡Nosotros te cubrimos!', focus: at(al) });
       onEnd = () => this.showCallout('¡TE ATACAN!', '#ff2a4a', 2.4, 'CIVILES AL SERVICIO DE LA MAFIA');
@@ -3509,10 +3521,10 @@ export class Game {
     const at = (o) => ({ x: o.x, y: o.y });
     const lines = [
       { speaker: sp(a1), text: '¡Se acabó! Bien hecho, amigo.', focus: at(a1) },
-      { speaker: me, text: 'Sin ustedes no lo habría logrado. Gracias.', focus: at(p) },
-      { speaker: sp(a2), text: 'Tú nos diste una moneda y un poco de respeto. Gracias a ti.', focus: at(a2) },
-      { speaker: me, text: 'Salgan de aquí. Todo esto va a volar.', focus: at(p) },
-      { speaker: sp(a1), text: '¡Cuídate! ¡Nos vemos en la calle!', focus: at(a1) },
+      { speaker: me, text: this.agentSays('thanks'), focus: at(p) },
+      { speaker: sp(a2), text: p.gender === 'female' ? 'Tú nos miraste a los ojos cuando nadie lo hacía. Gracias, jefa.' : 'Tú nos diste una moneda y un poco de respeto. Gracias a ti.', focus: at(a2) },
+      { speaker: me, text: this.agentSays(al.some((q) => this.inBuilding(q)) ? 'leaveIn' : 'leaveOut'), focus: at(p) },
+      { speaker: sp(a1), text: p.gender === 'female' ? '¡Cuídate, jefa! ¡Nos vemos en la calle!' : '¡Cuídate, amigo! ¡Nos vemos en la calle!', focus: at(a1) },
     ];
     const L = this.ladderRoom && this.ladderRoom.ladder;
     const onEnd = () => {
@@ -3686,7 +3698,7 @@ export class Game {
     if (!F || this.state !== 'playing') return;
     const cx = Math.round(w / 2), y = 38 + this.safe.t;
     let txt;
-    if (F.role === 'limpieza') txt = 'ROL: LIMPIEZA';
+    if (F.role === 'limpieza') return; // (el jugador ya sabe que eligió LIMPIEZA: sin texto)
     else if (F.stage === 'wait') txt = `PERÍMETRO · OLEADA 1 EN ${Math.ceil(F.timer)}`;
     else if (F.stage === 'gap') txt = `OLEADA ${F.wave + 1} EN ${Math.ceil(F.timer)}`;
     else if (F.stage === 'secure') txt = 'PERÍMETRO ASEGURADO';
