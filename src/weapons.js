@@ -1,6 +1,6 @@
 import { rectHitsWall, isSolidAt } from './map.js';
 import { COLORS, TAU, angleDiff } from './utils.js';
-import { drawSprite, pixelDisc, pixelRect, WORLD_PX } from './sprites.js';
+import { drawSprite, drawBitmap, weaponSprite, pixelDisc, pixelRect, WORLD_PX } from './sprites.js';
 
 // `knockdown: true` = derriba en vez de matar (luego hay que rematar).
 export const WEAPON_DEFS = {
@@ -77,9 +77,25 @@ export function segmentPointDistance(x0, y0, x1, y1, px, py) {
 // Píxel del sprite que hace de empuñadura (el resto del arma se extiende hacia +X).
 const GRIP = { bat: [1, 1], gun: [1, 2], shotgun: [3, 1], knife: [1, 1], pipe: [1, 1], rustpipe: [1, 1], rustknife: [1, 1], crowbar: [1, 1], cleaver: [1, 1], smg: [1, 1] };
 
-export function drawWeaponShape(ctx, type, x, y, angle, dim = false, scale = WORLD_PX) {
-  const [ox, oy] = GRIP[type];
-  drawSprite(ctx, type, x, y, angle, { ox, oy, alpha: dim ? 0.45 : 1, scale });
+// SANGRE DEL ARMA: cada arma (en mano o en el suelo) lleva su propio historial en `blood` = { gore, accT, accG, bits }: `gore` acumula la fuerza de cada golpe / baja, y cada vez
+// que cruza un escalón (WEAPON_STEPS) sube un nivel (limpia → salpicada → … → empapada, 5 niveles) y se anota si ese nivel salió roja ('R') o verde ('G') según la mezcla de sangre
+// recibida desde el último escalón (igual que `maskBits` en las máscaras). `weaponGore.on` = la opción de sangre del juego: apagada, las armas se dibujan limpias.
+export const weaponGore = { on: true };
+const WEAPON_STEPS = [1, 2.4, 4.2, 6.5, 9];
+export function newWeaponBlood() { return { gore: 0, accT: 0, accG: 0, bits: '' }; }
+export function stainWeaponBlood(b, power, tox = false) {
+  b.gore += power; b.accT += power; if (tox) b.accG += power;
+  let level = 0;
+  while (level < WEAPON_STEPS.length && b.gore >= WEAPON_STEPS[level]) level++;
+  while (b.bits.length < level) { b.bits += Math.random() < (b.accT > 0 ? b.accG / b.accT : 0) ? 'G' : 'R'; b.accT = b.accG = 0; }
+  return b.bits.length;
+}
+export const weaponBloodLevel = (b) => (b && weaponGore.on ? Math.min(5, b.bits.length) : 0);
+
+export function drawWeaponShape(ctx, type, x, y, angle, dim = false, scale = WORLD_PX, blood = null) {
+  const [ox, oy] = GRIP[type], lv = weaponBloodLevel(blood);
+  if (lv) drawBitmap(ctx, weaponSprite(type, lv, blood.bits), x, y, angle, { ox, oy, alpha: dim ? 0.45 : 1, scale });
+  else drawSprite(ctx, type, x, y, angle, { ox, oy, alpha: dim ? 0.45 : 1, scale });
 }
 
 // Arma en el suelo o volando tras ser lanzada.
@@ -96,6 +112,7 @@ export class Pickup {
     this.spin = 0;
     this.flying = false;
     this.alive = true;
+    this.blood = null;       // historial de sangre de esta arma (ver newWeaponBlood): viaja con ella al soltarla, lanzarla o recogerla
   }
 
   get speed() {
@@ -155,7 +172,7 @@ export class Pickup {
       ctx.restore();
     }
     const empty = WEAPON_DEFS[this.type].maxAmmo > 0 && this.ammo <= 0;
-    drawWeaponShape(ctx, this.type, this.x - Math.cos(this.angle) * 8, this.y - Math.sin(this.angle) * 8, this.angle, empty);
+    drawWeaponShape(ctx, this.type, this.x - Math.cos(this.angle) * 8, this.y - Math.sin(this.angle) * 8, this.angle, empty, WORLD_PX, this.blood);
   }
 }
 

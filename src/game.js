@@ -41,7 +41,7 @@ const WAVES = [
 const RUNOVER_FLIGHT = 0.7; // s que tarda el jugador atropellado en estamparse contra la «pantalla»
 const ALARM_REACH = 18; // casillas de recorrido (a través de puertas) a las que llega un grito de alerta
 import { Door, ENEMY_PUSH_SPEED } from './doors.js';
-import { Pickup, Bullet, ENEMY_WEAPONS, WEAPON_DEFS, segmentPointDistance } from './weapons.js';
+import { Pickup, Bullet, ENEMY_WEAPONS, WEAPON_DEFS, segmentPointDistance, weaponGore, newWeaponBlood, stainWeaponBlood } from './weapons.js';
 import { Particles, Footprints, GIB_COLORS, TOXIC, RED, TOXIC_GIBS, VOMIT, palOf } from './particles.js';
 import { Sfx } from './audio.js';
 import { ScreenFx } from './effects.js';
@@ -1476,6 +1476,7 @@ export class Game {
     p.cooldown = Math.max(p.cooldown, 0.5);
     this.makeNoise(p.x, p.y, def.noise);
     this.killEnemy(e, angle, 'bullet');
+    this.stainWeapon(1.0, !!e.toxic); // disparo de pánico a quemarropa: el arma se mancha
     this.camera.addShake(10);
     this.fx.kick(0.6);
     this.showCallout('¡DISPARO DE PÁNICO!', COLORS.enemy, 0.8);
@@ -2267,6 +2268,7 @@ export class Game {
       for (const e of this.enemies) {
         if (e.standing && Math.hypot(e.x - p.x, e.y - p.y) < e.r + p.r + 2) {
           this.knockDown(e, Math.atan2(p.vy, p.vx), 'thrown');
+          if (this.goreOn) { p.blood = p.blood || newWeaponBlood(); stainWeaponBlood(p.blood, 0.8, !!e.toxic); } // el arma lanzada se mancha al impactar
           p.bounce();
           break;
         }
@@ -2362,6 +2364,8 @@ export class Game {
     const tox = this.isToxicKill(e, cause);
     this.bleed(e.x, e.y, angle, feel.power, feel.wide, tox);
     this.stainPlayer(feel.power, angle, tox);
+    // El arma que llevas se mancha con lo que mata: golpe, remate o disparo TUYO (las balas del aliado no manchan tu arma).
+    if (cause === 'melee' || cause === 'execution' || (cause === 'bullet' && src && src.src && !src.ally && this.player.weapon && src.src === this.player.weapon.type)) this.stainWeapon(feel.power, tox);
     this.drawCorpse(e.x, e.y, angle, e.corpseSprite || (e.armed ? 'armedCorpse' : 'enemyCorpse'), e.corpseScale || 1);
     this.camera.addShake(feel.shake);
     this.fx.kick(feel.fx);
@@ -2381,6 +2385,7 @@ export class Game {
   }
 
   refreshGore() {
+    weaponGore.on = this.goreOn; // las armas manchadas también se apagan con la opción de sangre
     if (!this.player) return;
     this.player.bloodLevel = this.goreOn ? bloodLevelFor(this.gore) : 0;
     if (this.partner) this.partner.bloodLevel = this.goreOn ? bloodLevelFor(this.partnerBlood.gore) : 0;
@@ -2625,6 +2630,7 @@ export class Game {
       this.particles.neon(e.x, e.y, angle, 8, 0.9);
     }
     this.stainPlayer(0.35, angle, this.isToxicKill(e, 'execution'));
+    this.stainWeapon(0.4, this.isToxicKill(e, 'execution')); // los golpes intermedios del remate también manchan el arma
     this.camera.addShake(4);
     this.hitstop = Math.max(this.hitstop, 0.03);
     this.sfx.play(style === 'knife' ? 'hit' : 'crunch', 0.6);
@@ -2811,10 +2817,17 @@ export class Game {
     const p = this.player;
     this.finalCheckpoint = {
       role: this.finalRole, px: p.x, py: p.y,
-      weapon: p.weapon ? { type: p.weapon.type, ammo: p.weapon.ammo } : null,
+      weapon: p.weapon ? { type: p.weapon.type, ammo: p.weapon.ammo, blood: p.weapon.blood ? { ...p.weapon.blood } : null } : null,
       ambushDone: !!(this.hatch && this.hatch.used),
       enemies: this.enemies.map((e, i) => (e.alive ? { i, ambushIdx: e.ambushIdx, x: e.x, y: e.y, angle: e.angle, aware: e.state === 'chase' || e.state === 'alert' || !!e.alarmed } : null)).filter(Boolean),
     };
+  }
+
+  // Mancha el arma que lleva el jugador (rojo o verde según el fluido) y la hace escalar de nivel con más impactos. Cada arma conserva su historial (ver weapons.js).
+  stainWeapon(power, tox = false) {
+    const w = this.player && this.player.weapon;
+    if (!w || !this.goreOn) return;
+    stainWeaponBlood(w.blood || (w.blood = newWeaponBlood()), power, tox);
   }
 
   // El enemigo sabe dónde estás (como los refuerzos al salir de la trampilla): persecución, alarmado y con la mira en ti.
@@ -3285,7 +3298,7 @@ export class Game {
     let bx = a.x + cos * 14, by = a.y + sin * 14;
     if (isSolidAt(this.map, bx, by)) { bx = a.x; by = a.y; }
     const bl = new Bullet(bx, by, a.angle + (Math.random() - 0.5) * def.spread * 2, def.bulletSpeed, 'player', def.range);
-    bl.src = 'smg';
+    bl.src = 'smg'; bl.ally = true; // (las balas del aliado no manchan tu arma)
     this.bullets.push(bl);
     this.particles.sparks(a.x + cos * 22, a.y + sin * 22, a.angle, 5, 0.45);
     this.playAt(def.sound, a.x, a.y, 0.7);
@@ -3733,7 +3746,7 @@ export class Game {
     this.state = 'dead';
     this.bleed(p.x, p.y, angle, 1.3, 0.7);
     this.drawCorpse(p.x, p.y, angle, 'playerCorpse');
-    if (p.weapon) this.pickups.push(new Pickup(p.weapon.type, p.x, p.y, p.weapon.ammo));
+    if (p.weapon) { const pk = new Pickup(p.weapon.type, p.x, p.y, p.weapon.ammo); pk.blood = p.weapon.blood || null; this.pickups.push(pk); }
     this.camera.addShake(10);
     this.fx.kick(1);
     this.hitstop = HITSTOP.playerDeath;

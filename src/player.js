@@ -487,8 +487,9 @@ export class Player {
           // Con la máscara OSO los puños también matan al instante.
           if (def.knockdown && !(this.perks.meleeLethal && !this.weapon)) { // (la pasiva de BRUTE solo mata con los puños, no con la palanca)
             game.knockDown(e, this.angle, 'fists');
+            game.stainWeapon(0.5, !!e.toxic); // (la palanca derriba: se mancha un poco)
             if (def.downMul && e.state === 'down') e.timer *= def.downMul;
-          } else if (def.poison && !e.guardKill) game.poisonEnemy(e, this.angle, def.poisonTime); // armas oxidadas: noquean e intoxican
+          } else if (def.poison && !e.guardKill) { game.poisonEnemy(e, this.angle, def.poisonTime); game.stainWeapon(0.8, true); } // armas oxidadas: noquean e intoxican (y se manchan de verde)
           else game.killEnemy(e, this.angle, 'melee');
           hit = true;
         }
@@ -547,6 +548,7 @@ export class Player {
       if (isSolidAt(game.map, px, py)) { px = this.x; py = this.y; }
       const p = new Pickup(this.weapon.type, px, py, this.weapon.ammo);
       p.angle = this.angle;
+      p.blood = this.weapon.blood || null; // lanzada, sigue manchada
       p.throwAt(this.angle, THROW_SPEED);
       game.pickups.push(p);
       game.sfx.play('throw');
@@ -562,7 +564,7 @@ export class Player {
       if (d < bestDist) { best = p; bestDist = d; }
     }
     if (best) {
-      this.weapon = { type: best.type, ammo: best.ammo };
+      this.weapon = { type: best.type, ammo: best.ammo, blood: best.blood || null }; // recogida, conserva su sangre
       best.alive = false;
       game.sfx.play('pickup');
     }
@@ -612,7 +614,7 @@ export class Player {
       ctx.save();
       ctx.rotate(swingOffset);
       drawSprite(ctx, 'fist', wx, wy);
-      drawWeaponShape(ctx, type, wx, wy, 0, def.maxAmmo > 0 && this.weapon.ammo <= 0);
+      drawWeaponShape(ctx, type, wx, wy, 0, def.maxAmmo > 0 && this.weapon.ammo <= 0, undefined, this.weapon.blood);
       if (this.muzzle > 0) {
         drawSprite(ctx, 'muzzle', wx + sprites()[type].width * 2, wy);
         this.drawMuzzleGlow(ctx, wx + sprites()[type].width * 2 + 4, wy);
@@ -704,7 +706,7 @@ export class Player {
       return;
     }
     drawSprite(ctx, 'fist', pose.x, pose.y, 0, { scale: pose.scale });
-    drawWeaponShape(ctx, this.weapon.type, pose.x, pose.y, pose.angle, false, pose.scale);
+    drawWeaponShape(ctx, this.weapon.type, pose.x, pose.y, pose.angle, false, pose.scale, this.weapon.blood);
     if ((pose.style === 'shoot' || pose.style === 'blast' || pose.style === 'burst') && this.muzzle > 0) {
       drawSprite(ctx, 'muzzle', pose.x + sprites()[this.weapon.type].width * 2, pose.y);
       this.drawMuzzleGlow(ctx, pose.x + sprites()[this.weapon.type].width * 2 + 4, pose.y);

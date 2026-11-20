@@ -459,6 +459,45 @@ function bloodAtLevel(timeline, level) {
 }
 
 // Copia de un bitmap con la sangre encima.
+// --- Sangre en las ARMAS ---------------------------------------------------------------------------------------------------------------------------
+// Mismo sistema que las máscaras (plan de manchas fijo por sprite, que solo CRECE: cada nivel contiene al anterior), pero sobre el sprite del arma y con el color de cada nivel
+// (roja o verde tóxica) guardado en `bits` ('R'/'G' por nivel). Los bitmaps se hornean la primera vez que se piden (tipo × nivel × mezcla) y se cachean: dibujar cuesta un drawImage.
+const WEAPON_BLOOD = { k: 2, fractions: [0.14, 0.3, 0.48, 0.68, 0.88], clots: [0, 0, 1, 1, 2], drops: 0.5 };
+const WEAPON_PAL = {
+  R: { blood: COLORS.blood, mid: COLORS.bloodMid, dark: COLORS.bloodDark, wet: COLORS.bloodWet, clot: COLORS.gore },
+  G: { blood: '#7fb81e', mid: '#5f8f18', dark: '#3d5c12', wet: '#c6ee55', clot: '#2a3f0c' },
+};
+const weaponTimelines = {}, weaponCache = new Map();
+function weaponBloodAt(timeline, level, bits) {
+  const out = new Map();
+  for (const [key, { level: born, kind }] of timeline) {
+    if (born > level) continue;
+    const pal = WEAPON_PAL[bits[born - 1] === 'G' ? 'G' : 'R'], age = level - born;
+    let color;
+    if (kind === 'clot') color = age === 0 ? pal.dark : pal.clot;
+    else if (kind === 'single') color = age === 0 ? pal.blood : pal.dark;
+    else if (age === 0) { const [x, y] = key.split(',').map(Number); color = cellNoise(y, x, 7) < 0.14 ? pal.wet : pal.blood; }
+    else color = age === 1 ? pal.mid : pal.dark;
+    out.set(key, color);
+  }
+  return out;
+}
+// Bitmap del arma `type` con `level` (1..5) de sangre y la mezcla `bits` (nivel 0 = el sprite limpio).
+export function weaponSprite(type, level, bits = '') {
+  const base = sprites()[type];
+  if (!level) return base;
+  const lv = Math.min(BLOOD_LEVELS, level), key = `${type}:${lv}:${bits.slice(0, lv)}`;
+  let img = weaponCache.get(key);
+  if (img) return img;
+  if (!weaponTimelines[type]) {
+    const rows = DEFS[type], stainable = [...new Set(rows.join(''))].filter((c) => c !== 'k' && c !== '.').join('');   // todo menos el contorno y el vacío
+    weaponTimelines[type] = bloodTimeline(planBlood(rows, stainable, `weapon:${type}`, WEAPON_BLOOD.k), WEAPON_BLOOD);
+  }
+  img = withBlood(base, weaponBloodAt(weaponTimelines[type], lv, bits));
+  weaponCache.set(key, img);
+  return img;
+}
+
 function withBlood(base, pixels) {
   const c = document.createElement('canvas');
   c.width = base.width;
@@ -548,8 +587,12 @@ export function sprites() {
 
 // Dibuja un sprite en coordenadas del mundo. (ox, oy) = píxel del sprite que cae en (x, y)
 // (por defecto el centro). Se rota alrededor de ese punto.
-export function drawSprite(ctx, name, x, y, angle = 0, { ox, oy, alpha = 1, scale = WORLD_PX } = {}) {
-  const img = sprites()[name];
+export function drawSprite(ctx, name, x, y, angle = 0, opts = {}) {
+  drawBitmap(ctx, sprites()[name], x, y, angle, opts);
+}
+
+// Igual que drawSprite pero con un bitmap ya hecho (p. ej. un arma manchada).
+export function drawBitmap(ctx, img, x, y, angle = 0, { ox, oy, alpha = 1, scale = WORLD_PX } = {}) {
   const cx = ox ?? img.width / 2, cy = oy ?? img.height / 2;
   ctx.save();
   ctx.translate(x, y);
