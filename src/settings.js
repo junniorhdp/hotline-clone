@@ -38,7 +38,7 @@ export const OPTIONS = [
   // IA ENEMIGA: TONTOS (tardan más en reaccionar, preparan y espacian más los golpes y disparos, apuntan peor y ven menos) · PROMEDIO (el comportamiento de siempre) ·
   // GENIOS (reaccionan casi al instante, golpean y disparan antes y más seguido, apuntan fino y ven y te buscan más). Multiplicadores en `AI` (enemy.js). Afecta a la partida en curso.
   { id: 'aiLevel', section: 'JUEGO', label: 'IA ENEMIGA', type: 'choice', default: 'avg',
-    choices: [{ label: 'TONTOS', value: 'dumb' }, { label: 'PROMEDIO', value: 'avg' }, { label: 'GENIOS', value: 'genius' }],
+    choices: [{ label: 'BOBOS', value: 'dumber' }, { label: 'TONTOS', value: 'dumb' }, { label: 'PROMEDIO', value: 'avg' }, { label: 'GENIOS', value: 'genius' }],
     apply: (g, v) => g.setAiLevel(v) },
   // Sin la animación, la puerta principal se cierra al cruzar el umbral y se abre al despejar el piso al instante (como antes), sin que el agente se pare a cerrarla / abrirla.
   { id: 'doorAnim', section: 'JUEGO', label: 'ANIMACIÓN DE LA PUERTA', type: 'toggle', default: true },

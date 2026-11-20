@@ -3,7 +3,7 @@ import { ENEMY_WEAPONS, ENEMY_MELEE, WEAPON_DEFS, CIV_WEAPONS, drawWeaponShape, 
 import { COLORS, TAU, angleDiff, clamp } from './utils.js';
 import { drawSprite, pixelRect, pixelDisc, maskHead, WORLD_PX } from './sprites.js';
 import { drawText } from './pixelfont.js';
-import { spotLine, corpseLine, scaredLine } from './barks.js';
+import { spotLine, corpseLine, scaredLine, tierLine } from './barks.js';
 
 export const VIEW_DIST = 340;
 export const FOV = Math.PI * 0.6;
@@ -20,11 +20,17 @@ const CHASE_SPEED = 192;     // (172)
 //   cooldown espera entre golpes / disparos / ráfagas                                      spread  dispersión de las balas (puntería)
 //   speed    velocidad de persecución / búsqueda (tope: el jugador sigue siendo más rápido) view / sense  alcance de la vista y de la detección a la espalda   search  cuánto te buscan
 // GENIOS no rompe reglas: persiguen a 202 u/s (< 228 del jugador), el golpe aún se ve venir (≥ 0,13 s) y las balas siguen esquivables.
-export const AI = { react: 1, windup: 1, cooldown: 1, spread: 1, speed: 1, view: 1, sense: 1, search: 1 };
+//   Además del escalado, cada nivel TIENE UN COMPORTAMIENTO propio (tier 0..3):
+//   BOBOS (0)    se quedan desconcertados cada pocos segundos (`daze`: parados 0,5-0,8 s con un «?»), al perderte se detienen y se rinden en ~1 s, oyen la mitad de los ruidos (`deaf`), casi no dan la alarma (`alarm`) y no se cubren (`cover`)
+//   TONTOS (1)   van en línea recta a la última posición o ruido SIN rodear obstáculos (se quedan atascados en esquinas y se rinden: `directTo`), se cubren poco y dan la alarma a medias
+//   PROMEDIO (2) el comportamiento de siempre (ruta BFS a la última posición, cobertura, alarma)
+//   GENIOS (3)   flanquean (el 55 % rodea por un lado en vez de ir de frente), anticipan hacia dónde corres al perderte (`pv`), registran los alrededores en la búsqueda, reaccionan al ruido sin pararse y SIEMPRE se cubren
+export const AI = { react: 1, windup: 1, cooldown: 1, spread: 1, speed: 1, view: 1, sense: 1, search: 1, tier: 2, cover: 1, daze: 0, deaf: 0, alarm: 1 };
 const AI_LEVELS = {
-  dumb: { react: 2.2, windup: 1.35, cooldown: 1.6, spread: 1.9, speed: 0.9, view: 0.8, sense: 0.8, search: 0.7 },
-  avg: { react: 1, windup: 1, cooldown: 1, spread: 1, speed: 1, view: 1, sense: 1, search: 1 },
-  genius: { react: 0.5, windup: 0.8, cooldown: 0.75, spread: 0.55, speed: 1.05, view: 1.12, sense: 1.2, search: 1.3 },
+  dumber: { react: 3.5, windup: 1.8, cooldown: 2.4, spread: 3, speed: 0.78, view: 0.65, sense: 0.6, search: 0.5, tier: 0, cover: 0, daze: 1, deaf: 0.5, alarm: 0.3 }, // BOBOS: la más fácil (reaccionan tarde, golpean y disparan despacio y mal, ven poco y te pierden pronto)
+  dumb: { react: 2.2, windup: 1.35, cooldown: 1.6, spread: 1.9, speed: 0.9, view: 0.8, sense: 0.8, search: 0.7, tier: 1, cover: 0.35, daze: 0, deaf: 0.15, alarm: 0.7 },
+  avg: { react: 1, windup: 1, cooldown: 1, spread: 1, speed: 1, view: 1, sense: 1, search: 1, tier: 2, cover: 1, daze: 0, deaf: 0, alarm: 1 },
+  genius: { react: 0.45, windup: 0.8, cooldown: 0.7, spread: 0.5, speed: 1.06, view: 1.15, sense: 1.25, search: 1.4, tier: 3, cover: 1, daze: 0, deaf: 0, alarm: 1 },
 };
 export function setAiLevel(level) { Object.assign(AI, AI_LEVELS[level] || AI_LEVELS.avg); }
 const RISE_TIME = 0.9; // s que tarda un civil hostil en subir por la escalera
@@ -134,6 +140,10 @@ export class Enemy {
     // ASUSTADO (prólogo; `scared` lo pone el mapa: def.scared): al verte no da la alarma ni ataca; se PARALIZA (estado 'frozen': tiembla, suda y balbucea) hasta que lo golpeas,
     // oye un ruido, pasan FROZEN_MAX s o, si te pierde de vista 1,5 s, se calma y vuelve a lo suyo. Al descongelarse reacciona normal (y deja de estar asustado).
     this.scared = false; this.frozenT = 0; this.lostT = 0; this.thawNow = false;
+    // Comportamiento según el nivel de IA (ver AI): desconcierto, tiempo a ciegas, atasco, anticipación, flanqueo y registro de la búsqueda.
+    this.dazeCd = 1.5 + Math.random() * 2; this.dazeLeft = 0; this.blindT = 0; this.stallT = 0;
+    this.pv = { x: 0, y: 0 }; this.seenAt = null; this.coverRoll = Math.random(); this.flankOn = Math.random() < 0.55; this.flankSide = Math.random() < 0.5 ? -1 : 1; this.flanking = false;
+    this.searchPt = null; this.searchT = 0;
   }
 
   // Asigna la actividad inicial (la elige loadLevel al azar por partida y piso). 'sit' lleva el rumbo hacia la mesa.
@@ -195,16 +205,18 @@ export class Enemy {
   hear(x, y) {
     if (this.state === 'frozen') { this.thawNow = true; return; } // un ruido lo saca de la parálisis
     if (this.state === 'chase' || this.state === 'alert' || this.state === 'down' || this.state === 'panic') return;
+    if (AI.deaf > 0 && Math.random() < AI.deaf) return; // BOBOS / TONTOS: a veces ni se enteran
     if (this.state === 'investigate' && this.target && Math.hypot(this.target.x - this.x, this.target.y - this.y) < Math.hypot(x - this.x, y - this.y)) return;
     this.target = { x, y };
     this.state = 'investigate';
-    this.listenT = 0.35;
+    this.listenT = AI.tier === 3 ? 0.15 : AI.tier === 0 ? 0.8 : 0.35; // GENIOS casi no se paran a escuchar; BOBOS se quedan un rato pasmados
     this.path = null;
   }
 
   // Grito de un compañero (te ha visto o ha encontrado un cadáver): se pone en estado de combate y corre hacia la zona.
   answerAlarm(x, y, delay) {
     if (this.state === 'frozen' || this.state === 'chase' || this.state === 'alert' || this.state === 'down' || this.state === 'panic') return;
+    if (AI.deaf > 0 && Math.random() < AI.deaf * 1.2) return; // BOBOS: la mitad de las alarmas ni las oyen
     this.target = { x, y };
     this.state = 'investigate';
     this.listenT = 0.25 + delay;
@@ -285,6 +297,8 @@ export class Enemy {
     this.focus = p;
     if (this.state !== 'patrol') { this.seated = false; this.smoking = false; } // se levanta / tira el cigarrillo en cuanto pasa algo
     if (this.sees) {
+      if (this.seenAt) { const k = Math.min(1, dt * 8); this.pv.x += ((p.x - this.seenAt.x) / dt - this.pv.x) * k; this.pv.y += ((p.y - this.seenAt.y) / dt - this.pv.y) * k; } // hacia dónde corres (GENIOS lo anticipan)
+      this.seenAt = { x: p.x, y: p.y };
       this.target = { x: p.x, y: p.y };
       if (this.scared && this.state === 'patrol') this.freeze(game);
       if (this.state !== 'alert' && this.state !== 'chase' && this.state !== 'panic' && this.state !== 'frozen') {
@@ -292,7 +306,7 @@ export class Enemy {
         this.state = 'alert';
         this.timer = (this.alarmed ? REACTION_TIME * 0.4 : REACTION_TIME + relaxed) * AI.react; // en estado de combate (alarma) reacciona al instante
         game.playAt('alert', this.x, this.y);
-        game.raiseAlarm(this, p.x, p.y); // da la voz a las salas contiguas
+        if (AI.alarm >= 1 || Math.random() < AI.alarm) game.raiseAlarm(this, p.x, p.y); // da la voz a las salas contiguas (BOBOS casi nunca)
         if (!this.spotted) { this.spotted = true; game.bark(this, spotLine(game.player.gender, game.mask && game.mask.id, game.lastBark)); }
       }
     }
@@ -339,10 +353,14 @@ export class Enemy {
           this.turnTowards(Math.atan2(this.target.y - this.y, this.target.x - this.x), 9, dt);
           break;
         }
-        if (this.goTo(this.target.x, this.target.y, (this.hurry ? chaseSpeed() * 0.92 : INVESTIGATE_SPEED) * this.speedMul, dt, game.map)) this.startSearch();
+        {
+          const spd = (this.hurry || AI.tier === 3 ? chaseSpeed() * 0.92 : INVESTIGATE_SPEED) * this.speedMul;
+          const arrived = AI.tier === 1 ? this.directTo(this.target.x, this.target.y, spd, dt, game.map) : this.goTo(this.target.x, this.target.y, spd, dt, game.map); // TONTOS: recto, sin rodear
+          if (arrived) this.startSearch();
+        }
         break;
       case 'search':
-        this.angle += 2.2 * dt;
+        if (AI.tier === 3) this.searchAround(dt, game); else this.angle += 2.2 * dt; // GENIOS registran los alrededores; el resto gira sobre sí mismo
         this.timer -= dt;
         if (this.timer <= 0) { this.state = 'patrol'; this.path = null; this.hurry = false; this.alarmed = false; }
         break;
@@ -377,6 +395,7 @@ export class Enemy {
   }
 
   startSearch() {
+    this.searchPt = null; this.searchT = 0; this.stallT = 0; this.flanking = false;
     this.state = 'search';
     this.timer = SEARCH_TIME * AI.search;
     this.windup = this.aim = this.burstLeft = 0;
@@ -431,14 +450,41 @@ export class Enemy {
     // Sin jugador vivo o sin última posición conocida (no debería ocurrir): a buscar.
     if (!p.alive || !this.target) { this.startSearch(); return; }
     this.hurry = false;
-    if (this.coverOk && this.updateCover(dt, game)) return; // táctica: cubrirse, asomar, disparar y volver a cubrirse
+    if (this.sees) this.blindT = 0;
+    // BOBOS: de vez en cuando se quedan parados, desconcertados, un instante (sin atacar ni moverse).
+    if (AI.daze > 0 && this.sees) {
+      if (this.dazeLeft > 0) {
+        this.dazeLeft -= dt; this.windup = this.aim = 0;
+        this.turnTowards(Math.atan2(p.y - this.y, p.x - this.x), 3, dt);
+        return;
+      }
+      this.dazeCd -= dt;
+      if (this.dazeCd <= 0) { this.dazeLeft = AI.daze * (0.5 + Math.random() * 0.3); this.dazeCd = 1.8 + Math.random() * 1.8; game.bark(this, tierLine('daze', game.lastBark)); return; }
+    }
+    if (this.canCover() && this.updateCover(dt, game)) return; // táctica: cubrirse, asomar, disparar y volver a cubrirse
 
     // Si te pierde de vista, el wind-up se cancela: por eso cubrirse tras una esquina funciona.
     if (!this.sees) {
       // Una ráfaga cortada a medias deja un pequeño respiro antes de volver a apuntar.
       if (this.burstLeft > 0) this.attackCd = this.gunDef.cooldown * 0.5 * AI.cooldown;
       this.windup = this.aim = this.burstLeft = 0;
-      if (this.goTo(this.target.x, this.target.y, chaseSpeed() * this.speedMul, dt, game.map)) this.startSearch();
+      this.blindT += dt;
+      const spd = chaseSpeed() * this.speedMul;
+      if (AI.tier === 0) {                    // BOBOS: se quedan mirando alrededor y se rinden enseguida
+        this.angle += 1.8 * dt;
+        if (this.blindT > 1.1) { game.bark(this, tierLine('lost', game.lastBark)); this.startSearch(); }
+        return;
+      }
+      if (AI.tier === 1) {                    // TONTOS: derechos a donde te vieron, sin rodear: se atascan en las esquinas
+        if (this.directTo(this.target.x, this.target.y, spd, dt, game.map)) { if (this.stuck) game.bark(this, tierLine('stuck', game.lastBark)); this.startSearch(); }
+        return;
+      }
+      let tx = this.target.x, ty = this.target.y;
+      if (AI.tier === 3) {                    // GENIOS: se adelantan hacia donde ibas corriendo
+        const k = Math.min(this.blindT, 1.1) * 0.85, px = tx + this.pv.x * k, py = ty + this.pv.y * k;
+        if (!isSolidAt(game.map, px, py)) { tx = px; ty = py; }
+      }
+      if (this.goTo(tx, ty, spd, dt, game.map)) this.startSearch();
       return;
     }
 
@@ -494,7 +540,54 @@ export class Enemy {
       return;
     }
     this.windup = 0;
-    this.goTo(p.x, p.y, chaseSpeed() * this.speedMul, dt, game.map);
+    if (AI.tier === 3 && this.flankOn && d > 150 && d < 460) {   // GENIOS: rodean por un lado en vez de ir de frente
+      if (!this.flanking) { this.flanking = true; this.flankPt = null; if (Math.random() < 0.5) game.bark(this, tierLine('flank', game.lastBark)); }
+      // el punto del flanco se fija al empezar (y se recalcula solo si corres lejos de él): si se recalculara cada fotograma el enemigo giraría en círculos
+      if (!this.flankPt || Math.hypot(p.x - this.flankPt.fromX, p.y - this.flankPt.fromY) > 120) {
+        const a = angleToPlayer + (Math.PI / 2) * this.flankSide, fx = p.x + Math.cos(a) * 105, fy = p.y + Math.sin(a) * 105;
+        this.flankPt = isSolidAt(game.map, fx, fy) ? { x: p.x, y: p.y, fromX: p.x, fromY: p.y } : { x: fx, y: fy, fromX: p.x, fromY: p.y };
+      }
+      this.goTo(this.flankPt.x, this.flankPt.y, chaseSpeed() * this.speedMul, dt, game.map);
+      return;
+    }
+    this.flanking = false; this.flankPt = null;
+    this.goTo(AI.tier === 3 ? p.x + this.pv.x * 0.2 : p.x, AI.tier === 3 ? p.y + this.pv.y * 0.2 : p.y, chaseSpeed() * this.speedMul, dt, game.map);
+  }
+
+  // ¿Puede usar cobertura este enemigo según el nivel de IA? (BOBOS nunca, TONTOS rara vez, PROMEDIO como siempre, GENIOS todos los armados.)
+  canCover() {
+    if (this.kind === 'boss' || this.kind === 'shield' || !this.weapon) return false;
+    return (this.coverOk || AI.tier === 3) && this.coverRoll < AI.cover;
+  }
+
+  // Movimiento en línea recta sin ruta (TONTOS): devuelve true al llegar o si se atasca más de 0,9 s contra algo.
+  directTo(tx, ty, speed, dt, map) {
+    if (Math.hypot(tx - this.x, ty - this.y) < ARRIVE_DIST) { this.stallT = 0; return true; }
+    const px = this.x, py = this.y;
+    const dx = tx - this.x, dy = ty - this.y, d = Math.hypot(dx, dy) || 1;
+    this.turnTowards(Math.atan2(dy, dx), 7, dt);
+    if (this.doorWait <= 0) {
+      const step = Math.min(speed * dt, d), hit = moveAndSlide(map, this, (dx / d) * step, (dy / d) * step);
+      if (hit.hitX || hit.hitY) { this.x = px; this.y = py; } // ingenuo: si choca de frente con una pared no desliza ni rodea, se queda empujándola
+    }
+    const moved = Math.hypot(this.x - px, this.y - py);
+    if (this.doorWait <= 0 && moved < speed * dt * 0.25) this.stallT += dt; else this.stallT = Math.max(0, this.stallT - dt);
+    this.stuck = false;
+    if (this.stallT > 0.9) { this.stuck = true; return true; }
+    return false;
+  }
+
+  // Búsqueda de GENIOS: en vez de girar sobre sí mismos, recorren puntos cercanos a donde te perdieron (cada ~1,4 s uno nuevo, con presupuesto de rutas).
+  searchAround(dt, game) {
+    this.searchT -= dt;
+    if (!this.searchPt || this.searchT <= 0) {
+      for (let i = 0; i < 6; i++) {
+        const a = Math.random() * TAU, r = 60 + Math.random() * 60, x = this.target.x + Math.cos(a) * r, y = this.target.y + Math.sin(a) * r;
+        if (!isSolidAt(game.map, x, y)) { this.searchPt = { x, y }; break; }
+      }
+      this.searchT = 1.4;
+    }
+    if (this.searchPt && this.goTo(this.searchPt.x, this.searchPt.y, INVESTIGATE_SPEED * this.speedMul, dt, game.map)) { this.searchPt = null; this.searchT = 0; }
   }
 
   // --- Cobertura ------------------------------------------------------------------------------------
