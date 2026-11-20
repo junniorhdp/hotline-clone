@@ -78,7 +78,7 @@ export function segmentPointDistance(x0, y0, x1, y1, px, py) {
 
 // Dibuja un arma en coordenadas locales; (x, y) es la empuñadura y apunta hacia +X.
 // Píxel del sprite que hace de empuñadura (el resto del arma se extiende hacia +X).
-const GRIP = { bat: [1, 1], nailbat: [1, 2], gun: [1, 2], shotgun: [3, 1], knife: [1, 1], pipe: [1, 1], rustpipe: [1, 1], rustknife: [1, 1], crowbar: [1, 1], cleaver: [1, 1], smg: [1, 1] };
+const GRIP = { bat: [1, 1], nailbat: [1, 2], gun: [1, 2], shotgun: [3, 1], knife: [1, 1], pipe: [1, 1], rustpipe: [1, 1], rustknife: [1, 1], crowbar: [5, 2], cleaver: [1, 1], smg: [1, 1] };
 
 // SANGRE DEL ARMA: cada arma (en mano o en el suelo) lleva su propio historial en `blood` = { gore, accT, accG, bits }: `gore` acumula la fuerza de cada golpe / baja, y cada vez
 // que cruza un escalón (WEAPON_STEPS) sube un nivel (limpia → salpicada → … → empapada, 5 niveles) y se anota si ese nivel salió roja ('R') o verde ('G') según la mezcla de sangre

@@ -801,6 +801,11 @@ Alcance en unidades del mundo (1 casilla = 32). Cadencia = segundos entre ataque
 - Toda baja/derribo pasa `cause` (`execution`, `door`, `thrown`, `melee`, `bullet`, `fists`) a
   `killEnemy`/`knockDown` para puntuar con `score.register`.
 
+### Colores de las armas (`WEAPON_SKINS` en `sprites.js`)
+Las armas base salían violeta y rosa por un accidente de paleta (las letras `P/p/q` de sus cuadrículas se reutilizaron después para el pelo y la raya rosa de VEX y las armas heredaron esos colores). Ahora cada una lleva su color, recoloreando esas letras **solo en su propio bitmap** (los demás sprites que comparten letras no cambian): **bate** de madera marrón (`#8a5a2e` / `#a8723a` / veta `#c9955a`), **cuchillo** de acero con mango oscuro, **tubo** y **cuchillo de carnicero** de acero gris (su mango sigue marrón), **pistola** y **subfusil** de metal oscuro (empuñadura marrón en la pistola) y **escopeta** de cañón de acero oscuro con **culata y bomba de madera** (`T`/`W`, también usadas por el bate con clavos). Los enemigos las dibujan igual (misma función). Las armas de la calle (tubo y cuchillo oxidados, bate con clavos) no se tocaron.
+- **Palanqueta plana** (`crowbar`, antes una barra recta con codo): barra de acero **plana** de 17×4 con un extremo curvo de uña (ranura) y el otro en **pala**, acero gris natural con motas de óxido; mismas estadísticas (derriba, aturde ×1,6, arco 162°) y mismo uso (forzar la tapa, cegar al cocodrilo). Agarre por el tercio izquierdo (`GRIP`), y su animación de forzar la tapa usa el mismo punto.
+- **Comprobado en el juego** (por script, cada una de las 11): ataque (derribo o muerte según su tipo: bate, bate con clavos, tubo, cuchillo y carnicero **matan**; palanqueta, tubo oxidado y cuchillo oxidado **derriban** —estos últimos envenenan—; pistola, escopeta y subfusil **disparan** y gastan 1 bala), **ejecución** de un derribado con las 11, **lanzar y volver a recoger** las 11, la palanqueta en el flujo de la alcantarilla (forzar la tapa y cegar al cocodrilo) y sin errores de consola.
+
 ### Armas enemigas (`ENEMY_WEAPONS`)
 | Arma | Alcance | Aviso (mira láser) | Disparos | Pausa | Suelta |
 |---|---|---|---|---|---|

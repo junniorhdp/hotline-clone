@@ -169,13 +169,14 @@ const DEFS = {
   // Bate con clavos (contenedores): madera marrón con clavos de acero que sobresalen de la cabeza.
   nailbat: ['........z.z..', '.......TTTTT.', 'TTTTTTTWzWzWT', '.......TTTTT.', '........z.z..'],
   gun: ['PPPPPPPP', 'PqqqqqqP', 'PpPPPPPP', 'PP......'],
-  shotgun: ['PPPP..........', 'PpqpPPPPPPPPPP', 'PPPPPPP.......'],
+  shotgun: ['TTTT..........', 'TWWTPPPqqqPPPP', 'TTTTTTT.......'],   // culata y bomba de madera (T/W), cañón de acero oscuro
   knife: ['PPPpqqqqq', 'PPPpqqqq.'],
   pipe: ['kzzzzzzzzzzzzk', 'kZZZZZZZZZZZZk'],
   rustpipe: ['kEeEeeZeEeeEnk', 'kEEeEEeEEZEEnk'],
   rustknife: ['EEEeZZZZZ', 'EEEEeeeeZ'],
   cleaver: ['..kkkkkkkkk..', 'vvvzzzzzzzzzk', 'VVvzzzzZZZZZk', '..kkkkkkkkk..'],
-  crowbar: ['kZZZZZZZZZZZZkk', 'kzzzzzzzzzzZZEk', '...........EEk.'],
+  // Palanqueta plana (calle): barra de acero plana con el extremo curvo de uña (izquierda, con ranura) y el otro en pala; algo de óxido.
+  crowbar: ['.kkkk......kkkk..', 'kzzZZkkkkkkkzzzzk', 'kZEzzzzzzzzZZEZZk', '.kkkkkkkkkkkkkkk.'],
   smg: ['PPPPPPPPPP', 'PqqqqqqqPP', 'PpPPpP....', 'PP..PP....', '....PP....'],
   door: ['dddddddddddddddd', 'dDDDDDDDDDDDDDDd', 'kkkkkkkkkkkkkkkk'],
   muzzle: ['..w..', '.wow.', 'wooow', '.wow.', '..w..'],
@@ -545,6 +546,21 @@ const RECOLORS = {
   footDark: ['foot', { r: COLORS.bloodDark }],
 };
 
+// Colores de las ARMAS BASE (las letras P/p/q/z/Z de sus cuadrículas se recolorean aquí, sin tocar los demás sprites que las comparten): bate de madera marrón, cuchillo de acero con mango
+// oscuro, pistola y subfusil de metal oscuro (empuñadura marrón en la pistola), escopeta de cañón de acero con culata y bomba de madera, tubo y cuchillo de carnicero de acero gris.
+// (Antes salían violeta y rosa: las letras P/p/q se reutilizaron para el pelo y la raya rosa de VEX y las armas heredaron esos colores.) Las armas de la calle no se tocan.
+const GUNMETAL = { P: '#2c313d', q: '#7d879e' };
+const WEAPON_SKINS = {
+  bat: { P: '#8a5a2e', p: '#a8723a', q: '#c9955a' },
+  gun: { ...GUNMETAL, p: '#4a2f1c' },
+  shotgun: { ...GUNMETAL },
+  smg: { ...GUNMETAL, p: '#454c5c' },
+  knife: { P: '#3a2616', p: '#9aa0b8', q: '#dfe6f2' },
+  pipe: { z: '#b8bcc8', Z: '#7a8090' },
+  crowbar: { z: '#b8bcc8', Z: '#7a8090' }, // (la palanqueta plana de la calle: acero natural; el óxido E/e se queda)
+  cleaver: { z: '#d3d8e2', Z: '#8a91a2' },
+};
+
 // Crea un bitmap a partir de filas de texto; `overrides` sustituye colores de la paleta base.
 export function buildSprite(rows, overrides = {}) {
   const c = document.createElement('canvas');
@@ -566,7 +582,7 @@ let cache = null;
 export function sprites() {
   if (!cache) {
     cache = {};
-    for (const [name, rows] of Object.entries(DEFS)) cache[name] = buildSprite(rows);
+    for (const [name, rows] of Object.entries(DEFS)) cache[name] = buildSprite(rows, WEAPON_SKINS[name] || {});
     for (const [name, [base, colors]] of Object.entries(RECOLORS)) cache[name] = buildSprite(DEFS[base], colors);
     for (const [id, rows] of Object.entries(MASK_HEADS)) {
       cache[`head_${id}`] = buildSprite(rows, MASK_SKINS[id]);

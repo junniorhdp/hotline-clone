@@ -1918,7 +1918,7 @@ export class Game {
     const edge = lid.x + d * lid.slide * 32 - d * 22;
     const tip = { x: edge, y: lid.y + 1 }, hand = { x: p.x + d * 10, y: p.y + 3 };
     const rock = D.t < 1.6 ? Math.sin(D.t * 22) * 0.07 : 0;
-    drawSprite(ctx, 'crowbar', hand.x, hand.y, Math.atan2(tip.y - hand.y, tip.x - hand.x) + rock, { ox: 0, oy: 1 });
+    drawSprite(ctx, 'crowbar', hand.x, hand.y, Math.atan2(tip.y - hand.y, tip.x - hand.x) + rock, { ox: 3, oy: 2 });
   }
 
   // Cambia el mundo por el túnel: mapa, puertas, enemigos, armas del suelo, balas y capas de sangre se guardan en `sewerStash` y se restauran al subir (o en reset / openMenu).
