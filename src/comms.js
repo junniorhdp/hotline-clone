@@ -49,8 +49,9 @@ export class Comms {
     this.seen.add(id);
     const lines = entries.map((e) => {
       const sp = typeof e.speaker === 'string' ? SPEAKERS[e.speaker] : e.speaker;
-      return { who: sp.name, color: sp.color, text: e.text, portrait: sp.portrait || null, t: 0, age: 0, open: 0, urgent: !!opts.urgent };
+      return { who: sp.name, color: sp.color, text: e.text, portrait: sp.portrait || null, tag: sp.tag || 'RADIO', focus: e.focus || null, t: 0, age: 0, open: 0, urgent: !!opts.urgent };
     });
+    if (opts.onEnd && lines.length) lines[lines.length - 1].onEnd = opts.onEnd; // se llama al cerrar la última línea
     if (opts.urgent) this.queue.unshift(...lines); else this.queue.push(...lines);
     return true;
   }
@@ -78,6 +79,7 @@ export class Comms {
     this.cur = line;
     line.t = 0; line.age = 0;
     const g = this.game;
+    if (line.focus) g.camera.snap(line.focus.x, line.focus.y);   // plano del que habla (los civiles de la fase final del piso 10)
     g.sfx.play('empty'); g.sfx.play('pickup', 0.6);   // chasquido de radio al empezar cada línea
   }
 
@@ -87,10 +89,15 @@ export class Comms {
     if (!c) return;
     const n0 = Math.min(c.text.length, Math.floor(c.t * TYPE_CPS));
     c.t += dt; c.age += dt;
-    talkBlips(this.game, voiceFor(c.portrait && c.portrait.mask, c.portrait && c.portrait.gender), c.text, n0, Math.min(c.text.length, Math.floor(c.t * TYPE_CPS)));
+    const voice = c.portrait && c.portrait.civ ? { f: c.portrait.hostile ? 92 : 175, rough: !!c.portrait.hostile, fast: false } : voiceFor(c.portrait && c.portrait.mask, c.portrait && c.portrait.gender);
+    talkBlips(this.game, voice, c.text, n0, Math.min(c.text.length, Math.floor(c.t * TYPE_CPS)));
     if (!click || c.age < GUARD) return;   // un clic / Espacio / toque pasa DIRECTAMENTE a la siguiente línea (o cierra), aunque el texto no haya acabado de teclearse
     if (this.queue.length) this.begin(this.queue.shift());
-    else { this.cur = null; this.gap = GAP; this.game.player.cooldown = Math.max(this.game.player.cooldown, 0.3); }
+    else {
+      this.cur = null; this.gap = GAP; this.game.player.cooldown = Math.max(this.game.player.cooldown, 0.3);
+      if (c.focus) this.game.camera.snap(this.game.player.x, this.game.player.y); // la cámara vuelve a ti
+      if (c.onEnd) c.onEnd();
+    }
   }
 
   // Parte el texto en filas que quepan en `maxW` píxeles.
@@ -122,21 +129,24 @@ export class Comms {
     ctx.fillRect(bx, by, bw, 1); ctx.fillRect(bx, by + bh - 1, bw, 1); ctx.fillRect(bx, by, 1, bh); ctx.fillRect(bx + bw - 1, by, 1, bh);
     // retrato animado y su marco
     const px = bx + 5, py = by + 6;
-    if (c.portrait) this.drawMaskTalking(ctx, c, px, py, typed, talking);
+    if (c.portrait && c.portrait.civ) drawCivTalking(ctx, c, px, py, typed, talking);
+    else if (c.portrait) this.drawMaskTalking(ctx, c, px, py, typed, talking);
     else this.drawRadioTalking(ctx, c, px, py, talking);
     ctx.fillStyle = c.color; ctx.fillRect(bx + 4, by + 5, 34, 1); ctx.fillRect(bx + 4, by + 38, 34, 1); ctx.fillRect(bx + 4, by + 5, 1, 34); ctx.fillRect(bx + 37, by + 5, 1, 34);
-    drawText(ctx, `${c.who} · RADIO`, bx + 44, by + 5, { color: c.color });
+    drawText(ctx, `${c.who} · ${c.tag}`, bx + 44, by + 5, { color: c.color });
     let left = typed;
     rows.forEach((r, i) => {
       const part = r.slice(0, Math.max(0, left));
       left -= r.length + 1;
       if (part) drawText(ctx, part, bx + 44, by + 17 + i * 10, { color: COLORS.text, shadow: null });
     });
-    const wx = bx + bw - 14, wy = by + 6;                          // walkie: cuerpo, antena y piloto que parpadea (más rápido al hablar)
-    ctx.fillStyle = '#14141e'; ctx.fillRect(wx, wy + 5, 8, 14);
-    ctx.fillStyle = '#6b6b85'; ctx.fillRect(wx + 1, wy + 6, 6, 12);
-    ctx.fillStyle = '#14141e'; ctx.fillRect(wx + 5, wy, 1, 6);
-    ctx.fillStyle = Math.floor(c.t * (talking ? 10 : 4)) % 2 ? '#ff2a4a' : '#7d3a4a'; ctx.fillRect(wx + 4, wy - 1, 3, 2);
+    const wx = bx + bw - 14, wy = by + 6;                          // walkie: cuerpo, antena y piloto que parpadea (más rápido al hablar); los civiles hablan en persona: sin walkie
+    if (!(c.portrait && c.portrait.civ)) {
+      ctx.fillStyle = '#14141e'; ctx.fillRect(wx, wy + 5, 8, 14);
+      ctx.fillStyle = '#6b6b85'; ctx.fillRect(wx + 1, wy + 6, 6, 12);
+      ctx.fillStyle = '#14141e'; ctx.fillRect(wx + 5, wy, 1, 6);
+      ctx.fillStyle = Math.floor(c.t * (talking ? 10 : 4)) % 2 ? '#ff2a4a' : '#7d3a4a'; ctx.fillRect(wx + 4, wy - 1, 3, 2);
+    }
     if (c.age > 0.8) {
       const txt = g.hint('CLIC / ESPACIO ▼', 'TOCA ▼');
       if (Math.floor(c.age * 2.5) % 2) drawText(ctx, txt.replace('▼', 'v'), bx + bw - 6, by + bh - 11, { color: '#7d6f98', align: 'right' });
@@ -173,6 +183,36 @@ export class Comms {
       ctx.globalAlpha = 1;
     }
   }
+}
+
+// Retrato de un CIVIL que habla (32×32): cara con su piel, pelo o gorro y abrigo. El hostil lleva los ojos rojos y el ceño fruncido; el amigo, ojos claros y una sonrisa. La boca se abre con las vocales.
+// `c.portrait = { civ: { coat, hair, skin, hat (color o null), visor }, hostile }`.
+export function drawCivTalking(ctx, c, x, y, typed, talking) {
+  const L = c.portrait.civ, hostile = !!c.portrait.hostile;
+  c.open = c.open || 0;
+  const ch = talking ? c.text[typed - 1] || ' ' : ' ';
+  const target = !talking ? 0 : VOWELS.includes(ch) ? 2 : /[mbpMBP .,:;¡!¿?]/.test(ch) ? 0 : 1;
+  c.open += (target - c.open) * 0.5;
+  const open = Math.round(c.open), bob = talking && c.open > 1.2 ? -1 : 0;
+  ctx.save();
+  ctx.beginPath(); ctx.rect(x, y, 32, 32); ctx.clip();
+  ctx.fillStyle = hostile ? '#2a0a14' : '#0a1a2a'; ctx.fillRect(x, y, 32, 32);
+  ctx.translate(0, bob);
+  ctx.fillStyle = L.coat; ctx.fillRect(x + 3, y + 25, 26, 9);
+  ctx.fillStyle = L.skin; ctx.fillRect(x + 13, y + 21, 6, 5);
+  ctx.fillRect(x + 9, y + 7, 14, 15);
+  ctx.fillStyle = '#00000033'; ctx.fillRect(x + 9, y + 19, 14, 3);
+  if (L.hat) { ctx.fillStyle = L.hat; ctx.fillRect(x + 8, y + 4, 16, 7); if (L.visor) ctx.fillRect(x + 8, y + 10, 18, 2); }
+  else { ctx.fillStyle = L.hair; ctx.fillRect(x + 9, y + 5, 14, 5); ctx.fillRect(x + 8, y + 8, 2, 6); ctx.fillRect(x + 22, y + 8, 2, 6); }
+  ctx.fillStyle = hostile ? '#ff2a4a' : '#ffffff'; ctx.fillRect(x + 12, y + 13, 3, 2); ctx.fillRect(x + 18, y + 13, 3, 2);
+  ctx.fillStyle = '#140a24'; ctx.fillRect(x + 13, y + 13, 1, 2); ctx.fillRect(x + 19, y + 13, 1, 2);
+  ctx.fillStyle = '#140a24';
+  if (hostile) { ctx.fillRect(x + 11, y + 11, 4, 1); ctx.fillRect(x + 18, y + 11, 4, 1); ctx.fillRect(x + 14, y + 12, 1, 1); ctx.fillRect(x + 18, y + 12, 1, 1); }
+  else { ctx.fillRect(x + 11, y + 11, 4, 1); ctx.fillRect(x + 18, y + 11, 4, 1); }
+  ctx.fillStyle = '#2a0a14'; ctx.fillRect(x + 13, y + 18, 7, 1 + open);
+  if (!hostile && open < 1) { ctx.fillRect(x + 12, y + 17, 1, 1); ctx.fillRect(x + 20, y + 17, 1, 1); }   // sonrisa
+  if (hostile && open < 1) { ctx.fillRect(x + 12, y + 19, 1, 1); ctx.fillRect(x + 20, y + 19, 1, 1); }   // mueca
+  ctx.restore();
 }
 
 // Retrato de una máscara que habla (compartido con la caja de radio del piso 10): `c = { text, open, portrait: { mask, gender, level, bits } }`; se dibuja en (x, y) a 32×32.

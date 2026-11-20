@@ -579,8 +579,11 @@ function shadeHex(hex, k) {
   const n = parseInt(hex.slice(1), 16), ch = (v) => Math.max(0, Math.min(255, Math.round(v * k)));
   return '#' + [(n >> 16) & 255, (n >> 8) & 255, n & 255].map((v) => ch(v).toString(16).padStart(2, '0')).join('');
 }
+// Abrigos y gorros de los 6 civiles hostiles (dentro de una función: RECOLORS se evalúa antes que las constantes del módulo). `civHostileColors(i)` también lo usa el retrato del diálogo.
+function civPalette() { return { coats: ['#5a4a38', '#3a4a5a', '#5a3a4a', '#4a5a3a', '#6a5a2a', '#3a3a4a'], hats: ['#2a2a3a', '#7a2a1a', '#4a2a14', '#1f3a2a', '#5a5a6a', '#3a1f4a'] }; }
+export function civHostileColors(i) { const P = civPalette(); return { coat: P.coats[i % 6], hat: P.hats[i % 6] }; }
 function civilianRecolors() {
-  const CIV_COATS = ['#5a4a38', '#3a4a5a', '#5a3a4a', '#4a5a3a', '#6a5a2a', '#3a3a4a'], CIV_HATS = ['#2a2a3a', '#7a2a1a', '#4a2a14', '#1f3a2a', '#5a5a6a', '#3a1f4a']; // (dentro: RECOLORS se evalúa antes que las constantes del módulo)
+  const { coats: CIV_COATS, hats: CIV_HATS } = civPalette();
   const out = {};
   CIV_COATS.forEach((coat, i) => {
     const hat = CIV_HATS[i];

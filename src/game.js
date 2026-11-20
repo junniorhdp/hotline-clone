@@ -47,7 +47,7 @@ import { Pickup, Bullet, ENEMY_WEAPONS, WEAPON_DEFS, CIV_WEAPONS, segmentPointDi
 import { Particles, Footprints, GIB_COLORS, TOXIC, RED, TOXIC_GIBS, VOMIT, palOf } from './particles.js';
 import { Sfx } from './audio.js';
 import { ScreenFx } from './effects.js';
-import { drawSprite, pixelDisc, pixelRect, BLOOD_LEVELS, WORLD_PX, playerBody, drawMaskHead } from './sprites.js';
+import { drawSprite, pixelDisc, pixelRect, BLOOD_LEVELS, WORLD_PX, playerBody, drawMaskHead, civHostileColors } from './sprites.js';
 import { drawText, measureText, CELL_H } from './pixelfont.js';
 import { civiliansHelp, newKarma, cloneKarma, hostileCivCount, friendlyCivCount } from './street.js';
 import { COLORS, TAU, rand, clamp, angleDiff, closestOnSegment, seededRandom, hashString } from './utils.js';
@@ -2836,8 +2836,8 @@ export class Game {
         far.slice(FINAL_KEEP).forEach((e) => { e.alive = false; });
       }
     }
-    this.final = { role, wave: 0, stage: 'wait', timer: 3.5, done: false, montage: null, ambushPending: false, civ: this.makeCivCast(), civPending: false, civRumble: null, civT: 0, civShout: 3 };
-    this.final.civPending = this.final.civ.length > 0;
+    this.final = { role, wave: 0, stage: 'wait', timer: 3.5, done: false, montage: null, ambushPending: false, civ: this.makeCivCast(), civScene: false, allyScene: false, civPending: false, civRumble: null, civT: 0, civShout: 3 };
+    this.final.civPending = this.final.civ.length > 0; this.final.civScene = this.final.civPending;
     // Emboscada: solo si juegas LIMPIEZA (dentro) y al elegirlo quedan menos de AMBUSH_MIN enemigos vivos; con 3 o más no ocurre nunca (y con R, que deja 6, tampoco).
     if (role === 'limpieza' && this.hatch && !this.hatch.used && this.enemies.filter((e) => e.alive).length < AMBUSH_MIN) this.final.ambushPending = true;
     // Civiles hostiles en LIMPIEZA: tras la emboscada de la trampilla (o a los pocos segundos si no hay emboscada) suben por la escalera del cuarto de servicio.
@@ -3068,6 +3068,7 @@ export class Game {
   updateEndingTrigger(dt) {
     const F = this.final, T = this.trap;
     if (!F || !F.done || this.ending || this.endingDone) return;
+    if (this.updateFarewell(dt)) return; // con aliados vivos, primero la despedida
     if (F.role === 'perimetro') { F.autoT = (F.autoT ?? 3.2) - dt; if (F.autoT <= 0) this.startEnding(); return; }
     const d = T.detonator, p = this.player;
     this.detNear = !!(d && p.alive && Math.hypot(p.x - d.x, p.y - d.y) < 34);
@@ -3088,7 +3089,8 @@ export class Game {
     const path = findPath(this.map, runner.x, runner.y, M.x - 14, M.y) || [{ x: M.x - 14, y: M.y }];
     const times = [];
     for (let i = 0; i < ENDING_BLASTS; i++) times.push(0.9 + i * 0.42 + Math.random() * 0.25);
-    this.ending = { t: 0, phase: 'run', runner, waiter, path, blastT: times, nextBlast: 0, kissT: 0, skipHold: 0, heartT: 0 };
+    const wpath = findPath(this.map, waiter.x, waiter.y, M.x + 14, M.y) || [{ x: M.x + 14, y: M.y }]; // el que espera también sigue una ruta (si el jugador entró al edificio al abrirse la puerta, rodea las paredes)
+    this.ending = { t: 0, phase: 'run', runner, waiter, path, wpath, blastT: times, nextBlast: 0, kissT: 0, skipHold: 0, heartT: 0 };
     this.showCallout('¡DETONACIÓN ARMADA!', COLORS.blood, 1.8, 'CORRED HACIA LA MOTO');
     this.sfx.play('lockdown');
     this.sfx.setMusic('action');
@@ -3135,14 +3137,14 @@ export class Game {
     let fx, fy;
     if (E.phase === 'run') {
       // Salvaguarda: si la carrera se alarga (atascado contra algo, ruta imposible), se coloca a los dos en el punto de encuentro para que la secuencia siga.
-      if (E.t > 14 && E.path.length) { E.path.length = 0; E.runner.x = M.x - 14; E.runner.y = M.y; E.waiter.x = M.x + 14; E.waiter.y = M.y; }
+      if (E.t > 14 && (E.path.length || E.wpath.length)) { E.path.length = 0; E.wpath.length = 0; E.runner.x = M.x - 14; E.runner.y = M.y; E.waiter.x = M.x + 14; E.waiter.y = M.y; }
       const arrived = this.walkPath(E.runner, E.path, 260, dt);
       if (!E.runner.exec && Math.random() < 0.5) this.particles.dust(E.runner.x, E.runner.y, 1);
       // el otro agente sale a su encuentro hasta el punto de la moto
       const wx = M.x + 14, wy = M.y;
-      if (Math.hypot(wx - E.waiter.x, wy - E.waiter.y) > 4) { const a = Math.atan2(wy - E.waiter.y, wx - E.waiter.x); moveAndSlide(this.map, E.waiter, Math.cos(a) * 130 * dt, Math.sin(a) * 130 * dt); E.waiter.angle = a; }
+      const wArrived = this.walkPath(E.waiter, E.wpath, 200, dt);
       fx = arrived ? (E.runner.x + E.waiter.x) / 2 : E.runner.x; fy = arrived ? (E.runner.y + E.waiter.y) / 2 : E.runner.y;
-      if (arrived && Math.hypot(wx - E.waiter.x, wy - E.waiter.y) < 6) { // se encuentran: el beso
+      if (arrived && wArrived) { // se encuentran: el beso
         E.phase = 'kiss'; E.kissT = 0;
         E.runner.x = M.x - 12; E.runner.y = M.y; E.waiter.x = M.x + 12; E.waiter.y = M.y;
         E.runner.angle = 0; E.waiter.angle = Math.PI;
@@ -3363,6 +3365,7 @@ export class Game {
     const p = this.player;
     const en = this.makeEnemy({ x, y, patrol: [{ x, y }], weapon: null, kind: 'civ', melee: c.weapon });
     en.found = true; en.alarmed = true; en.state = 'chase'; en.target = { x: p.x, y: p.y }; en.attackCd = 0.6; en.wave = 'civ';
+    en.speedMul = 1 + Math.min(0.15, 0.02 * (this.final ? this.final.civ.length : 0)); // cuanto peor el karma, más rápidos
     this.enemies.push(en);
     return en;
   }
@@ -3417,12 +3420,12 @@ export class Game {
       let x, y;
       if (role === 'limpieza' && L) { x = L.x; y = L.y; }
       else { x = T.ext.x + (i - (n - 1) / 2) * 26; y = T.ext.y + 14 + (i % 2) * 18; if (isSolidAt(this.map, x, y)) { x = T.ext.x; y = T.ext.y; } }
-      const a = new CivAlly(x, y, weapon, this.civilianBase.helped[i], i % 3 === 2);
+      const a = new CivAlly(x, y, weapon, this.civilianBase.helped[i], i % 2 === 1);
       if (role === 'limpieza' && L) a.rise = { t: -(1 + i * 0.7) };                  // suben uno tras otro por la escalera, tras un instante de golpes
       this.allies.push(a);
     }
     // Mafiosos extra: 1 por cada 2 aliados (en LIMPIEZA salen por la trampilla —o la escalera—, en PERÍMETRO por los extremos de la calle, con la 1.ª oleada).
-    const extra = Math.floor(n / 2), kinds = [{ kind: 'grunt', weapon: 'smg' }, { kind: 'grunt', weapon: 'gun' }, { kind: 'runner' }, { kind: 'heavy', weapon: 'shotgun' }], H = this.hatch;
+    const extra = Math.floor(n / 3), kinds = [{ kind: 'grunt', weapon: 'smg' }, { kind: 'grunt', weapon: 'gun' }, { kind: 'runner' }, { kind: 'heavy', weapon: 'shotgun' }], H = this.hatch;
     for (let i = 0; i < extra; i++) {
       const d = kinds[i % kinds.length];
       let x, y;
@@ -3434,6 +3437,109 @@ export class Game {
       this.enemies.push(en);
     }
     if (extra) this.addFloat(this.player.x, this.player.y - 30, '¡LA MAFIA REFUERZA!', COLORS.blood, 1, 1.8);
+    if (this.final) this.final.allyScene = true; // escena de su llegada (ver civScene)
+  }
+
+  // Retrato de un civil para las cajas de diálogo (ayudado: su aspecto; hostil: los colores de su variante).
+  civPortrait(kind, who) {
+    if (kind === 'ally') {
+      const l = who.look, hat = l.hat === 'beanie' ? '#6a2a2a' : l.hat === 'cap' ? '#2a3a5a' : l.hat === 'hood' ? '#2a2a3a' : null;
+      return { civ: { coat: l.coat, hair: l.hair, skin: l.skin, hat, visor: l.hat === 'cap' }, hostile: false };
+    }
+    const c = civHostileColors(who.civVariant || 0);
+    return { civ: { coat: c.coat, hair: '#2a1a0a', skin: '#c9966a', hat: c.hat, visor: false }, hostile: true };
+  }
+
+  // ESCENAS DE LLEGADA (karma invisible): al aparecer los civiles se congela el mundo y hablan con la caja de texto junto a su cara (la cámara va a quien habla), para que se sepa
+  // a quién se tiene delante: los AMIGOS (cian: te devuelven la moneda) o los HOSTILES (rojo: la mafia los recluta). Con karma mixto salen las dos, una tras otra (primero los amigos, que
+  // llegan al empezar; los hostiles más tarde). Una sola vez por partida (R no las repite).
+  civScene(kind, first) {
+    const p = this.player, ag = AGENTS[p.gender] || AGENTS.male, F = this.final;
+    const me = { name: ag.name, color: ag.color, tag: 'AGENTE', portrait: { mask: this.mask, gender: p.gender, level: this.goreOn ? p.bloodLevel : 0, bits: this.maskBits || [] } };
+    const at = (o) => ({ x: o.x, y: o.y });
+    let lines, onEnd;
+    if (kind === 'ally') {
+      const al = this.allies.filter((a) => a.alive), a1 = al[0], a2 = al[1] || al[0];
+      const sp = (a) => ({ name: 'AMIGO', color: COLORS.player, tag: 'DE LA CALLE', portrait: this.civPortrait('ally', a) });
+      lines = [
+        { speaker: sp(a1), text: '¡Eh, tú! ¿Te acuerdas de la moneda? Hoy te devolvemos el favor.', focus: at(a1) },
+        { speaker: me, text: '¡Ustedes! No tenían por qué venir...', focus: at(p) },
+        { speaker: sp(a2), text: F && F.civ.length ? 'Ojo: la mafia ha reclutado a otros como nosotros. ¡Pero aquí estamos!' : 'Nadie nos había tratado así. ¡Vamos con ustedes!', focus: at(a2) },
+      ];
+      onEnd = () => this.showCallout('¡TE AYUDAN!', COLORS.player, 2.4, 'LOS CIVILES A LOS QUE AYUDASTE');
+    } else {
+      const hs = this.enemies.filter((e) => e.alive && e.civ), h1 = first || hs[0], h2 = hs[hs.length - 1] || h1;
+      const sp = (h) => ({ name: 'CIVIL', color: '#ff2a4a', tag: 'DE LA MAFIA', portrait: this.civPortrait('hostile', h) });
+      const killed = this.civilianBase && this.civilianBase.killed > 0, al = this.allies.find((a) => a.alive);
+      lines = [
+        { speaker: sp(h1), text: killed ? '¡Es él! ¡El que mató a los nuestros!' : '¡Ahí está! ¡El que nos hizo daño en la calle!', focus: at(h1) },
+        { speaker: sp(h2), text: 'La mafia nos da de comer. Hoy cobramos tu deuda.', focus: at(h2) },
+        { speaker: me, text: 'No quería esto... pero no pienso morir aquí.', focus: at(p) },
+      ];
+      if (al) lines.push({ speaker: { name: 'AMIGO', color: COLORS.player, tag: 'DE LA CALLE', portrait: this.civPortrait('ally', al) }, text: '¡Tranquilo! ¡Nosotros te cubrimos!', focus: at(al) });
+      onEnd = () => this.showCallout('¡TE ATACAN!', '#ff2a4a', 2.4, 'CIVILES AL SERVICIO DE LA MAFIA');
+    }
+    if (this.comms.say(`civscene:${kind}`, lines, { urgent: true, onEnd })) this.comms.begin(this.comms.queue.shift());
+  }
+
+  // DESPEDIDA (final del piso 10): con la fase final ganada y aliados civiles vivos, antes de la detonación se dan las gracias (ellos a ti y tú a ellos) y se van: por la escalera
+  // del cuarto de servicio en LIMPIEZA, por la calle en PERÍMETRO. La detonación no empieza hasta que se han ido (o a los 16 s).
+  updateFarewell(dt) {
+    const F = this.final;
+    if (F.farewell === 'done') return false;
+    const al = this.allies.filter((a) => a.alive && !a.gone);
+    if (!F.farewell) {
+      if (!al.length) { F.farewell = 'done'; return false; }
+      if (this.state !== 'cleared' || !this.comms.idle()) return true;
+      F.farewell = 'talk'; F.farewellT = 0;
+      this.farewellScene(al);
+      return true;
+    }
+    if (F.farewell === 'leave') {
+      F.farewellT += dt;
+      if (!al.length || F.farewellT > 16) { F.farewell = 'done'; this.allies = []; return false; }
+    }
+    return true;
+  }
+
+  farewellScene(al) {
+    const p = this.player, ag = AGENTS[p.gender] || AGENTS.male, T = this.trap, a1 = al[0], a2 = al[1] || al[0];
+    const me = { name: ag.name, color: ag.color, tag: 'AGENTE', portrait: { mask: this.mask, gender: p.gender, level: this.goreOn ? p.bloodLevel : 0, bits: this.maskBits || [] } };
+    const sp = (a) => ({ name: 'AMIGO', color: COLORS.player, tag: 'DE LA CALLE', portrait: this.civPortrait('ally', a) });
+    const at = (o) => ({ x: o.x, y: o.y });
+    const lines = [
+      { speaker: sp(a1), text: '¡Se acabó! Bien hecho, amigo.', focus: at(a1) },
+      { speaker: me, text: 'Sin ustedes no lo habría logrado. Gracias.', focus: at(p) },
+      { speaker: sp(a2), text: 'Tú nos diste una moneda y un poco de respeto. Gracias a ti.', focus: at(a2) },
+      { speaker: me, text: 'Salgan de aquí. Todo esto va a volar.', focus: at(p) },
+      { speaker: sp(a1), text: '¡Cuídate! ¡Nos vemos en la calle!', focus: at(a1) },
+    ];
+    const L = this.ladderRoom && this.ladderRoom.ladder;
+    const onEnd = () => {
+      this.final.farewell = 'leave'; this.final.farewellT = 0;
+      for (const a of this.allies) {
+        if (!a.alive) continue;
+        if (this.final.role === 'limpieza' && L) a.leave = { x: L.x, y: L.y, hole: true, t: 0 };
+        else { const sp2 = T.spawns[a.x < T.center.x ? 'w' : 'e'][0]; a.leave = { x: sp2.x, y: sp2.y, hole: false, t: 0 }; }
+      }
+      this.showCallout('¡GRACIAS!', COLORS.player, 2, 'SE VAN ANTES DE LA EXPLOSIÓN');
+    };
+    if (!this.comms.say('civscene:farewell', lines, { urgent: true, onEnd })) { this.final.farewell = 'done'; return; }
+    this.comms.begin(this.comms.queue.shift());
+  }
+
+  // Marca de quién es quién: un halo y un marcador sobre la cabeza, rojo para los civiles hostiles y cian para los aliados.
+  drawCivMark(ctx, e, color) {
+    const k = 0.5 + 0.5 * Math.sin(this.time * 6);
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.fillStyle = color;
+    ctx.globalAlpha = 0.14 + 0.12 * k; pixelDisc(ctx, e.x, e.y, 14 + Math.round(k * 2), WORLD_PX);
+    ctx.globalAlpha = 0.3; pixelDisc(ctx, e.x, e.y, 9, WORLD_PX);
+    ctx.restore();
+    const y = e.y - e.r - 14 + Math.round(Math.sin(this.time * 5)) * 2;
+    ctx.fillStyle = '#140a24'; pixelRect(ctx, e.x - 4, y - 1, 9, 1); pixelRect(ctx, e.x - 3, y, 7, 1); pixelRect(ctx, e.x - 2, y + 1, 5, 1); pixelRect(ctx, e.x - 1, y + 2, 3, 1); pixelRect(ctx, e.x, y + 3, 1, 1);
+    ctx.fillStyle = color; pixelRect(ctx, e.x - 3, y, 7, 1); pixelRect(ctx, e.x - 2, y + 1, 5, 1); pixelRect(ctx, e.x - 1, y + 2, 3, 1); pixelRect(ctx, e.x, y + 2, 1, 1);
   }
 
   // El aliado más cercano (en pie, a la vista y a ≤ 260 u) hacia el que un enemigo puede volverse en vez de ir a por ti.
@@ -3483,6 +3589,14 @@ export class Game {
   // LIMPIEZA: cuenta atrás (solo en juego, así no corre durante la cinemática de la trampilla), ruidos en la alcantarilla y los civiles suben de uno en uno.
   updateCivs(dt) {
     const F = this.final;
+    if (F.allyScene && this.comms.idle()) {          // llegada de los aliados: escena con diálogo (los que suben por la escalera, cuando ya asoman)
+      const a = this.allies.find((q) => q.alive && (!q.rise || q.rise.t > 0.55));
+      if (a) { F.allyScene = false; this.civScene('ally', a); return; }
+    }
+    if (F.civScene && !F.allyScene && this.comms.idle()) { // llegada de los hostiles (tras la de los aliados si los hay: con karma mixto salen dos escenas seguidas, una buena y otra mala)
+      const c = this.enemies.find((q) => q.alive && q.civ && (!q.rise || q.rise.t > 0.55));
+      if (c) { F.civScene = false; this.civScene('hostile', c); return; }
+    }
     if (F.role === 'limpieza' && F.civPending && !F.ambushPending) {
       F.civT -= dt;
       if (F.civT <= 0 && this.ladderRoom) {
@@ -4414,7 +4528,13 @@ export class Game {
     this.drawMaskDrops(ctx);
     for (const b of this.bullets) b.draw(ctx);
     for (const e of this.enemies) if (e.standing) { if (e.rise) this.drawRising(ctx, e); else e.draw(ctx, this.time, this); }
-    for (const a of this.allies) if (a.alive) { if (a.rise) this.drawRising(ctx, a); else a.draw(ctx, this.time, this); }
+    for (const a of this.allies) if (a.alive) {
+      if (a.rise) this.drawRising(ctx, a);
+      else if (a.sink && this.ladderRoom) this.drawThroughHole(ctx, a, this.ladderRoom.ladder, Math.min(1, a.sink.t / 0.9), () => a.draw(ctx, this.time, this)); // se va por la escalera
+      else a.draw(ctx, this.time, this);
+    }
+    for (const a of this.allies) if (a.alive && !a.rise && !a.sink) this.drawCivMark(ctx, a, COLORS.player);          // AMIGOS: halo y marcador cian
+    for (const e of this.enemies) if (e.alive && e.civ && !e.rise && e.state !== 'down') this.drawCivMark(ctx, e, '#ff2a4a'); // HOSTILES: halo y marcador rojo
     this.drawPoison(ctx);
     if (this.darkLayer) ctx.drawImage(this.darkLayer, 0, 0, pixelW, pixelH);
     this.drawPartner(ctx); // penumbra: atenúa enemigos y objetos; el jugador se dibuja encima (siempre se ve)
