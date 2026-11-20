@@ -88,6 +88,7 @@ export class Player {
     this.masked = masked;
     this.agentId = 'main'; // 'main' (el primer agente) | 'support' (el compañero del relevo, ver Game.swapControl)
     this.gender = 'male';
+    this.handT = 0;    // s que le quedan mirándose la mano tras recoger una moneda con la máscara de Rick (lore.js)
     this.vomit = null; // { t, dur, spurts, wasMasked }: vomitando por culpa (ver startVomit)
     this.doorAnim = null; // { kind: 'close' | 'open', t, door, fired }: el agente cierra la puerta principal al entrar / la abre al despejar (ver startDoorAnim)
     this.bloodLevel = 0;  // 0..BLOOD_LEVELS: cuánta sangre lleva encima (lo fija Game)
@@ -126,6 +127,7 @@ export class Player {
 
   update(dt, game) {
     const { input, map } = game;
+    this.handT = Math.max(0, this.handT - dt);
     let mx = 0, my = 0;
     // Controles de PC reasignables (keybinds.js): se pregunta al mapa vigente, nunca a códigos fijos.
     const keys = game.keys;
@@ -349,6 +351,7 @@ export class Player {
     }
     if (v.t >= v.dur) {
       this.vomit = null;
+      if (!v.shock && game.lore) game.lore.onGuiltVomitEnd(); // la frase fría de CENTRAL: solo tras el vómito por culpa
       if (v.wasMasked) { this.masked = true; game.particles.neon(this.x, this.y, this.angle, 8, Math.PI); game.sfx.play('maskOn'); }
       this.cooldown = 0.4;
     }
@@ -643,7 +646,13 @@ export class Player {
     drawSprite(ctx, playerBody(this.maskId, this.bloodLevel, this.gender), 0, 0);
     // Cola de caballo: detrás de la cabeza (la base queda bajo ella) y rotada alrededor de su base.
     if (female) drawSprite(ctx, 'ponytail', -3, 0, this.tailA, { ox: 10, oy: 2.5 });
-    drawMaskHead(ctx, this.masked ? this.maskId : (female ? 'bare_f' : 'bare'), this.bloodLevel);
+    if (this.handT > 0) { // mirándose la mano (con una moneda): la cabeza se inclina hacia ella y la moneda asoma en el puño
+      const k = Math.sin(Math.PI * Math.min(1, 1 - this.handT / 1)) ;
+      ctx.rotate(0.45 * k);
+      drawMaskHead(ctx, this.masked ? this.maskId : (female ? 'bare_f' : 'bare'), this.bloodLevel);
+      ctx.rotate(-0.45 * k);
+      ctx.fillStyle = '#140a24'; pixelRect(ctx, 9, 5, 4, 4); ctx.fillStyle = '#ffbe0b'; pixelRect(ctx, 10, 6, 2, 2); ctx.fillStyle = '#7a5300'; pixelRect(ctx, 11, 7, 1, 1);
+    } else drawMaskHead(ctx, this.masked ? this.maskId : (female ? 'bare_f' : 'bare'), this.bloodLevel);
     ctx.translate(pose ? -pose.lean : -bodyLean, 0);
     if (pose) {
       // Levantada, la herramienta está más cerca de la cámara: va POR ENCIMA del jugador.

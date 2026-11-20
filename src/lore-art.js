@@ -164,3 +164,57 @@ export function drawBirdCoin(ctx, x, y, glint = 0) {
 }
 
 export { AMBER };
+
+// --- Micro-pistas ambientales (lore.js, cuarta tanda): decorado sin colisión que se dibuja sobre los muebles ya existentes. Coordenadas del mundo; w y h en píxeles internos. ---
+const px = (ctx, x, y, w, h, c) => { ctx.fillStyle = c; pixelRect(ctx, x, y, w, h); };
+
+// Piso 2 · hoja de turnos sobre un escritorio: tres columnas de nombres; la primera fila de la primera columna (R.▒▒▒) tachada en rojo y una celda de la tercera columna en blanco, sin marcar.
+export function drawSheet(ctx, x, y) {
+  px(ctx, x - 9, y - 12, 12, 9, '#14100a'); px(ctx, x - 8, y - 11, 10, 7, '#cfc9bd');
+  for (let c = 0; c < 3; c++) for (let r = 0; r < 3; r++) {
+    const blank = c === 2 && r === 1;
+    px(ctx, x - 7 + c * 6, y - 10 + r * 4, 2, 1, blank ? '#cfc9bd' : '#6a6a7a');
+  }
+  px(ctx, x - 7, y - 10, 4, 1, '#d90429'); px(ctx, x - 6, y - 10, 1, 1, '#a8573a');          // tachado de «R.▒▒▒»
+  px(ctx, x + 3, y - 6, 1, 1, '#9a9aa8');                                                       // la celda en blanco lleva solo un punto de lápiz
+}
+
+// Piso 5 · «REPUESTOS · CUARTO DE SERVICIO» rotulado con plantilla sobre una estantería.
+export function drawStencil(ctx, x, y) {
+  const txt = 'REPUESTOS · CUARTO DE SERVICIO', w = measureText(txt), left = x - (w * WORLD_PX) / 2;   // x = centro
+  px(ctx, left - 4, y - 2, w + 4, 11, '#14100a');
+  drawText(ctx, txt, left, y, { color: '#c9971f', scale: WORLD_PX, shadow: null });
+}
+
+// Piso 6 · libro de cuentas con marcas de cinco en cinco y la última tanda con una raya corta incompleta.
+export function drawLedger(ctx, x, y) {
+  px(ctx, x - 12, y - 8, 24, 11, '#14100a'); px(ctx, x - 11, y - 7, 11, 9, '#cfc9bd'); px(ctx, x, y - 7, 11, 9, '#bdb5a5'); px(ctx, x - 1, y - 7, 2, 9, '#3a2f1a');
+  for (let g = 0; g < 3; g++) { for (let i = 0; i < 4; i++) px(ctx, x - 10 + g * 4 + i, y - 6, 1, 4, '#2a2a34'); px(ctx, x - 10 + g * 4 - 1, y - 5, 5, 1, '#2a2a34'); }  // grupos de cinco (cuatro rayas y la cruzada)
+  for (let i = 0; i < 3; i++) px(ctx, x + 2 + i, y - 6, 1, 4, '#2a2a34');                                                                                            // la última tanda: tres rayas...
+  px(ctx, x + 6, y - 6, 1, 2, '#2a2a34');                                                                                                                            // ...y una corta, incompleta
+}
+
+// Piso 8 · post-it amarillo en el monitor del medio.
+export function drawPostit(ctx, x, y) {
+  px(ctx, x - 3, y - 3, 6, 6, '#14100a'); px(ctx, x - 2, y - 2, 5, 5, '#ffd84a');
+  px(ctx, x - 1, y - 1, 3, 1, '#7a5300'); px(ctx, x - 1, y + 1, 2, 1, '#7a5300');
+}
+
+// Piso 9 · sala de espera: tres sillas; dos con un abrigo encima y la tercera vacía, apartada y mirando a la puerta (al este).
+export function drawWaitingChairs(ctx, x, y) {
+  const chair = (cx, cy, face) => {
+    px(ctx, cx - 6, cy - 6, 12, 12, '#14100a'); px(ctx, cx - 5, cy - 5, 10, 10, '#3a2f1a');
+    if (face === 'south') px(ctx, cx - 5, cy - 6, 10, 2, '#5b4a2a'); else px(ctx, cx - 6, cy - 5, 2, 10, '#5b4a2a');   // el respaldo marca hacia dónde mira
+  };
+  chair(x, y, 'south'); px(ctx, x - 4, y - 3, 8, 7, '#4a5a3a'); px(ctx, x - 4, y - 3, 8, 1, '#6a7a52');               // abrigo oliva
+  chair(x + 36, y, 'south'); px(ctx, x + 32, y - 3, 8, 7, '#6a4a3a'); px(ctx, x + 32, y - 3, 8, 1, '#8a6a52');         // abrigo marrón
+  chair(x + 90, y + 14, 'east');                                                                                          // la tercera: vacía, mirando a la puerta
+}
+
+// Piso 3 · pilar de la alcantarilla: muescas de palanca en tandas (como contando pasos) y, al lado, un ave dibujada torpemente.
+export function drawPillarMarks(ctx, x, y) {
+  for (let g = 0; g < 4; g++) { for (let i = 0; i < 4; i++) px(ctx, x + 4 + g * 6 + i, y + 6, 1, 5, '#a89f8f'); px(ctx, x + 3 + g * 6, y + 8, 6, 1, '#a89f8f'); }   // tandas de cinco
+  px(ctx, x + 6, y + 18, 1, 5, '#a89f8f'); px(ctx, x + 7, y + 18, 1, 5, '#a89f8f');                                                                                    // una tanda a medias
+  const bx = x + 18, by = y + 22;                                                                                                                                         // el ave: cuerpo, ala en «v», cabeza y pico (torpe)
+  px(ctx, bx, by, 5, 3, '#b8b0a0'); px(ctx, bx - 2, by - 2, 3, 1, '#b8b0a0'); px(ctx, bx + 6, by - 2, 3, 1, '#b8b0a0'); px(ctx, bx + 4, by - 3, 2, 2, '#b8b0a0'); px(ctx, bx + 6, by - 2, 2, 1, '#c9971f');
+}

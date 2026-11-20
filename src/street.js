@@ -154,6 +154,7 @@ export class StreetLife {
       this.run.coins++;
       g.addFloat(c.x, c.y - 8, '¡MONEDA!', COLORS.enemy, 1, 1.2);
       g.playAt('coin', c.x, c.y, 1);
+      if (g.lore) g.lore.onCoinPicked(); // con la máscara de Rick: se mira la mano un segundo
       c.gone = true;
     }
     if (this.coins.some((c) => c.gone)) this.coins = this.coins.filter((c) => !c.gone);

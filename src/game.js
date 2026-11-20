@@ -1759,6 +1759,7 @@ export class Game {
       }
     }
     if (this.lore.radioReady) return { id: 'interact', label: 'RADIO', ready: true };
+    if (this.lore.noteReady) return { id: 'interact', label: 'EXAMINAR', ready: true };
     if (this.ventNear()) return { id: 'interact', label: 'ROMPER', ready: true };
     if (this.detNear && this.state === 'cleared') return { id: 'interact', label: 'DETONAR', ready: true }; // piso 10: activar el detonador // piso 10: romper la ventilación (toques repetidos)
     const door = this.doors.some((d) => d.inKickRange(p.x, p.y, p.angle));
@@ -2176,6 +2177,7 @@ export class Game {
     if (this.goreOn) this.prints.draw(ctx);
     this.particles.drawGround(ctx);
     ctx.drawImage(run.propsLayer, 0, 0, pixelW, pixelH);
+    this.lore.drawTunnel(ctx); // piso 3: muescas de palanca y un ave torpe en un pilar
     for (const q of this.pickups) q.draw(ctx, this.time);
     run.drawCroc(ctx);
     for (const b of this.bullets) b.draw(ctx);
@@ -3379,6 +3381,7 @@ export class Game {
     const p = this.player;
     const en = this.makeEnemy({ x, y, patrol: [{ x, y }], weapon: null, kind: 'civ', melee: c.weapon });
     en.found = true; en.alarmed = true; en.state = 'chase'; en.target = { x: p.x, y: p.y }; en.attackCd = 0.6; en.wave = 'civ';
+    if (this.lore.rickOn()) { en.attackCd = 1.1; this.bark(en, Math.random() < 0.5 ? '¿ÉL...?' : 'NO PUEDE SER...', true); } // con la máscara de Rick dudan medio segundo
     en.speedMul = 1 + Math.min(0.15, 0.02 * (this.final ? this.final.civ.length : 0)); // cuanto peor el karma, más rápidos
     this.enemies.push(en);
     return en;
@@ -3499,7 +3502,7 @@ export class Game {
       const sp = (h) => ({ name: 'CIVIL', color: '#ff2a4a', tag: 'DE LA MAFIA', portrait: this.civPortrait('hostile', h) });
       const killed = this.civilianBase && this.civilianBase.killed > 0, al = this.allies.find((a) => a.alive);
       lines = [
-        { speaker: sp(h1), text: p.gender === 'female' ? (killed ? '¡Es ella! ¡La que mató a los nuestros!' : '¡Ahí está! ¡La que nos hizo daño en la calle!') : (killed ? '¡Es él! ¡El que mató a los nuestros!' : '¡Ahí está! ¡El que nos hizo daño en la calle!'), focus: at(h1) },
+        { speaker: sp(h1), text: this.lore.rickOn() ? '¿Él...? No puede ser...' : p.gender === 'female' ? (killed ? '¡Es ella! ¡La que mató a los nuestros!' : '¡Ahí está! ¡La que nos hizo daño en la calle!') : (killed ? '¡Es él! ¡El que mató a los nuestros!' : '¡Ahí está! ¡El que nos hizo daño en la calle!'), focus: at(h1) },
         { speaker: sp(h2), text: 'La mafia nos da de comer. Hoy cobramos tu deuda.', focus: at(h2) },
         { speaker: me, text: this.agentSays('hostile'), focus: at(p) },
       ];
@@ -3649,7 +3652,7 @@ export class Game {
     if (F.allyShout <= 0) {
       F.allyShout = 5 + Math.random() * 3;
       const al = this.allies.filter((a) => a.alive && !a.rise);
-      if (al.length) { const a = al[Math.floor(Math.random() * al.length)]; this.addFloat(a.x, a.y - 24, allyLine(this.lastBark), COLORS.player, 1, 1.5); }
+      if (al.length) { const a = al[Math.floor(Math.random() * al.length)]; this.addFloat(a.x, a.y - 24, allyLine(this.lastBark, this.lore.rickOn()), COLORS.player, 1, 1.5); }
     }
     F.civShout -= dt;                               // de vez en cuando, uno de los que ya vienen a por ti grita algo cruel
     if (F.civShout <= 0) {
