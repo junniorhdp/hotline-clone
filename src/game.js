@@ -47,7 +47,7 @@ import { Sfx } from './audio.js';
 import { ScreenFx } from './effects.js';
 import { drawSprite, pixelDisc, pixelRect, BLOOD_LEVELS, WORLD_PX, playerBody, drawMaskHead } from './sprites.js';
 import { drawText, measureText, CELL_H } from './pixelfont.js';
-import { civiliansHelp } from './street.js';
+import { civiliansHelp, newKarma, cloneKarma } from './street.js';
 import { COLORS, TAU, rand, clamp, angleDiff, closestOnSegment, seededRandom, hashString } from './utils.js';
 
 const STEP = 1 / 60;       // paso fijo de simulación (60 FPS)
@@ -388,7 +388,7 @@ export class Game {
     this.sfx.pickTrack(); // pista de combate del piso nuevo (sin repetir la última); con R se conserva
     this.levelIndex = index;
     this.streetRun = newStreetRun();
-    this.civilianBase = { ...this.civilianRecord }; // el registro al entrar al piso (R lo restaura)
+    this.civilianBase = cloneKarma(this.civilianRecord); // el karma CONFIRMADO al entrar al piso: lo ocurrido en el piso anterior ya cuenta; R descarta lo del piso en curso
     this.trapRetry = false; this.finalRetry = false; this.finalRole = null; this.trapCheckpoint = null; this.finalCheckpoint = null;
     this.score.startLevel();
     this.scuffleCount = 0;
@@ -659,7 +659,12 @@ export class Game {
   endAskActive() { return performance.now() - (this.endAskAt || 0) < 3000; }
 
   restartLevel() {
-    const retry = () => { this.score.restartLevel(); this.reset(); };
+    const retry = () => {
+      this.score.restartLevel();
+      // R rebobina la calle: los civiles vuelven a estar vivos y sin su moneda, y el karma al confirmado, así que las monedas que diste en este piso vuelven contigo (si no, se perdían sin que el gesto contara).
+      if (this.streetRun && this.streetRun.giftSpent) { this.streetRun.coins += this.streetRun.giftSpent; this.streetRun.giftSpent = 0; }
+      this.reset();
+    };
     // PUNTO DE ANUNCIO: tras X muertes (ads.js). Sin SDK conectado es instantáneo; con SDK el anuncio sale antes del reintento.
     if (this.state === 'dead' && this.ads.countDeath()) this.ads.triggerInterstitial(retry);
     else retry();
@@ -898,17 +903,13 @@ export class Game {
     this.state = 'results';
     this.resultsAge = 0;
     const challenge = this.street.settle(); // reto de la cabina telefónica (suma su bonus antes del rango)
-    // Penalización por civiles dañados o muertos en la calle (nunca más de los puntos del piso): también cuenta para el rango.
-    const civ = this.street.civilianPenalty();
-    civ.penalty = Math.min(civ.penalty, Math.max(0, this.score.levelScore));
-    if (civ.penalty > 0) this.score.addBonus(-civ.penalty);
+    // (Los civiles ya no puntúan ni penalizan: lo que hiciste con ellos queda en el karma invisible, que se confirma aquí al completar el piso: ver goToLevel.)
     // Rehenes abatidos por el jugador: −2000 cada uno (los liberados ya sumaron +1500 al soltarlos).
     const hs = this.hostages.summary();
     hs.penalty = Math.min(hs.penalty, Math.max(0, this.score.levelScore));
     if (hs.penalty > 0) this.score.addBonus(-hs.penalty);
     this.results = this.score.finishLevel(this.time, this.par, this.enemies.length);
     this.results.challenge = challenge;
-    this.results.civilians = civ.penalty > 0 ? civ : null;
     this.results.hostages = hs.total > 0 ? hs : null;
     this.results.last = this.levelIndex === LEVELS.length - 1;
     this.results.stats = this.statsSummary(); // el panel se queda fijo aunque luego se reinicie el estado
@@ -960,7 +961,7 @@ export class Game {
     this.comms.forget(); this.flow.forget();
     this.buff = null;
     this.streetRun = newStreetRun();
-    this.civilianBase = { hurt: 0, killed: 0, gifts: 0 };
+    this.civilianBase = newKarma();
     this.trapRetry = false; this.finalRetry = false; this.finalRole = null; this.trapCheckpoint = null; this.finalCheckpoint = null;
     this.score.newRun(this.history.best());
     this.resetStains();
@@ -980,7 +981,7 @@ export class Game {
     this.comms.forget(); this.flow.forget();
     this.buff = null;
     this.streetRun = newStreetRun();
-    this.civilianBase = { hurt: 0, killed: 0, gifts: 0 }; // el comportamiento con los civiles se acumula durante toda la partida
+    this.civilianBase = newKarma(); // el karma con los civiles se acumula durante toda la partida (y se confirma al completar cada piso)
     this.trapRetry = false; this.finalRetry = false; this.finalRole = null; this.trapCheckpoint = null; this.finalCheckpoint = null;
     this.score.newRun(this.history.best());
     this.resetStains();
@@ -1163,7 +1164,7 @@ export class Game {
     this.hatch = level.trap && level.trap.hatch ? { ...level.trap.hatch, state: 'closed', open: 0, used: false } : null; // trampilla de la emboscada
     this.ambush = null;
     this.final = null; this.reunion = null; // fase final (reencuentro y rol): ver beginFinal
-    this.civilianRecord = { ...(this.civilianBase || { hurt: 0, killed: 0, gifts: 0 }) }; // los civiles vuelven a empezar con R: el registro, al de la entrada al piso
+    this.civilianRecord = cloneKarma(this.civilianBase || newKarma()); // los civiles vuelven a empezar con R: el karma, al confirmado en la entrada al piso
     if (this.trap) {
       if (this.partner) this.partner.away = true;
       if (this.finalRetry && this.finalRole && retryInside) this.beginFinal(this.finalRole, true); // el rol elegido se conserva con R
@@ -4521,7 +4522,6 @@ export class Game {
       ['BONUS DE TIEMPO', `+${r.timeBonus.toLocaleString('es')}`],
       ...(r.challenge ? [['RETO', r.challenge.ok ? `CUMPLIDO +${r.challenge.bonus}` : 'FALLIDO']] : []),
       ...(r.hostages ? [['REHENES', `${r.hostages.saved}/${r.hostages.total} LIBERADOS${r.hostages.killed ? ` · ${r.hostages.killed} MUERTO${r.hostages.killed > 1 ? 'S' : ''} -${r.hostages.penalty.toLocaleString('es')}` : ''}`]] : []),
-      ...(r.civilians ? [['CIVILES', `-${r.civilians.penalty.toLocaleString('es')} (${[r.civilians.hurt && `${r.civilians.hurt} HERIDO${r.civilians.hurt > 1 ? 'S' : ''}`, r.civilians.killed && `${r.civilians.killed} MUERTO${r.civilians.killed > 1 ? 'S' : ''}`].filter(Boolean).join(' · ')})`]] : []),
       ['PUNTOS DEL PISO', r.levelScore.toLocaleString('es')],
       ['PUNTUACIÓN TOTAL', r.total.toLocaleString('es')],
       ['RÉCORD', this.bestScore.toLocaleString('es')],
