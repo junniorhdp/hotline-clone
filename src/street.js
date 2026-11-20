@@ -100,6 +100,8 @@ export class StreetLife {
     this.lastCoins = run.coins; this.coinFlash = 0; // contador de monedas: se muestra unos segundos cuando sube
     this.hurtSet = new Set(); this.killedSet = new Set();
     this.ringT = 0.5;
+    // Piso 10 · LA CALLE VACÍA (lore.js): sin vagabundos y con el barril apagado (la fogata no arde); la ceniza y los detalles los dibuja Lore según el karma.
+    if (game.levelIndex === 9 && game.lore && game.lore.decorOn) { game.lore.barrel = st.fire ? { x: st.fire.x, y: st.fire.y } : null; this.npcs = []; this.fires = []; }
   }
 
   get run() { return this.game.streetRun; }
@@ -355,6 +357,7 @@ export class StreetLife {
       if (!near && tw !== 0) continue;
       px(c.x, c.y, -2, -2, 4, 4, '#b38600'); px(c.x, c.y, -1, -3, 2, 1, '#ffbe0b'); px(c.x, c.y, -1, 2, 2, 1, '#ffbe0b');
       px(c.x, c.y, -2, -2, 1, 1, '#fff6c8');
+      px(c.x, c.y, -1, 0, 1, 1, '#7a5300'); px(c.x, c.y, 1, 0, 1, 1, '#7a5300'); px(c.x, c.y, 0, 1, 1, 1, '#7a5300'); // la silueta del ave (una «v» diminuta): todas las monedas la llevan
       if (tw === 0) { px(c.x, c.y, -1, -6, 1, 2, '#ffffff'); px(c.x, c.y, -1, 5, 1, 2, '#ffffff'); px(c.x, c.y, -6, -1, 2, 1, '#ffffff'); px(c.x, c.y, 4, -1, 2, 1, '#ffffff'); }
     }
     for (const n of this.npcs) n.draw(ctx, this.clock);
@@ -443,6 +446,7 @@ export class StreetLife {
       ctx.fillStyle = '#b38600'; ctx.fillRect(cx0 + 1, cy0 + 1, 8, 8);
       ctx.fillStyle = '#ffbe0b'; ctx.fillRect(cx0 + 2, cy0 + 2, 6, 6);
       ctx.fillStyle = '#fff6c8'; ctx.fillRect(cx0 + 3, cy0 + 3, 1, 3);
+      ctx.fillStyle = '#7a5300'; ctx.fillRect(cx0 + 4, cy0 + 5, 1, 1); ctx.fillRect(cx0 + 6, cy0 + 5, 1, 1); ctx.fillRect(cx0 + 5, cy0 + 6, 1, 1); // el ave
       drawText(ctx, `x${this.run.coins}`, cx0 + 14, cy0 - 1, { color: age < 0.6 ? '#ffffff' : COLORS.enemy, scale: age < 0.25 ? 3 : 2 });
       ctx.restore();
     }

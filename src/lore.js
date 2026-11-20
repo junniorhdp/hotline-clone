@@ -1,41 +1,55 @@
 import { drawText, measureText } from './pixelfont.js';
 import { talkBlips, voiceFor } from './comms.js';
-import { COLORS } from './utils.js';
 import { AGENTS } from './portraits.js';
+import { TILE, OUTSKIRT } from './map.js';
+import { hostileCivCount, friendlyCivCount } from './street.js';
+import { drawHooks, drawMonitors, drawServiceRoom, drawKarmaStreet, drawBirdCoin, roomGeom, AMBER } from './lore-art.js';
 
-// SISTEMA NARRATIVO DE PISTAS Y VIÑETAS (infraestructura base). Piezas cortas y misteriosas entre bloques o pisos; este módulo decide CUÁNDO puede salir cada una y reproduce las viñetas.
+// SISTEMA NARRATIVO DE PISTAS Y VIÑETAS. Piezas cortas y misteriosas entre bloques o pisos; este módulo decide CUÁNDO puede salir cada una y reproduce las viñetas.
 //
 // Reglas de ciclo de vida:
 //  · cada pieza se dispara COMO MUCHO UNA VEZ POR PARTIDA: `seen` se vacía al empezar partida (`startRun`) y NO con R (`reset` no lo toca);
 //  · si la partida empieza desde el selector de pisos, las piezas de pisos ANTERIORES al de salida se descartan (`startFloor`), para que no se acumulen;
-//  · NUNCA en pleno combate: cada pieza declara los momentos en que puede salir (`moments`: llegada, selección de máscara, piso despejado, resultados) y no sale con enemigos alerta;
+//  · NUNCA en pleno combate: cada pieza declara los momentos en que puede salir (`moments`: llegada, selección de máscara, exploración tranquila, piso despejado, resultados) y no sale con enemigos alerta;
 //  · se saltan manteniendo ESPACIO / ENTER 1,2 s (en táctil, el dedo): la mecánica de `Game.holdSkip` de las cinemáticas.
 // Presupuesto de ritmo: por piso, como máximo 1 pieza de nivel A (escenas, ≤ 30 s en total) y 2 de nivel B (ambiente sin pausa ni texto) o C (interactivos a pie de objeto), con al menos
 // SEP s entre piezas. `exempt` (el final) no consume presupuesto ni separación.
-// Opción OPCIONES → JUEGO → PISTAS DE HISTORIA (`hintsOn`): en NO solo salen las piezas `skeleton` (V1, V7 y la llamada del piso 6).
-// Registro de piezas: `floor` = índice de piso (0-9) en el que salen. Las marcadas `todo` están previstas pero aún sin contenido (V2-V6): al añadirlas basta con llamar a `canFire` / `consume`.
+// Opción OPCIONES → JUEGO → PISTAS DE HISTORIA (`hintsOn`): en NO solo salen las piezas `skeleton` (V1, V7 y la llamada del piso 6) y NO se dibuja el decorado narrativo (cuarto de servicio, calle vacía).
 export const SEP = 30;
-const A = 'A', B = 'B', C = 'C';
+const A = 'A', C = 'C';
+const CALM = ['arrival', 'explore', 'cleared'];  // momentos en los que no puede haber enemigos en alerta
 export const PIECES = {
-  v1: { level: A, floor: 0, skeleton: true, moments: ['masks'] },                 // LA LISTA: tras el prólogo, antes de elegir máscara en el piso 1
-  v2: { level: A, floor: 1, moments: ['arrival'], todo: true },                   // EL ASIENTO
-  v3: { level: A, floor: 2, moments: ['masks'], todo: true },                     // LOS GANCHOS
-  v4: { level: C, floor: 2, moments: ['arrival'], todo: true },                   // ALGUIEN VIVIÓ AQUÍ (cuarto de servicio del piso 3)
-  call6: { level: A, floor: 5, skeleton: true, moments: ['cleared'] },            // LLAMADA DE CENTRAL: tras el jefe, con el piso despejado y el jugador en la calle
-  v5: { level: C, floor: 7, moments: ['arrival'], todo: true },                   // LA GRABACIÓN
-  v6: { level: A, floor: 9, moments: ['arrival'], todo: true },                   // LA CALLE VACÍA
-  v7: { level: A, floor: 9, skeleton: true, exempt: true, moments: ['results'] }, // CARA O CRUZ: tras la salida del final, antes de los resultados
+  v1: { level: A, floor: 0, skeleton: true, moments: ['masks'] },                  // LA LISTA: tras el prólogo, antes de elegir máscara en el piso 1
+  v2: { level: A, floor: 1, moments: ['arrival'] },                                // EL ASIENTO: al bajar de la moto en el piso 2
+  v3: { level: A, floor: 2, moments: ['masks'] },                                  // LOS GANCHOS: selección de máscara del piso 3
+  v4: { level: C, floor: 2, moments: ['explore'] },                                // ALGUIEN VIVIÓ AQUÍ: la radio del cuarto de servicio del piso 3
+  call6: { level: A, floor: 5, skeleton: true, moments: ['cleared'] },             // LLAMADA DE CENTRAL: tras el jefe, con el piso despejado y el jugador en la calle
+  v5: { level: A, floor: 7, moments: ['explore'] },                                // LA GRABACIÓN: los monitores del piso 8
+  v6: { level: A, floor: 9, moments: ['arrival'] },                                // LA CALLE VACÍA: llegada al piso 10
+  v4echo: { level: C, floor: 9, moments: ['explore'] },                            // el eco: la radio del cuarto de servicio del piso 10
+  v7: { level: A, floor: 9, skeleton: true, exempt: true, moments: ['results'] },  // CARA O CRUZ: tras la salida del final, antes de los resultados
 };
 
-// --- Guiones de las viñetas (línea tecleada: `at` s, texto, color; `cues`: sonidos con las voces ya existentes) ---------------------------------------------------------------------
-const AMBER = '#ffbe0b';
+// --- Guiones de las viñetas (línea tecleada: `at` s, texto, color; `cues`: sonidos con las voces ya existentes; `draw`: arte propio; `textY`: fila del texto) -----------------------------------
 const SCRIPTS = {
-  // V1 · LA LISTA: negro, estática y clic de radio; «UNO.» «DOS.» y un cursor que parpadea EXACTAMENTE tres veces antes de apagarse (la tercera línea no llega). Clic de máscara.
+  // V1 · LA LISTA (7 s): negro, lluvia lejana y estática; «UNO.» (pausa 0,8 s) «DOS.» (pausa 1,6 s) y un cursor que parpadea EXACTAMENTE tres veces antes de apagarse; clic de máscara.
   v1: {
-    dur: 8.4,
-    lines: [{ at: 1.0, text: 'UNO.', color: AMBER }, { at: 3.0, text: 'DOS.', color: AMBER }],
-    cursor: { row: 2, blinks: [[5.0, 5.5], [5.9, 6.4], [6.8, 7.3]] },
-    cues: [{ at: 0.2, sound: 'empty', vol: 0.8 }, { at: 7.5, sound: 'maskOn', vol: 0.7 }],
+    dur: 7,
+    lines: [{ at: 0.6, text: 'UNO.', color: AMBER }, { at: 1.7, text: 'DOS.', color: AMBER }],
+    cursor: { row: 2, blinks: [[3.7, 4.15], [4.5, 4.95], [5.3, 5.75]] },
+    cues: [{ at: 0, sound: 'rain', vol: 1 }, { at: 0.15, sound: 'empty', vol: 0.8 }, { at: 6.1, sound: 'maskOn', vol: 0.7 }],
+  },
+  // V3 · LOS GANCHOS (6 s): seis ganchos, cinco máscaras y el sexto vacío con la sombra de un águila (o el águila colgada si ya tienes la máscara de Rick).
+  v3: {
+    dur: 6, draw: 'hooks', textY: 0.62,
+    lines: [{ at: 1.2, text: 'SEIS GANCHOS.', color: AMBER }, { at: 2.8, text: 'CINCO MÁSCARAS.', color: AMBER }],
+    cues: [{ at: 0.2, sound: 'creak', vol: 0.7 }, { at: 3.6, sound: 'creak', vol: 0.5 }],
+  },
+  // V5 · LA GRABACIÓN (6 s): tres monitores; dos con estática y el tercero con una grabación vieja de un agente con máscara de águila que camina hacia la cámara y mira arriba. Silbido de cinta.
+  v5: {
+    dur: 6, draw: 'monitors', textY: 0.7, center: true,
+    lines: [{ at: 1.4, text: 'ARCHIVO 03 · SUBSUELO', color: AMBER }],
+    cues: [{ at: 0.1, sound: 'empty', vol: 0.6 }, { at: 0.3, sound: 'tapeWhine', vol: 1 }, { at: 4.2, sound: 'tapeWhine', vol: 0.6 }],
   },
   // V7 · CARA O CRUZ: una moneda gira sobre la mesa del cuarto de servicio, cada vez más despacio; justo antes de caer, corte a negro con el sonido de la moneda parándose; «UNO. DOS.» y nada más.
   v7: {
@@ -73,27 +87,29 @@ class Vignette {
     ctx.globalAlpha = Math.max(0, fade);
     ctx.fillStyle = '#000'; ctx.fillRect(0, 0, w, h);
     if (d.draw === 'coin') this.drawCoin(ctx, w, h, t);
-    const scale = w >= 300 ? 2 : 1, y0 = Math.round(h * 0.42), lh = 12 * scale + 6;
+    else if (d.draw === 'hooks') drawHooks(ctx, w, h, t, g);
+    else if (d.draw === 'monitors') drawMonitors(ctx, w, h, t);
+    const scale = w >= 300 ? 2 : 1, y0 = Math.round(h * (d.textY || 0.42)), lh = 12 * scale + 6;
     (d.lines || []).forEach((L, i) => {
       const n = Math.max(0, Math.min(L.text.length, Math.floor((t - L.at) * 14)));
-      if (n > 0) drawText(ctx, L.text.slice(0, n), Math.round(w / 2 - measureText(L.text) * scale / 2), y0 + i * lh, { color: L.color, scale, shadow: null });
+      const x = d.cursor ? Math.round(w / 2 - measureText('UNO.') * scale / 2) : Math.round(w / 2 - measureText(L.text) * scale / 2);   // V1: las líneas alineadas a la izquierda; el resto, centradas
+      if (n > 0) drawText(ctx, L.text.slice(0, n), x, y0 + i * lh, { color: L.color, scale, shadow: null });
     });
     if (d.cursor && d.cursor.blinks.some(([a, b]) => t >= a && t < b)) {
-      const txt = '_', row = d.cursor.row;
-      drawText(ctx, txt, Math.round(w / 2 - measureText('UNO.') * scale / 2), y0 + row * lh, { color: AMBER, scale, shadow: null });
+      drawText(ctx, '_', Math.round(w / 2 - measureText('UNO.') * scale / 2), y0 + d.cursor.row * lh, { color: AMBER, scale, shadow: null });
     }
     ctx.restore();
     if (t > 0.8) g.drawSkipHint(ctx, w, h - 22 - g.safe.b, this);
   }
 
-  // V7: una mesa oscura y una moneda que gira (se ve de canto y de cara; la marca del ave solo es legible si ya tienes la máscara de Rick) hasta cortar a negro.
+  // V7: una mesa oscura y una moneda que gira (se ve de canto y de cara; la marca del ave solo es nítida si ya tienes la máscara de Rick) hasta cortar a negro.
   drawCoin(ctx, w, h, t) {
     const end = this.def.coinEnd;
     if (t >= end) return;
     const g = this.g, cx = Math.round(w / 2), cy = Math.round(h * 0.52);
     ctx.fillStyle = '#14100a'; ctx.fillRect(0, cy + 10, w, h - cy - 10);       // mesa
     ctx.fillStyle = '#2a2218'; ctx.fillRect(0, cy + 10, w, 1);
-    const k = Math.max(0, 1 - t / end), omega = 22 * k * k + 1.5, ang = (t / 1) * omega * 0.9;  // gira cada vez más despacio
+    const k = Math.max(0, 1 - t / end), omega = 22 * k * k + 1.5, ang = t * omega * 0.9;  // gira cada vez más despacio
     const face = Math.abs(Math.cos(ang)), wd = Math.max(1, Math.round(16 * face));
     ctx.fillStyle = '#a8741a'; ctx.fillRect(cx - Math.ceil(wd / 2) - 1, cy - 9, wd + 2, 18);
     ctx.fillStyle = '#ffd166'; ctx.fillRect(cx - Math.floor(wd / 2), cy - 8, wd, 16);
@@ -114,6 +130,11 @@ export class Lore {
     this.clock = 0; this.lastAt = -Infinity;
     this.floorCount = { A: 0, BC: 0 };
     this.callPending = false; // el teléfono de la calle suena con la llamada de CENTRAL (piso 6)
+    this.seatCoin = null;     // V2: la moneda del asiento de la moto
+    this.radio = null;        // V4: la radio del cuarto de servicio, mientras suena
+    this.radioReady = false;  // ¿está el jugador junto a la radio y puede usarla?
+    this.barrel = null;       // V6: el barril apagado del piso 10 (donde estaba la fogata)
+    this.smokeT = 0;
   }
 
   // Partida nueva (o prólogo): todo vuelve a poder salir. El prólogo no cuenta como parte de la campaña.
@@ -121,20 +142,21 @@ export class Lore {
     this.seen.clear();
     this.startFloor = index; this.prologueRun = !!prologue;
     this.clock = 0; this.lastAt = -Infinity; this.callPending = false;
+    this.radio = null; this.seatCoin = null;
     this.enterFloor(index);
   }
 
   // Piso nuevo: el presupuesto por piso se renueva (con R NO: el mismo intento sigue gastando el suyo).
-  enterFloor() { this.floorCount = { A: 0, BC: 0 }; this.callPending = false; }
+  enterFloor() { this.floorCount = { A: 0, BC: 0 }; this.callPending = false; this.radio = null; this.seatCoin = null; }
 
-  // ¿Puede salir ahora esta pieza? `moment`: 'arrival' | 'masks' | 'cleared' | 'results'.
+  // ¿Puede salir ahora esta pieza? `moment`: 'arrival' | 'masks' | 'explore' | 'cleared' | 'results'.
   canFire(id, moment) {
     const P = PIECES[id], g = this.game;
     if (!P || this.seen.has(id) || this.prologueRun || g.testRange) return false;
     if (!this.hintsOn && !P.skeleton) return false;                 // con PISTAS DE HISTORIA en NO, solo el esqueleto
     if (P.floor < this.startFloor || P.floor !== g.levelIndex) return false; // pisos anteriores al de salida: descartada
     if (!P.moments.includes(moment)) return false;
-    if (moment === 'cleared' && g.enemies.some((e) => e.alive && (e.state === 'chase' || e.state === 'alert'))) return false; // nunca en combate
+    if (CALM.includes(moment) && g.enemies.some((e) => e.alive && (e.state === 'chase' || e.state === 'alert'))) return false; // nunca en combate
     if (!P.exempt) {
       if (P.level === A ? this.floorCount.A >= 1 : this.floorCount.BC >= 2) return false;
       if (this.clock - this.lastAt < SEP) return false;
@@ -151,11 +173,33 @@ export class Lore {
     this.lastAt = this.clock;
   }
 
+  // Decorado narrativo del piso: el cuarto de servicio (pisos 3 y 10) y la calle vacía (piso 10).
+  get decorOn() { return this.hintsOn && !this.prologueRun && !this.game.testRange && !this.game.prologue; }
+
+  radioPos() { const G = roomGeom(this.game); return G ? G.radio : null; }
+
   update(dt) {
     this.clock += dt;
     const g = this.game, p = g.player;
     // Llamada de CENTRAL (piso 6): con el piso despejado y el jugador ya en la calle suena el teléfono. Solo suena; no cambia el objetivo ni nada más. Si no la coges, no se pierde ni obliga.
     this.callPending = !!(g.state === 'cleared' && p && p.alive && !g.inBuilding(p) && g.street && g.street.phone && this.canFire('call6', 'cleared'));
+    // V2: la moneda del asiento desaparece al alejarte más de 4 m (128 u).
+    if (this.seatCoin) {
+      this.seatCoin.age += dt;
+      if (p && Math.hypot(p.x - this.seatCoin.x, p.y - this.seatCoin.y) > 128 && this.seatCoin.age > 1) this.seatCoin = null;
+    }
+    this.updateRadio(dt);
+    if (!p || g.state !== 'playing' || !p.alive || g.prologue) return;
+    // V5: al acercarte por primera vez a los monitores de la sala de control (piso 8).
+    if (g.levelIndex === 7 && g.inside && this.canFire('v5', 'explore')) {
+      const mx = (43 + OUTSKIRT) * TILE + TILE / 2, my = (1 + OUTSKIRT) * TILE + TILE / 2;
+      if (Math.hypot(p.x - mx, p.y - my) < 110) this.play('v5');
+    }
+    // Humo del barril apagado (piso 10).
+    if (this.barrel && this.decorOn && g.levelIndex === 9) {
+      this.smokeT -= dt;
+      if (this.smokeT <= 0) { this.smokeT = 0.3; g.particles.smoke(this.barrel.x + (Math.random() - 0.5) * 6, this.barrel.y - 8); }
+    }
   }
 
   // --- Viñetas ---------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -165,8 +209,10 @@ export class Lore {
     g.vignette = new Vignette(g, SCRIPTS[id], () => { this.lastAt = this.clock; if (onEnd) onEnd(); });
   }
 
-  onMaskSelect() {                       // V1 al abrir la selección de máscara del piso 1
+  // Selección de máscara: V1 (piso 1) o V3 (piso 3).
+  onMaskSelect() {
     if (this.canFire('v1', 'masks')) this.play('v1');
+    else if (this.canFire('v3', 'masks')) this.play('v3');
   }
 
   // Antes de los resultados del último piso: V7. Devuelve true si se está reproduciendo (finishFloor continuará al acabar).
@@ -174,6 +220,147 @@ export class Lore {
     const g = this.game;
     if (g.levelIndex === 9 && g.endingDone && this.canFire('v7', 'results')) { this.play('v7', next); return true; }
     return false;
+  }
+
+  // Al terminar la llegada en moto (el agente ya ha bajado): V2 en el piso 2 o V6 en el piso 10.
+  onArrived() {
+    const g = this.game;
+    if (g.prologue) return;
+    if (this.canFire('v2', 'arrival')) this.startV2();
+    else if (this.canFire('v6', 'arrival')) this.startV6();
+  }
+
+  // --- «Planos» (V2 y V6): la cámara se queda 2,5-3 s sobre algo, sin congelar el dibujo del mundo; se saltan manteniendo ---
+  startShot(x, y, dur, cues, onEnd) {
+    const g = this.game;
+    g.shot = { x, y, dur, t: 0, cues, cueIdx: 0, onEnd, skipHold: 0, skipArm: false };
+    g.camera.snap(x, y);
+  }
+
+  updateShot(dt) {
+    const g = this.game, S = g.shot;
+    S.t += dt;
+    if (g.holdSkip(S, dt)) S.t = S.dur;
+    while (S.cueIdx < S.cues.length && S.cues[S.cueIdx].at <= S.t) { const c = S.cues[S.cueIdx++]; g.sfx.play(c.sound, c.vol ?? 1); }
+    g.camera.snap(S.x, S.y);
+    g.particles.update(dt, g.map, (kind, p) => g.bake(kind, p));
+    if (S.t >= S.dur) { g.shot = null; g.camera.snap(g.player.x, g.player.y); if (S.onEnd) S.onEnd(); return true; }
+    return false;
+  }
+
+  drawShot(ctx, w, h) {
+    const S = this.game.shot;
+    if (!S) return;
+    const g = this.game, k = Math.min(1, S.t / 0.3, Math.max(0, (S.dur - S.t) / 0.3)), bar = Math.round(16 * k);
+    ctx.fillStyle = '#000'; ctx.fillRect(0, 0, w, bar); ctx.fillRect(0, h - bar, w, bar);
+    if (S.t > 0.8) g.drawSkipHint(ctx, w, h - bar - 14 - g.safe.b, S);
+  }
+
+  // V2 · EL ASIENTO: al bajar de la moto en el piso 2, un plano de 2,5 s sobre el asiento trasero, con una moneda rayada con la silueta de un ave («tin» y destello). Sin texto.
+  // La moneda no se puede coger y desaparece sola cuando te alejas más de 4 m.
+  startV2() {
+    const g = this.game, b = g.bike;
+    this.consume('v2');
+    this.seatCoin = { x: b.x - 4, y: b.y - 1, age: 0 };
+    this.startShot(b.x, b.y, 2.5, [{ at: 0.4, sound: 'coin', vol: 0.8 }], () => { this.lastAt = this.clock; });
+  }
+
+  // V6 · LA CALLE VACÍA: al llegar al piso 10 la música se apaga y solo hay viento; plano de 3 s sobre el barril apagado (con su hilo de humo) y la tapa entreabierta; después, la frase del agente.
+  // Los detalles de la calle (mantas, vela, monedas, zapato...) salen del karma confirmado: ver drawWorld.
+  startV6() {
+    const g = this.game, p = g.player, ag = AGENTS[p.gender] || AGENTS.male;
+    this.consume('v6');
+    g.sfx.setMusic('silent');
+    const B = this.barrel || { x: p.x, y: p.y };
+    this.startShot(B.x, B.y, 3, [{ at: 0, sound: 'wind', vol: 1 }], () => {
+      this.lastAt = this.clock;
+      g.addFloat(p.x, p.y - 24, p.gender === 'female' ? 'QUÉ SILENCIO.' : 'NO HAY NADIE.', ag.color, 1, 2.6);
+    });
+  }
+
+  // Tras (re)crear el piso: la tapa de alcantarilla fija del piso 10 queda entreabierta (V6).
+  onReset() {
+    const g = this.game;
+    if (!(g.levelIndex === 9 && this.decorOn && g.sewer)) return;
+    const c = g.sewer.covers.find((x) => x.fixed);
+    if (c) { c.slide = 0.65; c.dir = 1; this.lid = { x: c.x, y: c.y }; }
+  }
+
+  // Karma confirmado → qué detalles muestra la calle vacía: 'good' | 'bad' | 'mixed' | 'none' (sin números ni avisos).
+  streetKind() {
+    const base = this.game.civilianBase;
+    const bad = hostileCivCount(base) > 0, good = friendlyCivCount(base) > 0;
+    return bad && good ? 'mixed' : bad ? 'bad' : good ? 'good' : 'none';
+  }
+
+  // --- Decorado en el mundo (se dibuja bajo las entidades) y radio del cuarto de servicio (V4 y su eco en el piso 10) -------------------------------------------------------------------------
+  drawWorld(ctx) {
+    const g = this.game, now = performance.now() / 1000;
+    if (this.seatCoin) drawBirdCoin(ctx, this.seatCoin.x, this.seatCoin.y, Math.max(0, 1 - this.seatCoin.age / 0.8) * 0.9);
+    if (!this.decorOn) return;
+    if (g.levelIndex === 2 || g.levelIndex === 9) {
+      drawServiceRoom(ctx, g, g.levelIndex === 2 ? 3 : 10, now, 'floor');
+      const R = this.radioPos();
+      if (this.radioReady && R) drawText(ctx, `${g.hint(g.keys.label('kick'), 'BOTA')} · RADIO`, R.x, R.y - 34, { color: '#9be32a', scale: 2, align: 'center', shadow: '#140a24' });
+    }
+    if (g.levelIndex === 9 && this.barrel) drawKarmaStreet(ctx, g, this.barrel, this.lid, this.streetKind(), now);
+  }
+
+  // Lo que va colgado de la pared norte del cuarto de servicio (calendario y taquillas con el rótulo raspado): se dibuja DESPUÉS de la capa de paredes.
+  drawWallDecor(ctx) {
+    const g = this.game;
+    if (!this.decorOn || !(g.levelIndex === 2 || g.levelIndex === 9)) return;
+    drawServiceRoom(ctx, g, g.levelIndex === 2 ? 3 : 10, performance.now() / 1000, 'wall');
+  }
+
+  updateRadio(dt) {
+    const g = this.game, p = g.player;
+    if (this.radio) {
+      const R = this.radio, t0 = R.t;
+      R.t += dt;
+      for (const L of R.lines) {
+        const n = (t) => Math.max(0, Math.min(L.text.length, Math.floor((t - L.at) * 22)));
+        talkBlips(g, R.voice, L.text, n(t0), n(R.t));
+      }
+      while (R.cueIdx < R.cues.length && R.cues[R.cueIdx] <= R.t) { R.cueIdx++; g.sfx.play('empty', 0.6); }
+      if (R.t >= R.dur) this.radio = null;
+    }
+    this.radioReady = false;
+    if (!this.decorOn || !p || !p.alive || g.state !== 'playing' || g.sewerRun || g.comms.cur) return;
+    const id = g.levelIndex === 2 ? 'v4' : g.levelIndex === 9 ? 'v4echo' : null, R = this.radioPos();
+    if (!id || !R || this.radio) return;
+    if (Math.hypot(p.x - R.x, p.y - R.y) < 28 && this.canFire(id, 'explore')) {
+      this.radioReady = true;
+      if (g.keys.pressed('kick')) this.startRadio(id);
+    }
+  }
+
+  // La radio: «Aquí base... ¿Me copian?» / «...¿Alguien?» y estática. En el piso 3 la voz es de radio, sin nombre; en el piso 10 es la VOZ y el NOMBRE del agente que controlas (el eco).
+  startRadio(id) {
+    const g = this.game, p = g.player, echo = id === 'v4echo', ag = AGENTS[p.gender] || AGENTS.male;
+    this.consume(id);
+    this.radio = {
+      t: 0, dur: 7, cueIdx: 0, cues: [0.1, 3.4, 6.2],
+      title: echo ? `${ag.name} · RADIO` : '??? · FRECUENCIA', color: echo ? ag.color : '#9d8fb8',
+      voice: echo ? voiceFor(g.mask, p.gender) : voiceFor(null, null),
+      lines: [{ at: 0.5, text: 'Aquí base... ¿Me copian?' }, { at: 3.5, text: '...¿Alguien?' }],
+    };
+    g.sfx.play('empty', 0.8);
+  }
+
+  drawHud(ctx, w, h) {
+    const R = this.radio;
+    if (!R) return;
+    const g = this.game, bw = Math.min(w - 20, 250), bh = 34, bx = Math.round((w - bw) / 2), by = h - bh - 12 - g.safe.b;
+    ctx.fillStyle = 'rgba(5, 0, 15, 0.92)'; ctx.fillRect(bx, by, bw, bh);
+    ctx.fillStyle = R.color;
+    ctx.fillRect(bx, by, bw, 1); ctx.fillRect(bx, by + bh - 1, bw, 1); ctx.fillRect(bx, by, 1, bh); ctx.fillRect(bx + bw - 1, by, 1, bh);
+    drawText(ctx, R.title, bx + 6, by + 4, { color: R.color, shadow: null });
+    R.lines.forEach((L, i) => {
+      const n = Math.max(0, Math.min(L.text.length, Math.floor((R.t - L.at) * 22)));
+      if (n > 0) drawText(ctx, L.text.slice(0, n), bx + 6, by + 14 + i * 10, { color: '#f5f3ff', shadow: null });
+    });
+    if (R.t > 5.2) for (let i = 0; i < 24; i++) { ctx.fillStyle = Math.random() < 0.5 ? '#4a4a5a' : '#8a8a9a'; ctx.fillRect(bx + 6 + Math.floor(Math.random() * (bw - 14)), by + 14 + Math.floor(Math.random() * 16), 3, 1); } // estática
   }
 
   // --- Llamada de CENTRAL (piso 6, tras el jefe) -------------------------------------------------------------------------------------------------------------------------------

@@ -229,6 +229,10 @@ const SOUNDS = {
       s.tone({ type: 'square', from: 1650, to: 1650, dur: 0.07, gain: 0.06 * v, delay: i * 0.14 + 0.07 });
     }
   },
+  // Sonidos de las viñetas narrativas (lore.js): lluvia lejana, viento y silbido de cinta.
+  rain(s, v) { s.noise({ dur: 7, gain: 0.05 * v, filter: 'highpass', freq: 2600, q: 0.4 }); },
+  wind(s, v) { s.noise({ dur: 4, gain: 0.08 * v, filter: 'bandpass', freq: 380, freqTo: 640, q: 0.7 }); },
+  tapeWhine(s, v) { s.tone({ type: 'sine', from: 2300, to: 1500, dur: 1.4, gain: 0.05 * v }); s.noise({ dur: 1.4, gain: 0.02 * v, filter: 'highpass', freq: 5000, q: 0.5 }); },
   coin(s, v) {
     s.tone({ type: 'square', from: 988, to: 988, dur: 0.07, gain: 0.12 * v });
     s.tone({ type: 'square', from: 1319, to: 1319, dur: 0.22, gain: 0.12 * v, delay: 0.07 });
@@ -519,8 +523,8 @@ export class Sfx {
 
   // Pone los dos buses donde toca según el modo. `instant` = sin rampas (al crear el contexto).
   applyMusicMode(instant) {
-    const empty = this.musicMode === 'empty';
-    this.ramp(this.musicBus.gain, empty ? 0.0001 : MUSIC_VOLUME * this.musicVol, instant ? 0 : (empty ? CUT_TIME : 0.12));
+    const empty = this.musicMode === 'empty', silent = this.musicMode === 'silent'; // 'silent': ni música ni ambiente (la calle vacía del piso 10)
+    this.ramp(this.musicBus.gain, empty || silent ? 0.0001 : MUSIC_VOLUME * this.musicVol, instant ? 0 : (empty ? CUT_TIME : 0.12));
     this.ramp(this.ambientBus.gain, empty ? AMBIENT_VOLUME * this.musicVol : 0.0001,
       instant ? 0 : (empty ? AMBIENT_FADE : 0.3), empty && !instant ? CUT_TIME * 2 : 0);
   }
@@ -562,7 +566,7 @@ export class Sfx {
     while (this.nextNote < c.currentTime + LOOKAHEAD) {
       // En silencio no se crean nodos: el tiempo avanza pero no se programa nada.
       if (!this.muted && c.state === 'running') {
-        if (this.musicMode === 'empty') this.emptyStep(this.step, this.nextNote);
+        if (this.musicMode === 'silent') { /* nada */ } else if (this.musicMode === 'empty') this.emptyStep(this.step, this.nextNote);
         else if (this.musicMode === 'menu') this.menuStep(this.step, this.nextNote);
         else this.actionStep(this.step, this.nextNote);
       }

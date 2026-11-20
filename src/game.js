@@ -250,6 +250,7 @@ export class Game {
     this.comms = new Comms(this); // líneas cortas de lore no modales (prólogo)
     this.lore = new Lore(this);   // piezas narrativas cortas entre pisos (viñetas, llamadas y pistas): ver lore.js
     this.vignette = null;         // viñeta a pantalla completa en curso
+    this.shot = null;             // plano de cámara narrativo en curso
     this.flow = new PrologueFlow(this); // lógica y estado del prólogo / tutorial (instrucciones, salto, fin): prologue-flow.js
     this.finalExit = null; this.ladderRoom = null; this.climb = null; this.emerge = null; this.descent = null; this.sewerRun = null; this.sewerStash = null; this.sewerRoute = null; this.keyRoute = false; this.hasKey = false; this.keyDrop = null; this.keyHintAt = 0; this.shutAt = 0; // piso 3: entrada por la alcantarilla y llave de salida
     this.cineK = 0; // 0..1: cuánto están puestas las barras de cine de llegada / fuga (anima las barras y el fundido del HUD)
@@ -1114,6 +1115,7 @@ export class Game {
     this.particles.clear();
     this.prints.clear();
     this.sewer = new Sewer(this.map.sewers); // easter egg: cocodrilo en la alcantarilla (la tapa de la entrada real se dibuja cerrada y nunca lo suelta: ver Sewer.update)
+    this.lore.onReset(); // la tapa fija del piso 10 queda entreabierta (V6)
     this.sewer.bind(this);
     this.guilt = null;
     this.street = new StreetLife(this); // contenedores, moneda, máquina, cabina y vagabundo de la calle
@@ -1213,6 +1215,7 @@ export class Game {
     if (this.fade) { this.updateFade(dt); return; }
     // Menú modal abierto (OPCIONES / PAUSA): el juego está congelado y solo él lee la entrada.
     if (this.panel) { this.panel.update(); return; }
+    if (this.shot) { this.lore.updateShot(dt); return; } // plano de cámara narrativo (V2, V6): se salta manteniendo
     if (this.vignette) { if (this.vignette.update(dt)) { const v = this.vignette; this.vignette = null; if (v.onEnd) v.onEnd(); } return; } // viñeta narrativa: congela el juego (se salta manteniendo)
     if (this.state === 'menu') { this.menu.update(); return; }
     if (this.state === 'initials') { this.updateInitials(dt); return; }
@@ -1420,6 +1423,7 @@ export class Game {
         this.cine = null;
         this.state = 'playing';
         this.bannerTimer = INTRO_BANNER_TIME;
+        this.lore.onArrived(); // V2 (el asiento) / V6 (la calle vacía)
       }
     } else {
       if (skip) {
@@ -1753,6 +1757,7 @@ export class Game {
         return { id: 'mount', label: 'MOTO', ready: true };
       }
     }
+    if (this.lore.radioReady) return { id: 'interact', label: 'RADIO', ready: true };
     if (this.ventNear()) return { id: 'interact', label: 'ROMPER', ready: true };
     if (this.detNear && this.state === 'cleared') return { id: 'interact', label: 'DETONAR', ready: true }; // piso 10: activar el detonador // piso 10: romper la ventilación (toques repetidos)
     const door = this.doors.some((d) => d.inKickRange(p.x, p.y, p.angle));
@@ -4543,6 +4548,7 @@ export class Game {
     this.sewer.draw(ctx); // sobre los muebles de la calle: la cabeza nunca queda tapada ni cortada
     this.street.draw(ctx);
     this.hostages.draw(ctx);
+    this.lore.drawWorld(ctx); // decorado narrativo: moneda del asiento, cuarto de servicio y calle vacía
     for (const e of this.enemies) if (e.alive && e.state === 'down') e.draw(ctx, this.time, this);
     this.drawExecuteMarks(ctx);
     this.drawLockMark(ctx);
@@ -4578,6 +4584,7 @@ export class Game {
     ctx.globalAlpha = 1;
     ctx.drawImage(this.wallLayer, 0, 0, pixelW, pixelH);
     if (this.wallBloodDirty && this.goreOn) ctx.drawImage(this.wallBloodLayer, 0, 0, pixelW, pixelH);
+    this.lore.drawWallDecor(ctx); // calendario y taquillas del cuarto de servicio (sobre las paredes)
     this.cams.drawBodies(ctx); // cámaras montadas en las paredes
     this.drawVent(ctx); // ventilación del despacho (piso 10)
     this.drawEnding(ctx); // destrucción del edificio, bolas de fuego y corazones (final)
@@ -5266,6 +5273,7 @@ export class Game {
       this.drawMaskSelect(ctx, w, h);
       if (this.showRecords) this.drawRecordsOverlay(ctx, w, h);
       this.touch.drawScreenButtons(ctx);
+      if (this.vignette) this.vignette.draw(ctx, w, h); // V1 / V3: viñetas narrativas sobre la selección de máscara
       this.drawToast(ctx);
       this.drawPanel(ctx, w, h);
       this.drawCrosshair(ctx);
@@ -5295,6 +5303,7 @@ export class Game {
     this.drawFloatingTexts(ctx);
     this.street.drawHud(ctx, w, h);
     this.hostages.drawHud(ctx, w, h);
+    this.lore.drawHud(ctx, w, h); // la radio del cuarto de servicio
     this.hostages.drawLeaveAsk(ctx, w, h);
     this.drawTrapHud(ctx, w, h);
     this.drawFinalHud(ctx, w, h);
@@ -5404,6 +5413,7 @@ export class Game {
     this.comms.draw(ctx, w, h); // encima de todo el HUD
     if (this.comms.cur && this.comms.cur.skippable && this.comms.cur.age > 0.8) this.drawSkipHint(ctx, w, 10 + this.safe.t, this.comms); // pista de «mantén para saltar» (llamada de CENTRAL)
     if (this.vignette) this.vignette.draw(ctx, w, h);        // viñeta narrativa a pantalla completa
+    this.lore.drawShot(ctx, w, h);                           // barras y pista de los planos narrativos
     if (!this.comms.cur) this.fadeHud(ctx, w, h, (c) => this.touch.draw(c));
     if (this.state === 'results') this.drawResults(ctx, w, h);
     this.drawToast(ctx);
