@@ -393,7 +393,7 @@ export const LEVELS = [
       ['shelf', 24, 19, 4, 1], ['crates', 34, 15, 1, 1], ['desk', 38, 15, 3, 1], ['cabinet', 46, 15, 1, 1],
       ['crates', 44, 19, 2, 1], ['debris', 40, 19, 1, 1],
       // Exterior: vestíbulo, calle y la moto (aparcada en la plaza, 2×1 casillas).
-      ['counter', 7, 21, 4, 1], ['sofa', 27, 22, 3, 1], ['cabinet', 32, 21, 1, 1],
+      ['counter', 7, 21, 4, 1], ['sofa', 25, 22, 3, 1], ['cabinet', 32, 21, 1, 1],
       ['cabinet', 33, 21, 1, 1], ['barrel', 1, 21, 1, 1], ['crates', 1, 22, 1, 1],
       ['shelf', 46, 21, 1, 2], ['rug', 16, 21, 4, 2], ['papers', 14, 22, 1, 1],
       ['trash', 37, 22, 1, 1], ['tv', 44, 21, 1, 1], ['stain', 40, 22, 1, 1],

@@ -576,7 +576,7 @@ export class Enemy {
       if (hit.hitX || hit.hitY) { this.x = px; this.y = py; } // ingenuo: si choca de frente con una pared no desliza ni rodea, se queda empujándola
     }
     const moved = Math.hypot(this.x - px, this.y - py);
-    if (this.doorWait <= 0 && moved < speed * dt * 0.25) this.stallT += dt; else this.stallT = Math.max(0, this.stallT - dt);
+    if (this.doorWait <= 0 && this.doorPushTime <= 0 && moved < speed * dt * 0.25) this.stallT += dt; else this.stallT = Math.max(0, this.stallT - dt); // (empujando una puerta no cuenta como atasco: la hoja los echa atrás mientras se abre)
     this.stuck = false;
     if (this.stallT > 0.9) { this.stuck = true; return true; }
     return false;
