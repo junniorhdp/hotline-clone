@@ -40,6 +40,10 @@ export const OPTIONS = [
   { id: 'aiLevel', section: 'JUEGO', label: 'IA ENEMIGA', type: 'choice', default: 'avg',
     choices: [{ label: 'BOBOS', value: 'dumber' }, { label: 'TONTOS', value: 'dumb' }, { label: 'PROMEDIO', value: 'avg' }, { label: 'GENIOS', value: 'genius' }],
     apply: (g, v) => g.setAiLevel(v) },
+  // DISPARO AUTOMÁTICO (ratón y táctil): mientras apuntas a un enemigo a tiro (con el ratón, el cursor sobre él; en táctil, el joystick derecho), ataca solo a la cadencia del arma; en táctil no hace falta llegar
+  // al borde del joystick. Pensado para quien le cuesta disparar; funciona con cualquier nivel de asistencia. Se marca el objetivo fijado.
+  { id: 'autoFire', section: 'JUEGO', label: 'DISPARO AUTOMÁTICO', type: 'toggle', default: false,
+    apply: (g, v) => g.touch.setConfig({ autoFire: v }) },
   // Sin la animación, la puerta principal se cierra al cruzar el umbral y se abre al despejar el piso al instante (como antes), sin que el agente se pare a cerrarla / abrirla.
   { id: 'doorAnim', section: 'JUEGO', label: 'ANIMACIÓN DE LA PUERTA', type: 'toggle', default: true },
   // Piezas narrativas cortas (viñetas, llamadas y pistas) entre pisos. En NO solo queda el esqueleto mínimo: la lista (V1), la llamada de CENTRAL del piso 6 y la moneda final (V7). Ver lore.js.
@@ -60,10 +64,6 @@ export const OPTIONS = [
   { id: 'stickFire', section: 'TÁCTIL', label: 'DISPARO CON JOYSTICK', type: 'choice', default: 0.85,
     choices: [{ label: 'BORDE', value: 0.85 }, { label: 'FÁCIL', value: 0.6 }, { label: 'NO', value: 2 }],
     apply: (g, v) => g.touch.setConfig({ fireThreshold: v }) },
-  // Disparo automático: mientras apuntas (joystick derecho) a un enemigo a tiro, ataca solo; no hace falta
-  // llegar al borde del joystick. Pensado para quien le cuesta disparar; funciona con cualquier nivel de asistencia.
-  { id: 'autoFire', section: 'TÁCTIL', label: 'DISPARO AUTOMÁTICO', type: 'toggle', default: false,
-    apply: (g, v) => g.touch.setConfig({ autoFire: v }) },
   { id: 'hapticsEnabled', section: 'TÁCTIL', label: 'VIBRACIÓN', type: 'toggle', default: true,
     apply: (g, v) => g.touch.setConfig({ hapticsEnabled: v }) },
   // Asistencia de apuntado: OFF = manual puro · SUAVE = ligero magnetismo · ALTO = soft lock-on con marcador

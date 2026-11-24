@@ -1,7 +1,7 @@
 import { drawText, measureText } from './pixelfont.js';
 import { talkBlips, voiceFor } from './comms.js';
 import { AGENTS } from './portraits.js';
-import { TILE, OUTSKIRT, isSolidAt } from './map.js';
+import { TILE, OUTSKIRT, isSolidAt, lineOfSight } from './map.js';
 import { pixelRect } from './sprites.js';
 import { hostileCivCount, friendlyCivCount } from './street.js';
 import { drawHooks, drawMonitors, drawServiceRoom, drawKarmaStreet, drawBirdCoin, roomGeom, drawSheet, drawStencil, drawLedger, drawPostit, drawWaitingChairs, drawPillarMarks, AMBER } from './lore-art.js';
@@ -37,7 +37,7 @@ export const PIECES = {
   postit: { level: C, floor: 7, moments: ['explore'] },     // post-it del monitor del piso 8
   coldline: { level: B, floor: null, moments: ['explore'] },   // la frase fría de CENTRAL: solo tras el vómito POR CULPA
   hostageAsk: { level: B, floor: null, moments: ['explore'] }, // el primer rehén liberado: «¿Cuánto te pagan por esto?»
-  pile: { level: B, floor: 4, moments: ['cleared'] },                              // LA PILA DE CUERPOS: al despejar el piso 5, con la puerta aún cerrada
+  pile: { level: B, floor: 4, exempt: true, moments: ['cleared'] }, // exenta de presupuesto y separación: es la escena que no se puede perder (si otra pieza había salido hace poco, no debe quedarse sin pila)                              // LA PILA DE CUERPOS: al despejar el piso 5, con la puerta aún cerrada
   // Teléfonos de la calle: una llamada o grabación fija por piso (nivel C: interactivas a pie de objeto). El piso 6 no tiene: allí llama CENTRAL tras el jefe (`call6`).
   ph1: { level: C, floor: 0, moments: ['explore'] }, ph2: { level: C, floor: 1, moments: ['explore'] }, ph3: { level: C, floor: 2, moments: ['explore'] },
   ph4: { level: C, floor: 3, moments: ['explore'] }, ph5: { level: C, floor: 4, moments: ['explore'] }, ph7: { level: C, floor: 6, moments: ['explore'] },
@@ -280,26 +280,30 @@ export class Lore {
   //  · a quien heriste o mataste → se queda donde estaba.
   // Sin música (`silent`), sin fuego ni burbujas: solo viento, y a ~4 m de la pila un clic de radio. Los cuerpos son decorado (estado `dead` del vagabundo: no se golpea, no se da moneda).
   onCleared() {
-    const g = this.game, st = g.street;
-    if (g.levelIndex !== 4 || !this.decorOn || !st || !this.canFire('pile', 'cleared')) return;
-    const f = st.fires[0], first = st.npcs[0];
-    const barrel = f ? { x: f.x, y: f.y } : first ? { x: first.x, y: first.y } : null;
-    if (!barrel) return;
+    const g = this.game, st = g.street, door = g.mainDoor;
+    if (g.levelIndex !== 4 || !this.decorOn || !st || !door || !this.canFire('pile', 'cleared')) return;
     this.consume('pile');
-    const PC = { x: barrel.x + 30, y: barrel.y + 22 };
+    // La pila aparece FUERA, junto a la salida (donde el jugador sale hacia la moto y la ve de frente): al este de la puerta principal, en la acera, en el primer sitio libre y lejos de la moto.
+    const free = (x, y) => !isSolidAt(g.map, x, y);
+    let spot = null;
+    for (const sx of [1, -1]) for (const dist of [100, 130, 70, 160]) {
+      const c = { x: door.cx + sx * dist, y: door.cy + 52 };
+      if (g.bike && Math.abs(c.x - g.bike.x) < 90 && Math.abs(c.y - g.bike.y) < 80) continue;      // no sobre la moto ni su camino
+      if ([0, 10, 20, 30].every((d) => free(c.x - 12, c.y + d) && free(c.x + 12, c.y + d))) { spot = c; break; }
+    }
+    if (!spot) spot = { x: door.cx + 100, y: door.cy + 52 };
     const helped = [], bodies = [];
     let k = 0;
     for (const n of [...st.npcs]) {
       n.mute = true; n.say = null; n.sayT = 0;
       if (n.gifted) { helped.push({ coat: n.look.coat }); st.npcs.splice(st.npcs.indexOf(n), 1); continue; }  // ayudado: ya no está
       if (n.hurtOnce || n.state === 'dead' || n.state === 'agony') continue;                                   // herido o muerto por el jugador: se queda donde estaba
-      if (n.mode === 'fire') { n.x = PC.x + (k % 2 ? 9 : -9) + (Math.random() - 0.5) * 4; n.y = PC.y + k * 8 + (Math.random() - 0.5) * 2; k++; } // (apilados: se solapan en filas)
-      n.state = 'dead'; n.say = null; n.sayT = 0;                                                                // neutro: yace (decorado)
+      n.x = spot.x + (k % 2 ? 9 : -9) + (Math.random() - 0.5) * 4; n.y = spot.y + k * 8 + (Math.random() - 0.5) * 2; k++; // neutros: apilados fuera, solapándose en filas
+      n.state = 'dead'; n.say = null; n.sayT = 0;                                                                // yacen (decorado)
       bodies.push(n);
     }
-    st.fires = [];                                                                                              // el barril apagado
-    const top = bodies.find((n) => n.mode === 'fire') || bodies[0];
-    this.pile = { x: PC.x, y: PC.y, barrel, helped, bodies: bodies.length, coin: top ? { x: top.x, y: top.y - 2 } : null, clicked: false, shock: false, windT: 0 };
+    st.fires = [];                                                                                              // la fogata del barril se apaga
+    this.pile = { x: spot.x, y: spot.y, helped, bodies: bodies.length, coin: bodies.length ? { x: bodies[0].x, y: bodies[0].y - 2 } : null, clicked: false, shock: false, windT: 0 };
     g.sfx.setMusic('silent');
     g.sfx.play('wind', 0.9);
   }
@@ -310,9 +314,11 @@ export class Lore {
     P.windT -= dt;
     if (P.windT <= 0) { P.windT = 5; g.sfx.play('wind', 0.8); }                // solo viento
     this.smokeT -= dt;
-    if (this.smokeT <= 0) { this.smokeT = 0.3; g.particles.smoke(P.barrel.x + (Math.random() - 0.5) * 6, P.barrel.y - 8); } // el barril humea
+    if (this.smokeT <= 0) { this.smokeT = 0.3; g.particles.smoke(P.x + (Math.random() - 0.5) * 8, P.y - 6); } // la ceniza humea
     if (!P.bodies) return;
     const d = Math.hypot(p.x - P.x, p.y - P.y);
+    // Solo cuenta si ya la VE: tiene que haber salido del edificio y tener la pila a la vista (sin la pared de por medio); desde dentro, junto a la puerta, no pasa nada.
+    if (g.inBuilding(p) || (g.mainDoor && p.y < g.mainDoor.cy + 6) || !lineOfSight(g.map, p.x, p.y, P.x, P.y)) return; // (ni siquiera en el hueco de la puerta: apenas sale)
     if (!P.clicked && d < 128 && !this.hushed()) { P.clicked = true; g.sfx.play('empty', 0.7); }   // a ~4 m: un clic de radio
     if (!P.shock && d < 120 && !p.vomit && !p.exec && !p.doorAnim) {                                // al verla: vómito de impacto (sin culpa, karma ni puntos)
       P.shock = true; P.clicked = true;
@@ -326,8 +332,8 @@ export class Lore {
     const P = this.pile;
     if (!P) return;
     const px = (x, y, w, h, c) => { ctx.fillStyle = c; pixelRect(ctx, x, y, w, h); };
-    P.helped.forEach((hh, i) => { const x = P.barrel.x - 36 - i * 16, y = P.barrel.y + 12; px(x, y, 12, 5, '#14100a'); px(x + 1, y + 1, 10, 3, hh.coat); px(x + 1, y + 1, 10, 1, 'rgba(255,255,255,0.18)'); });
-    if (P.helped.length) drawBirdCoin(ctx, P.barrel.x, P.barrel.y - 8, 0);
+    P.helped.forEach((hh, i) => { const x = P.x + 26 + i * 16, y = P.y + 10; px(x, y, 12, 5, '#14100a'); px(x + 1, y + 1, 10, 3, hh.coat); px(x + 1, y + 1, 10, 1, 'rgba(255,255,255,0.18)'); });
+    if (P.helped.length) drawBirdCoin(ctx, P.x + 32, P.y + 8, 0);           // la moneda sobre la manta doblada
     if (P.coin) drawBirdCoin(ctx, P.coin.x, P.coin.y, 0.35 + 0.35 * Math.sin(performance.now() / 700));
   }
 

@@ -615,8 +615,17 @@ export class Game {
     if (p.x < r.x || p.x >= r.x + r.w || p.y < r.y || p.y >= r.y + r.h) return;
     this.sfx.play('pickup');
     document.documentElement.requestFullscreen({ navigationUI: 'hide' })
-      .then(() => screen.orientation?.lock?.('landscape').catch(() => {})) // solo Android
+      .then(() => this.lockLandscape()) // solo Android
       .catch(() => {});
+  }
+
+  // Pide bloquear la pantalla en horizontal. Falla EN SILENCIO (sin API, sin pantalla completa, iPhone, promesa rechazada): nunca interrumpe nada. En Android Chrome solo se concede
+  // en pantalla completa; si el móvil sigue en vertical, el juego se pausa con `GIRA EL DISPOSITIVO` como siempre (`needsRotate`).
+  lockLandscape() {
+    try {
+      const p = screen.orientation && screen.orientation.lock && screen.orientation.lock('landscape');
+      if (p && p.catch) p.catch(() => {});
+    } catch (err) { /* sin soporte */ }
   }
 
   // Crea el enemigo de una casilla del mapa según su tipo (ver ENEMY_CHARS en map.js).
@@ -4767,7 +4776,7 @@ export class Game {
   // disparar. Solo en táctil y mientras el joystick derecho apunta y hay objetivo (`touch.lock`).
   drawLockMark(ctx) {
     const e = this.touch.lock;
-    if (!this.input.touchMode || !e || !e.alive || !this.player.alive || this.panel) return;
+    if ((!this.input.touchMode && !this.touch.config.autoFire) || !e || !e.alive || !this.player.alive || this.panel) return; // táctil, o ratón con el disparo automático
     const t = performance.now() / 1000, R = 15;
     const firing = this.input.aimFiring || this.input.attackHeld;
     ctx.save();
