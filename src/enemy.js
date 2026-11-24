@@ -363,10 +363,7 @@ export class Enemy {
           const arrived = AI.tier === 1 ? this.directTo(this.target.x, this.target.y, spd, dt, game.map) : this.goTo(this.target.x, this.target.y, spd, dt, game.map); // TONTOS: recto, sin rodear
           // Destino inalcanzable (p. ej. un ruido en la calle con la puerta principal bloqueada): sin avanzar durante 1,5 s se rinde y se pone a buscar,
           // en vez de quedarse clavado empujando la puerta para siempre.
-          const moved = Math.hypot(this.x - (this.invX ?? this.x), this.y - (this.invY ?? this.y));
-          this.invX = this.x; this.invY = this.y;
-          if (this.doorWait > 0 || this.doorPushTime > 0 || moved > spd * dt * 0.25) this.invStall = 0; else this.invStall = (this.invStall || 0) + dt;
-          if (arrived || this.invStall > 1.5) { this.invStall = 0; this.invX = this.invY = undefined; this.startSearch(); }
+          if (arrived || this.noProgress(dt, spd)) this.startSearch();
         }
         break;
       case 'search':
@@ -404,7 +401,17 @@ export class Enemy {
     game.playAt('alert', this.x, this.y);
   }
 
+  // ¿Lleva 1,5 s sin avanzar yendo hacia un destino (sin contar las pausas ante puertas)? Llamar una vez por fotograma mientras camina.
+  noProgress(dt, spd) {
+    const moved = Math.hypot(this.x - (this.progX ?? this.x), this.y - (this.progY ?? this.y));
+    this.progX = this.x; this.progY = this.y;
+    if (this.doorWait > 0 || this.doorPushTime > 0 || moved > spd * dt * 0.25) this.progStall = 0; else this.progStall = (this.progStall || 0) + dt;
+    if (this.progStall > 1.5) { this.progStall = 0; this.progX = undefined; return true; }
+    return false;
+  }
+
   startSearch() {
+    this.progStall = 0; this.progX = undefined;
     this.searchPt = null; this.searchT = 0; this.stallT = 0; this.flanking = false;
     this.state = 'search';
     this.timer = SEARCH_TIME * AI.search;
@@ -494,7 +501,7 @@ export class Enemy {
         const k = Math.min(this.blindT, 1.1) * 0.85, px = tx + this.pv.x * k, py = ty + this.pv.y * k;
         if (!isSolidAt(game.map, px, py)) { tx = px; ty = py; }
       }
-      if (this.goTo(tx, ty, spd, dt, game.map)) this.startSearch();
+      if (this.goTo(tx, ty, spd, dt, game.map) || this.noProgress(dt, spd)) this.startSearch(); // (sin ruta hasta la última posición —p. ej. fuera, tras la puerta bloqueada— se rinde)
       return;
     }
 
