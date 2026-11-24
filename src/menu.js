@@ -13,7 +13,7 @@ import { StripDirector, stripArea } from './menu-strip.js';
 // Los cambios de pantalla pasan por `game.transition()` (fundido).
 // El CAMPO DE PRUEBAS (testrange.js) es EXCLUSIVO DEL EQUIPO: no tiene opción en el título (ni en la versión publicada ni en desarrollo); se abre solo con `npm run dev` (ver main.js).
 const TITLE_OPTIONS = [
-  { label: 'JUGAR', action: (g) => g.transition(() => g.startRunAt(0, !prologueSeen())) }, // la primera vez, el prólogo
+  { label: 'JUGAR', action: (g) => { if (g.input.touchMode) g.lockLandscape(); g.transition(() => g.startRunAt(0, !prologueSeen())); } }, // la primera vez, el prólogo; en táctil pide además la pantalla en horizontal (falla en silencio)
   { label: 'PRÓLOGO', action: (g) => g.transition(() => g.startRunAt(0, true)) },
   { label: 'SELECCIONAR PISO', action: (g) => g.transition(() => g.menu.open('floors'), 0.15) },
   { label: 'RÉCORDS', action: (g) => g.transition(() => g.menu.open('records'), 0.15) },

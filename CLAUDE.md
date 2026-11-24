@@ -1206,7 +1206,7 @@ Colores centralizados en `COLORS` (`src/utils.js`) y `PALETTE` (`src/sprites.js`
 - **Pantalla completa**: botón en el título (`menu.fullscreenRect()`), solo si
   `document.fullscreenEnabled` (en iPhone no existe). Se atiende en `game.onPointerUp` porque la
   petición debe hacerse dentro del evento del usuario, no desde el bucle; en Android intenta
-  además bloquear la orientación en horizontal.
+  además bloquear la orientación en horizontal. **`Game.lockLandscape()`** (`screen.orientation.lock('landscape')`) falla siempre en silencio (sin API, iPhone, sin pantalla completa, promesa rechazada o excepción) y se llama también al pulsar **JUGAR en táctil** (`menu.js`; PRÓLOGO, SELECCIONAR PISO y el resto no lo piden). En Android Chrome solo se concede en pantalla completa: sin ella, o con el móvil en vertical, el juego sigue pausado con `GIRA EL DISPOSITIVO` (`needsRotate`). No toca `toInternal`, los controles táctiles ni `game.safe`. La rotación por software (girar el lienzo 90° con CSS en vertical, que cubriría iPhone) **no está hecha**: exigiría rehacer la conversión de toques. Comprobado por script con 6 variantes de `screen.orientation` (rechaza, lanza, sin `lock`, sin API, devuelve `undefined`, éxito: 0 excepciones ni rechazos sin capturar, pide `'landscape'`) y con un toque simulado en JUGAR (1 llamada, pasa a `masks`). **Sin comprobar** en un Android o iPhone reales.
 - **Rendimiento**: si va por debajo de `LOW_FPS` (45) durante `LOW_FPS_SECONDS` (3 s) seguidos con
   la pestaña visible, `fx.lite = true` (sin aberración cromática) y aviso "EFECTOS REDUCIDOS".
   Una vez por sesión. `V` vuelve a efectos completos / los desactiva. El HUD indica "EFECTOS LIGEROS".
