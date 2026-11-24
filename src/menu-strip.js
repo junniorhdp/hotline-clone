@@ -216,12 +216,13 @@ export function spriteSheet(scale = 3) {
 function blit(ctx, img, cx, feetY, face, env, alpha = 1) {
   const w = img.width, h = img.height;
   ctx.save();
-  ctx.translate(Math.round(cx), Math.round(feetY));
-  if (face < 0) ctx.scale(-1, 1);
-  if (alpha !== 1) ctx.globalAlpha *= alpha;
-  ctx.drawImage(img, -(w >> 1), -(h - 1));
-  if (!env.lite) { ctx.globalAlpha *= 0.16; ctx.scale(1, -1); ctx.drawImage(img, -(w >> 1), -(h + 1)); }
-  ctx.restore();
+  try {
+    ctx.translate(Math.round(cx), Math.round(feetY));
+    if (face < 0) ctx.scale(-1, 1);
+    if (alpha !== 1) ctx.globalAlpha *= alpha;
+    ctx.drawImage(img, -(w >> 1), -(h - 1));
+    if (!env.lite) { ctx.globalAlpha *= 0.16; ctx.scale(1, -1); ctx.drawImage(img, -(w >> 1), -(h + 1)); }
+  } finally { ctx.restore(); }   // siempre equilibrado, aunque `drawImage` lance (p. ej. un bitmap roto)
 }
 const NOREF = { lite: true };   // sin reflejo (la cabeza del cocodrilo sale recortada por el borde de la alcantarilla)
 const fr = (t, rate) => Math.floor(t * rate) & 1;
@@ -248,9 +249,12 @@ function stars(ctx, x, y, t) {                                                  
 }
 function lamp(ctx, x, feetY, env) {
   if (!env.lite) {
-    ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.fillStyle = '#9ff6ff';
-    ctx.globalAlpha = 0.05; ctx.fillRect(Math.round(x) - 14, feetY - 30, 28, 10); ctx.globalAlpha = 0.04; ctx.fillRect(Math.round(x) - 9, feetY - 26, 18, 24);
-    ctx.globalAlpha = 0.09; ctx.fillRect(Math.round(x) - 18, feetY - 1, 36, 2); ctx.restore();
+    ctx.save();
+    try {
+      ctx.globalCompositeOperation = 'lighter'; ctx.fillStyle = '#9ff6ff';
+      ctx.globalAlpha = 0.05; ctx.fillRect(Math.round(x) - 14, feetY - 30, 28, 10); ctx.globalAlpha = 0.04; ctx.fillRect(Math.round(x) - 9, feetY - 26, 18, 24);
+      ctx.globalAlpha = 0.09; ctx.fillRect(Math.round(x) - 18, feetY - 1, 36, 2);
+    } finally { ctx.restore(); }
   }
   blit(ctx, spr().lamp, x + 2, feetY, 1, env);
 }
@@ -384,10 +388,12 @@ export const SCENES = [
         const slide = clamp(t / 0.5, 0, 1) - clamp((t - 4.8) / 0.5, 0, 1), rise = clamp((t - 0.5) / 0.5, 0, 1) - clamp((t - 3.9) / 0.5, 0, 1);
         ctx.fillStyle = '#05010f'; ctx.fillRect(x - 8, fy - 1, 16, 2);
         if (rise > 0) {
-          ctx.save(); ctx.beginPath(); ctx.rect(x - 14, fy - 16, 28, 16); ctx.clip();
-          const open = t > 1.2 && t < 3.6 && Math.sin(t * 2.2) > 0.4;
-          blit(ctx, K.croc[open ? 1 : 0], x, fy + 11 - Math.round(rise * 11), d, NOREF);
-          ctx.restore();
+          ctx.save();
+          try {
+            ctx.beginPath(); ctx.rect(x - 14, fy - 16, 28, 16); ctx.clip();
+            const open = t > 1.2 && t < 3.6 && Math.sin(t * 2.2) > 0.4;
+            blit(ctx, K.croc[open ? 1 : 0], x, fy + 11 - Math.round(rise * 11), d, NOREF);
+          } finally { ctx.restore(); }
         }
         ctx.drawImage(K.lid, x - 7 + Math.round(slide * 10 * d), fy - 2);
         return;
@@ -418,11 +424,12 @@ export class MicroScene {
   draw(ctx, env, off = 0) {
     const { x0, x1 } = this.lane, A = this.area;
     ctx.save();
-    ctx.beginPath(); ctx.rect(x0, A.y0 - 30, x1 - x0, A.y1 - A.y0 + 56); ctx.clip();      // nunca fuera del carril (ni sobre el panel); incluye el reflejo
-    ctx.translate(off, 0);                                                                  // parallax de la calle (par * 0.9)
-    if (this.def.fade) ctx.globalAlpha = clamp((this.dur - this.t) / 0.5, 0, 1);
-    this.def.draw(ctx, this, env);
-    ctx.restore();
+    try {
+      ctx.beginPath(); ctx.rect(x0, A.y0 - 30, x1 - x0, A.y1 - A.y0 + 56); ctx.clip();      // nunca fuera del carril (ni sobre el panel); incluye el reflejo
+      ctx.translate(off, 0);                                                                  // parallax de la calle (par * 0.9)
+      if (this.def.fade) ctx.globalAlpha = clamp((this.dur - this.t) / 0.5, 0, 1);
+      this.def.draw(ctx, this, env);
+    } finally { ctx.restore(); }
   }
 }
 

@@ -75,11 +75,12 @@ export class Menu {
     this.par = 0;                            // parallax suavizado (-1..1)
     this.sceneCache = null;
     this.strip = new StripDirector();        // franja animada de la calle (solo en el título; ver menu-strip.js)
+    this.stripOff = false;                   // se pone a true si la franja lanza una excepción: queda apagada y el menú sigue igual
   }
 
   open(screen = 'title') {
     this.screen = screen;
-    if (screen === 'title') { this.index = 0; this.enterAt = performance.now() / 1000; this.hot.fill(0); this.press.fill(0); this.strip.reset(); }
+    if (screen === 'title') { this.index = 0; this.enterAt = performance.now() / 1000; this.hot.fill(0); this.press.fill(0); try { this.strip.reset(); } catch (err) { this.stripOff = true; } }
     if (screen === 'floors') { this.floorIndex = 0; this.floorFirst = null; }
     // Solo un movimiento real del ratón cambia la selección.
     this.mouse = this.game.mouseInternal();
@@ -387,10 +388,19 @@ export class Menu {
     if (typed) drawText(ctx, typed, Math.round(cx - measureText(tag) / 2), by + 5, { color: COLORS.enemy });
 
     // Franja animada de la calle: ANTES del panel y de los textos (pasan por detrás), solo sin panel modal encima (OPCIONES) y sin el cursor ni los dedos como obstáculo (no recibe clics).
-    if (g.panel) this.strip.hold();
-    else {
-      const area = stripArea(w, h, L, sf, g.input.touchMode && IS_IOS ? 11 : 0);
-      this.strip.draw(ctx, now, area, { lite: g.fx.lite, strobe: g.settings.get('strobeEnabled'), off: Math.round(this.par * 12 * 0.9) });
+    // AISLADA: cualquier excepción de la franja (sprites, escena, área) la apaga para el resto de la sesión y el menú se dibuja igual; el `save/restore` deja el contexto limpio (transformación, alfa, recorte).
+    if (!this.stripOff) {
+      ctx.save();
+      try {
+        if (g.panel) this.strip.hold();
+        else {
+          const area = stripArea(w, h, L, sf, g.input.touchMode && IS_IOS ? 11 : 0);
+          this.strip.draw(ctx, now, area, { lite: g.fx.lite, strobe: g.settings.get('strobeEnabled'), off: Math.round(this.par * 12 * 0.9) });
+        }
+      } catch (err) {
+        this.stripOff = true; this.strip.scene = null;
+        console.warn('Franja del título desactivada por un error:', err);
+      } finally { ctx.restore(); }
     }
 
     // Panel de opciones: oscuro y con filos de neón para que se lean sobre el fondo vivo.
