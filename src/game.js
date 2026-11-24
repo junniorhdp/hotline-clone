@@ -4306,6 +4306,8 @@ export class Game {
     if (this.sewerRun) this.sewerRun.croc.hear(x, y, radius); // el cocodrilo del túnel oye los ruidos
     if (this.street) this.street.noise(x, y, radius); // los civiles de la calle oyen lo que pasa dentro (alerta indirecta)
     // Los enemigos investigan el origen del ruido; tras una pared o una puerta cerrada se oye más apagado (radio ×0,6).
+    // Un ruido hecho en la calle (fuera del edificio) no atrae a los de dentro: no podrían llegar (puerta principal bloqueada) y se quedarían ante ella.
+    if (this.entry && !this.testRange && !this.inBuilding({ x, y })) return;
     for (const e of this.enemies) {
       if (!e.alive) continue;
       const d = Math.hypot(e.x - x, e.y - y);

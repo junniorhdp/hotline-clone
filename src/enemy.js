@@ -361,7 +361,12 @@ export class Enemy {
         {
           const spd = (this.hurry || AI.tier === 3 ? chaseSpeed() * 0.92 : INVESTIGATE_SPEED) * this.speedMul;
           const arrived = AI.tier === 1 ? this.directTo(this.target.x, this.target.y, spd, dt, game.map) : this.goTo(this.target.x, this.target.y, spd, dt, game.map); // TONTOS: recto, sin rodear
-          if (arrived) this.startSearch();
+          // Destino inalcanzable (p. ej. un ruido en la calle con la puerta principal bloqueada): sin avanzar durante 1,5 s se rinde y se pone a buscar,
+          // en vez de quedarse clavado empujando la puerta para siempre.
+          const moved = Math.hypot(this.x - (this.invX ?? this.x), this.y - (this.invY ?? this.y));
+          this.invX = this.x; this.invY = this.y;
+          if (this.doorWait > 0 || this.doorPushTime > 0 || moved > spd * dt * 0.25) this.invStall = 0; else this.invStall = (this.invStall || 0) + dt;
+          if (arrived || this.invStall > 1.5) { this.invStall = 0; this.invX = this.invY = undefined; this.startSearch(); }
         }
         break;
       case 'search':
