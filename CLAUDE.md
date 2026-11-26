@@ -35,6 +35,10 @@ Lo que esa prueba **no ha confirmado** (no se dijo): iPhone/iOS en concreto (mod
 - `main.js` envuelve el mismo `Game`; `sdk.js`: SDK v3 (`await SDK.init()` con límite de tiempo; sin SDK o `environment === disabled` todo es no-op), `loadingStart/Stop`, `gameplayStart/Stop` según `game.state` / pausa / viñeta (**un estado nuevo de partida hay que añadirlo a `PLAY_STATES`**), anuncios (`showAd`: pausa al pedirlo, silencia en `adStarted`), ajuste `muteAudio` y botón de pantalla completa oculto (CrazyGames lo prohíbe). Sin botón de anuncio recompensado.
 - La build sobrescribe en la instancia `game.menu.fullscreenRect`, `game.ads.trigger*` y `sfx.init/toggleMute/setAdSilence`: si se renombran en `src/`, revisar `tools/crazygames/`.
 
+## Portadas de CrazyGames (`tools/crazygames-covers/`)
+- `node tools/crazygames-covers/generate.mjs` genera en `crazygames-assets/` (excluida en `.git/info/exclude`) las portadas 1920×1080, 800×1200 y 800×800. Sin dependencias: HTML5 Canvas (`render.js`) en el Edge/Chrome instalado, en segundo plano.
+- Base: capturas en `crazygames-assets/source/` (instrucciones en su `LEEME.txt`; `covers.json` opcional) o, sin ellas, una escena dibujada. La esquina superior izquierda queda libre; el script falla si cambia el tamaño, el título pisa esa esquina o queda con < 4 % de margen, o hay borde blanco.
+
 ## Arquitectura (reglas)
 - Todo el código del juego vive en `src/` y es modular, un módulo por responsabilidad:
   - `main.js` — punto de entrada: crea el `Game` y lo arranca. Nada de lógica aquí.
