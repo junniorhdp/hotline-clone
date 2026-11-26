@@ -1,6 +1,7 @@
 import { drawText, measureText } from './pixelfont.js';
 import { COLORS } from './utils.js';
 import { bloodyMaskPortrait } from './portraits.js';
+import { tr } from './i18n.js';
 
 // Líneas de comunicación del prólogo (lore). Como la radio del piso 10 son MODALES: el mundo se congela (Game.update sale antes de simular mientras hay una línea),
 // la caja sale ABAJO y se pasa con CLIC / ESPACIO / ENTER (en táctil, tocar en cualquier punto: sin joysticks mientras dura). Un clic con el texto a medias lo completa;
@@ -49,7 +50,7 @@ export class Comms {
     this.seen.add(id);
     const lines = entries.map((e) => {
       const sp = typeof e.speaker === 'string' ? SPEAKERS[e.speaker] : e.speaker;
-      return { who: sp.name, color: sp.color, text: e.text, portrait: sp.portrait || null, tag: sp.tag || 'RADIO', icon: sp.icon || null, focus: e.focus || null, skippable: !!opts.skippable, t: 0, age: 0, open: 0, urgent: !!opts.urgent };
+      return { who: sp.name, color: sp.color, text: tr(e.text), portrait: sp.portrait || null, tag: sp.tag || 'RADIO', icon: sp.icon || null, focus: e.focus || null, skippable: !!opts.skippable, t: 0, age: 0, open: 0, urgent: !!opts.urgent };
     });
     if (opts.onEnd && lines.length) lines[lines.length - 1].onEnd = opts.onEnd; // se llama al cerrar la última línea
     if (opts.urgent) this.queue.unshift(...lines); else this.queue.push(...lines);
@@ -161,7 +162,7 @@ export class Comms {
     }
     if (c.age > 0.8) {
       const txt = g.hint('CLIC / ESPACIO ▼', 'TOCA ▼');
-      if (Math.floor(c.age * 2.5) % 2) drawText(ctx, txt.replace('▼', 'v'), bx + bw - 6, by + bh - 11, { color: '#7d6f98', align: 'right' });
+      if (Math.floor(c.age * 2.5) % 2) drawText(ctx, tr(txt).replace('▼', 'v'), bx + bw - 6, by + bh - 11, { color: '#7d6f98', align: 'right' });
     }
   }
 

@@ -3,6 +3,7 @@ import { Pickup, WEAPON_DEFS, STREET_LOOT, inMeleeArc, segmentPointDistance } fr
 import { Vagrant } from './npcs.js';
 import { pixelRect, pixelDisc, WORLD_PX } from './sprites.js';
 import { drawText, measureText } from './pixelfont.js';
+import { tr } from './i18n.js';
 import { COLORS, clamp, seededRandom, hashString } from './utils.js';
 
 // Vida de la calle (zona exterior de cada piso). Todo es opcional y no toca el combate:
@@ -463,7 +464,7 @@ export class StreetLife {
       const colL = tm ? g.safe.l + 80 : 8, colR = tm ? g.touch.rightColumn().x - 6 : w - 8;
       const aw = Math.max(120, colR - colL);
       const lines = [];
-      this.dialog.lines.forEach((l, i) => wrap(l, Math.max(14, Math.floor((aw - 16) / 6))).forEach((ln) => lines.push({ ln, head: i === 0 && this.dialog.lines.length > 1 })));
+      this.dialog.lines.forEach((l, i) => wrap(tr(l), Math.max(14, Math.floor((aw - 16) / 6))).forEach((ln) => lines.push({ ln, head: i === 0 && this.dialog.lines.length > 1 })));
       const bw = Math.min(aw, Math.max(...lines.map((l) => measureText(l.ln))) + 16), bh = lines.length * 10 + 10;
       const bx = tm ? Math.round(colL + (aw - bw) / 2) : Math.round(w / 2 - bw / 2), by = tm ? Math.round(36 + g.safe.t) : Math.round(h - bh - 14);
       ctx.fillStyle = 'rgba(13, 2, 33, 0.94)'; ctx.fillRect(bx, by, bw, bh);
