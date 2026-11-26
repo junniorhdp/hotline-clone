@@ -11,6 +11,7 @@ const BLOCKED_DEFAULTS = new Set(['F1', 'Space', 'ArrowUp', 'ArrowDown', 'ArrowL
 export class Input {
   constructor(canvas) {
     this.canvas = canvas;
+    this.rotated = false; // lo pone Game.resize(): canvas girado 90° (celular en vertical)
     this.keys = new Set();
     this.pressed = new Set();
     this.mouse = { x: 0, y: 0, left: false, right: false, middle: false };
@@ -105,7 +106,8 @@ export class Input {
   }
 
   toCanvas(e) {
-    const rect = this.canvas.getBoundingClientRect();
+    const rect = this.canvas.getBoundingClientRect(); // con el canvas girado 90° es la caja que ocupa en la ventana
+    if (this.rotated) return { x: e.clientY - rect.top, y: rect.right - e.clientX };
     return { x: e.clientX - rect.left, y: e.clientY - rect.top };
   }
 

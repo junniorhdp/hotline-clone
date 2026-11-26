@@ -308,7 +308,13 @@ export class Game {
   // (si no, en pantallas estrechas se perderían los lados). `view` = rectángulo físico.
   resize() {
     const dpr = Math.max(1, window.devicePixelRatio || 1);
-    const cssW = window.innerWidth, cssH = window.innerHeight;
+    // Celular en vertical: el juego se dibuja apaisado y GIRADO 90° (no depende de que el teléfono rote: sirve con la rotación
+    // bloqueada, en iPhone y dentro del iframe de itch.io). cssW / cssH son las medidas LÓGICAS (ya giradas).
+    const winW = window.innerWidth, winH = window.innerHeight;
+    const rotated = this.wantsRotation();
+    this.rotated = rotated;
+    this.input.rotated = rotated; // los toques se convierten al sistema girado (input.toCanvas)
+    const cssW = rotated ? winH : winW, cssH = rotated ? winW : winH;
     const sw = Math.round(cssW * dpr), sh = Math.round(cssH * dpr);
     let scale = Math.max(1, Math.round(sh / TARGET_INTERNAL_H));
     while (scale > 1 && (sh / scale < INTERNAL_MIN_H || sw / scale < INTERNAL_MIN_W)) scale--;
@@ -323,6 +329,9 @@ export class Game {
     this.canvas.height = sh;
     this.canvas.style.width = `${cssW}px`;
     this.canvas.style.height = `${cssH}px`;
+    this.canvas.style.transformOrigin = '0 0';
+    this.canvas.style.transform = rotated ? 'rotate(90deg)' : '';
+    this.canvas.style.left = rotated ? `${winW}px` : '0px';
     this.scene.width = iw;
     this.scene.height = ih;
     this.sceneCtx.imageSmoothingEnabled = false; // cambiar el tamaño reinicia el estado del contexto
@@ -333,7 +342,9 @@ export class Game {
     const cs = getComputedStyle(this.safeProbe);
     const k = dpr / scale;
     const inset = (v) => Math.ceil((parseFloat(v) || 0) * k);
-    this.safe = { t: inset(cs.paddingTop), r: inset(cs.paddingRight), b: inset(cs.paddingBottom), l: inset(cs.paddingLeft) };
+    const phys = { t: inset(cs.paddingTop), r: inset(cs.paddingRight), b: inset(cs.paddingBottom), l: inset(cs.paddingLeft) };
+    // Girado: el borde izquierdo del juego es el de ARRIBA del teléfono, el de arriba es el derecho, etc.
+    this.safe = rotated ? { t: phys.r, r: phys.b, b: phys.l, l: phys.t } : phys;
   }
 
   // Coordenadas CSS relativas al canvas (ratón o dedo) → píxeles internos de la escena.
@@ -346,9 +357,9 @@ export class Game {
     return this.toInternal(this.input.mouse.x, this.input.mouse.y);
   }
 
-  // Juego apaisado obligatorio en dispositivos táctiles: en vertical se pausa y se pide girar.
-  get needsRotate() {
-    return this.cssH > this.cssW && (this.input.touchMode || COARSE_POINTER);
+  // Juego apaisado obligatorio en dispositivos táctiles: con la ventana en vertical se dibuja girado (ver resize).
+  wantsRotation() {
+    return window.innerHeight > window.innerWidth && (this.input.touchMode || COARSE_POINTER);
   }
 
   mouseWorld() {
@@ -366,6 +377,8 @@ export class Game {
     const frame = Math.min((now - this.last) / 1000, MAX_FRAME);
     this.last = now;
     this.frameDt = frame;
+    // El modo táctil puede activarse con el primer toque (sin ningún `resize`): comprobar si toca girar o dejar de hacerlo.
+    if (this.wantsRotation() !== this.rotated) this.resize();
     // Anuncio en pantalla (ads.js): la simulación NO avanza (y el audio está silenciado); se sigue dibujando el último fotograma.
     if (this.ads.active) { this.acc = 0; this.render(); requestAnimationFrame(this.loop); return; }
     this.acc += frame;
@@ -610,8 +623,8 @@ export class Game {
     if (this.state !== 'menu' || this.menu.screen !== 'title' || this.fade || this.panel) return;
     const r = this.menu.fullscreenRect();
     if (!r) return;
-    const rect = this.canvas.getBoundingClientRect();
-    const p = this.toInternal(e.clientX - rect.left, e.clientY - rect.top);
+    const c = this.input.toCanvas(e);
+    const p = this.toInternal(c.x, c.y);
     if (p.x < r.x || p.x >= r.x + r.w || p.y < r.y || p.y >= r.y + r.h) return;
     this.sfx.play('pickup');
     document.documentElement.requestFullscreen({ navigationUI: 'hide' })
@@ -620,7 +633,7 @@ export class Game {
   }
 
   // Pide bloquear la pantalla en horizontal. Falla EN SILENCIO (sin API, sin pantalla completa, iPhone, promesa rechazada): nunca interrumpe nada. En Android Chrome solo se concede
-  // en pantalla completa; si el móvil sigue en vertical, el juego se pausa con `GIRA EL DISPOSITIVO` como siempre (`needsRotate`).
+  // en pantalla completa; si el móvil sigue en vertical, el juego se dibuja girado (`wantsRotation`).
   lockLandscape() {
     try {
       const p = screen.orientation && screen.orientation.lock && screen.orientation.lock('landscape');
@@ -1204,8 +1217,6 @@ export class Game {
     // Filtro VS: entra y sale con suavidad (también al resolverse el forcejeo o reiniciar).
     this.scuffleI += ((this.state === 'scuffle' ? 1 : 0) - this.scuffleI) * (1 - Math.exp(-9 * dt));
     if (this.scuffleI < 0.005) this.scuffleI = 0;
-    // En vertical (táctil) todo queda en pausa hasta que se gire el dispositivo.
-    if (this.needsRotate) return;
     // Estas teclas funcionan siempre, incluso durante el hit-stop o muerto.
     if (input.wasPressed('F1') && this.state !== 'initials') this.debug = !this.debug;
     // Debug (con F1 activo): P = aparece / desaparece el compañero · L = relevo de control.
@@ -4306,6 +4317,8 @@ export class Game {
     if (this.sewerRun) this.sewerRun.croc.hear(x, y, radius); // el cocodrilo del túnel oye los ruidos
     if (this.street) this.street.noise(x, y, radius); // los civiles de la calle oyen lo que pasa dentro (alerta indirecta)
     // Los enemigos investigan el origen del ruido; tras una pared o una puerta cerrada se oye más apagado (radio ×0,6).
+    // Un ruido hecho en la calle (fuera del edificio) no atrae a los de dentro: no podrían llegar (puerta principal bloqueada) y se quedarían ante ella.
+    if (this.entry && !this.testRange && !this.inBuilding({ x, y })) return;
     for (const e of this.enemies) {
       if (!e.alive) continue;
       const d = Math.hypot(e.x - x, e.y - y);
@@ -4529,12 +4542,6 @@ export class Game {
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.fillStyle = COLORS.background;
     ctx.fillRect(0, 0, this.scene.width, this.scene.height);
-
-    if (this.needsRotate) {
-      this.drawRotatePrompt(ctx);
-      this.fx.compose(this.ctx, this.scene, this.frameDt);
-      return;
-    }
 
     // En el menú no se dibuja el piso: el fondo synthwave lo pinta el propio menú.
     if (this.state === 'menu') {
@@ -5237,24 +5244,6 @@ export class Game {
     let s = preferred;
     while (s > 1 && measureText(text) * s > maxW) s--;
     return s;
-  }
-
-  // Pantalla "gira el dispositivo": un móvil pixelado que alterna vertical/horizontal.
-  drawRotatePrompt(ctx) {
-    const w = this.scene.width, h = this.scene.height;
-    const cx = Math.round(w / 2), cy = Math.round(h / 2) - 20;
-    const landscape = Math.floor(performance.now() / 700) % 2 === 1;
-    const pw = landscape ? 44 : 24, ph = landscape ? 24 : 44;
-    const x = cx - pw / 2, y = cy - ph / 2;
-    ctx.fillStyle = landscape ? COLORS.player : COLORS.wall;
-    ctx.fillRect(x, y, pw, ph);
-    ctx.fillStyle = '#140a24';
-    ctx.fillRect(x + 2, y + 2, pw - 4, ph - 4);
-    ctx.fillStyle = landscape ? COLORS.player : COLORS.wall;
-    if (landscape) ctx.fillRect(x + pw - 4, cy - 2, 1, 4); else ctx.fillRect(cx - 2, y + ph - 4, 4, 1);
-    const title = 'GIRA EL DISPOSITIVO';
-    drawText(ctx, title, cx, cy + 32, { color: COLORS.wall, scale: this.fitScale(title, w - 12), align: 'center' });
-    drawText(ctx, 'NEON RUSH SE JUEGA EN HORIZONTAL', cx, cy + 56, { color: '#9d8fb8', align: 'center' });
   }
 
   // Mira de píxeles con contorno oscuro (el cursor del sistema está oculto por CSS).
