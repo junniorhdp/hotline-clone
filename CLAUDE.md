@@ -30,6 +30,11 @@ Lo que esa prueba **no ha confirmado** (no se dijo): iPhone/iOS en concreto (mod
 - **Cuidado**: todo texto que se corte antes de dibujarse (tecleado letra a letra o partido en filas) debe pasar por `tr()` ENTERO antes de cortarlo. Lo que escribe el jugador (iniciales) va con `drawText(..., { raw: true })`. La fuente no tiene todos los glifos (sin `*`, comillas dobles, `&` ni `…`).
 - Las descripciones en español del resto de este archivo siguen siendo válidas como texto de origen.
 
+## Build para CrazyGames (`tools/crazygames/`)
+- `node tools/crazygames/build.mjs` genera `crazygames-build/` (excluida en `.git/info/exclude`; no se sube al repo): minificada, rutas relativas, sin `.map`; el script falla si aparece un enlace externo distinto del SDK. No usa `vite.config.js` ni toca `src/`: la web y el zip de itch.io no cambian.
+- `main.js` envuelve el mismo `Game`; `sdk.js`: SDK v3 (`await SDK.init()` con límite de tiempo; sin SDK o `environment === disabled` todo es no-op), `loadingStart/Stop`, `gameplayStart/Stop` según `game.state` / pausa / viñeta (**un estado nuevo de partida hay que añadirlo a `PLAY_STATES`**), anuncios (`showAd`: pausa al pedirlo, silencia en `adStarted`), ajuste `muteAudio` y botón de pantalla completa oculto (CrazyGames lo prohíbe). Sin botón de anuncio recompensado.
+- La build sobrescribe en la instancia `game.menu.fullscreenRect`, `game.ads.trigger*` y `sfx.init/toggleMute/setAdSilence`: si se renombran en `src/`, revisar `tools/crazygames/`.
+
 ## Arquitectura (reglas)
 - Todo el código del juego vive en `src/` y es modular, un módulo por responsabilidad:
   - `main.js` — punto de entrada: crea el `Game` y lo arranca. Nada de lógica aquí.
