@@ -1,3 +1,5 @@
+import { tr } from './i18n.js';
+
 // Fuente bitmap 5×7 propia: todo el texto del juego se pinta píxel a píxel (sin antialiasing).
 // Cada glifo son 7 filas de 5 columnas ('#' = píxel encendido). Las tildes y la Ñ se dibujan
 // en 2 filas extra encima del glifo base, así que la celda completa mide 5×9.
@@ -80,10 +82,15 @@ function glyphRows(ch) {
   return g ? ['.....', '.....', ...g.split(' ')] : null;
 }
 
-export function measureText(text) {
+function rawWidth(text) {
   let w = 0;
   for (const ch of text.toUpperCase()) w += ch === ' ' ? SPACE_ADVANCE : ADVANCE;
   return Math.max(0, w - 1);
+}
+
+// Ancho del texto YA TRADUCIDO al idioma activo (i18n.js).
+export function measureText(text) {
+  return rawWidth(tr(text));
 }
 
 const cache = new Map();
@@ -96,7 +103,7 @@ function renderText(text, color, shadow) {
   if (cache.size > MAX_CACHE) cache.clear();
   const up = text.toUpperCase();
   c = document.createElement('canvas');
-  c.width = measureText(up) + 2;
+  c.width = rawWidth(up) + 2;
   c.height = CELL_H + 1;
   const ctx = c.getContext('2d');
   const paint = (ox, oy, fill) => {
@@ -119,8 +126,8 @@ function renderText(text, color, shadow) {
 
 // Dibuja texto pixelado. (x, y) = esquina superior izquierda de la celda (incluye zona de tildes).
 // `scale` multiplica el tamaño del píxel (en el HUD 1 = 1 píxel interno).
-export function drawText(ctx, text, x, y, { color = '#f5f3ff', scale = 1, align = 'left', shadow = '#140a24' } = {}) {
-  const img = renderText(String(text), color, shadow);
+export function drawText(ctx, text, x, y, { color = '#f5f3ff', scale = 1, align = 'left', shadow = '#140a24', raw = false } = {}) {
+  const img = renderText(raw ? String(text) : tr(text), color, shadow);
   const w = img.width * scale;
   const dx = align === 'center' ? x - w / 2 : align === 'right' ? x - w : x;
   ctx.drawImage(img, Math.round(dx), Math.round(y), w, img.height * scale);

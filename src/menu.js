@@ -1,5 +1,6 @@
 import { LEVELS, loadLevel, isWallTile, isStructuralWall } from './map.js';
 import { drawText, measureText, CELL_H } from './pixelfont.js';
+import { tr, locale, getLang } from './i18n.js';
 import { drawTouchButton } from './touch.js';
 import { COLORS, clamp } from './utils.js';
 import { prologueSeen } from './prologue.js';
@@ -98,6 +99,7 @@ export class Menu {
     const inside = (r) => r && m.x >= r.x && m.x < r.x + r.w && m.y >= r.y && m.y < r.y + r.h;
 
     if (this.screen === 'title') {
+      if (input.wasPressed('KeyL') || (input.mousePressed.left && inside(this.languageRect()))) { this.toggleLanguage(); return; }
       const n = TITLE_OPTIONS.length, prev = this.index;
       if (input.wasPressed('ArrowUp') || input.wasPressed('KeyW')) this.index = (this.index + n - 1) % n;
       if (input.wasPressed('ArrowDown') || input.wasPressed('KeyS')) this.index = (this.index + 1) % n;
@@ -179,12 +181,37 @@ export class Menu {
     return { id: 'fullscreen', label, x: g.scene.width - 6 - g.safe.r - size.w, y: 6 + g.safe.t, ...size };
   }
 
+  // Botón de IDIOMA del título (EN | ES, arriba a la derecha; a la izquierda de PANTALLA COMPLETA si existe): así se elige nada más entrar. También con la tecla L y en OPCIONES.
+  languageRect() {
+    const g = this.game;
+    if (this.screen !== 'title') return null;
+    const fs = this.fullscreenRect(), touch = g.input.touchMode;
+    const size = { w: touch ? Math.max(52, Math.round(g.touch.px(72))) : 52, h: fs ? fs.h : touch ? g.touch.buttonSize('EN | ES').h : 15 };
+    return { id: 'language', x: (fs ? fs.x - 4 : g.scene.width - 6 - g.safe.r) - size.w, y: 6 + g.safe.t, ...size };
+  }
+
+  toggleLanguage() {
+    const g = this.game;
+    g.settings.set('language', getLang() === 'en' ? 'es' : 'en');
+    g.sfx.play('pickup');
+  }
+
+  drawLanguageButton(ctx) {
+    const r = this.languageRect();
+    if (!r) return;
+    drawTouchButton(ctx, { ...r, label: '' }, false, 0.8);
+    const y = r.y + Math.round((r.h - CELL_H) / 2) - 1, mid = r.x + Math.round(r.w / 2), en = getLang() === 'en';
+    drawText(ctx, 'EN', mid - 6, y, { color: en ? COLORS.player : '#6a5a88', align: 'right', raw: true });
+    drawText(ctx, '/', mid, y, { color: '#6a5a88', align: 'center', raw: true });
+    drawText(ctx, 'ES', mid + 6, y, { color: en ? '#6a5a88' : COLORS.player, raw: true });
+  }
+
   // Colocación del título (la usan el dibujo y el ratón/toque): logo y lema bajo la fila de arriba (versión y pantalla completa), opciones con altura propia por fila (nunca se encimen:
   // el texto cabe siempre en su fila) y margen inferior para las ayudas. En pantallas bajas se reduce el logo antes de apretar las filas.
   titleLayout() {
     const g = this.game, { width: w, height: h } = g.scene, sf = g.safe, n = TITLE_OPTIONS.length, touch = g.input.touchMode;
     const fs = this.fullscreenRect();
-    const topRow = 6 + sf.t + (fs ? fs.h : 9) + 4;
+    const topRow = 6 + sf.t + (fs ? fs.h : this.languageRect()?.h ?? 9) + 4;
     const iphone = touch && IS_IOS;
     const bottom = 18 + sf.b + (iphone ? 11 : 0);
     let logoScale = g.fitScale('NEON RUSH', w - 16, 5);
@@ -384,7 +411,7 @@ export class Menu {
     ctx.fillStyle = COLORS.player; ctx.fillRect(cx - Math.round(bw / 2), by, Math.round(bw / 2), 1 + Math.round(pulse));
     ctx.fillStyle = COLORS.wall; ctx.fillRect(cx, by, Math.round(bw / 2), 1 + Math.round(1 - pulse));
     const tag = measureText('ACCIÓN CENITAL · UN SOLO GOLPE · NEÓN') <= w - 8 ? 'ACCIÓN CENITAL · UN SOLO GOLPE · NEÓN' : 'UN SOLO GOLPE · NEÓN';
-    const typed = tag.slice(0, Math.max(0, Math.floor((t - 0.5) * 34)));
+    const typed = tr(tag).slice(0, Math.max(0, Math.floor((t - 0.5) * 34)));
     if (typed) drawText(ctx, typed, Math.round(cx - measureText(tag) / 2), by + 5, { color: COLORS.enemy });
 
     // Franja animada de la calle: ANTES del panel y de los textos (pasan por detrás), solo sin panel modal encima (OPCIONES) y sin el cursor ni los dedos como obstáculo (no recibe clics).
@@ -444,7 +471,8 @@ export class Menu {
     drawText(ctx, `V ${APP_VERSION}`, 6 + sf.l, 6 + sf.t, { color: '#4a3d66' });
     const fs = this.fullscreenRect();
     if (fs) drawTouchButton(ctx, fs, false, 0.7);
-    const best = g.history.best(), rec = best ? `RÉCORD ${best.toLocaleString('es')}` : '';
+    this.drawLanguageButton(ctx);
+    const best = g.history.best(), rec = best ? `RÉCORD ${best.toLocaleString(locale())}` : '';
     const yb = h - 12 - sf.b;
     const hint = touch ? '' : 'FLECHAS / RATÓN: ELEGIR · ENTER: ACEPTAR';
     if (hint && rec && measureText(hint) + measureText(rec) + 24 + sf.l + sf.r > w) { drawText(ctx, rec, cx, yb - 10, { color: COLORS.enemy, align: 'center' }); drawText(ctx, hint, cx, yb, { color: DIM, align: 'center' }); }
@@ -502,7 +530,7 @@ export class Menu {
       drawText(ctx, `${info.armed} ARMADOS`, mid, ty + 11, { color: DIM, align: 'center' });
       if (stats.bestRank) {
         drawText(ctx, `RANGO ${stats.bestRank}`, mid, ty + 22, { color: RANK_COLORS[stats.bestRank], align: 'center' });
-        drawText(ctx, `${stats.bestScore.toLocaleString('es')} PTS`, mid, ty + 33, { color: COLORS.text, align: 'center' });
+        drawText(ctx, `${stats.bestScore.toLocaleString(locale())} PTS`, mid, ty + 33, { color: COLORS.text, align: 'center' });
       } else {
         drawText(ctx, 'PENDIENTE', mid, ty + 22, { color: DIM, align: 'center' });
       }

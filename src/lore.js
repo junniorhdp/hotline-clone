@@ -1,4 +1,5 @@
 import { drawText, measureText } from './pixelfont.js';
+import { tr } from './i18n.js';
 import { talkBlips, voiceFor } from './comms.js';
 import { AGENTS } from './portraits.js';
 import { TILE, OUTSKIRT, isSolidAt, lineOfSight } from './map.js';
@@ -88,8 +89,8 @@ class Vignette {
     if (g.holdSkip(this, dt)) this.t = d.dur;
     while (this.cueIdx < (d.cues || []).length && d.cues[this.cueIdx].at <= this.t) { const c = d.cues[this.cueIdx++]; g.sfx.play(c.sound, c.vol ?? 1, c.arg); }
     for (const L of d.lines || []) {
-      const n = (t) => Math.max(0, Math.min(L.text.length, Math.floor((t - L.at) * 14)));
-      talkBlips(g, this.voice, L.text, n(t0), n(this.t));
+      const text = tr(L.text), n = (t) => Math.max(0, Math.min(text.length, Math.floor((t - L.at) * 14)));
+      talkBlips(g, this.voice, text, n(t0), n(this.t));
     }
     return this.t >= d.dur;
   }
@@ -105,9 +106,9 @@ class Vignette {
     else if (d.draw === 'monitors') drawMonitors(ctx, w, h, t);
     const scale = w >= 300 ? 2 : 1, y0 = Math.round(h * (d.textY || 0.42)), lh = 12 * scale + 6;
     (d.lines || []).forEach((L, i) => {
-      const n = Math.max(0, Math.min(L.text.length, Math.floor((t - L.at) * 14)));
+      const text = tr(L.text), n = Math.max(0, Math.min(text.length, Math.floor((t - L.at) * 14)));
       const x = d.cursor ? Math.round(w / 2 - measureText('UNO.') * scale / 2) : Math.round(w / 2 - measureText(L.text) * scale / 2);   // V1: las líneas alineadas a la izquierda; el resto, centradas
-      if (n > 0) drawText(ctx, L.text.slice(0, n), x, y0 + i * lh, { color: L.color, scale, shadow: null });
+      if (n > 0) drawText(ctx, text.slice(0, n), x, y0 + i * lh, { color: L.color, scale, shadow: null });
     });
     if (d.cursor && d.cursor.blinks.some(([a, b]) => t >= a && t < b)) {
       drawText(ctx, '_', Math.round(w / 2 - measureText('UNO.') * scale / 2), y0 + d.cursor.row * lh, { color: AMBER, scale, shadow: null });
@@ -556,8 +557,8 @@ export class Lore {
       const R = this.radio, t0 = R.t;
       R.t += dt;
       for (const L of R.lines) {
-        const n = (t) => Math.max(0, Math.min(L.text.length, Math.floor((t - L.at) * 22)));
-        talkBlips(g, R.voice, L.text, n(t0), n(R.t));
+        const text = tr(L.text), n = (t) => Math.max(0, Math.min(text.length, Math.floor((t - L.at) * 22)));
+        talkBlips(g, R.voice, text, n(t0), n(R.t));
       }
       while (R.cueIdx < R.cues.length && R.cues[R.cueIdx] <= R.t) { R.cueIdx++; g.sfx.play('empty', 0.6); }
       if (R.t >= R.dur) this.radio = null;
@@ -594,8 +595,8 @@ export class Lore {
     ctx.fillRect(bx, by, bw, 1); ctx.fillRect(bx, by + bh - 1, bw, 1); ctx.fillRect(bx, by, 1, bh); ctx.fillRect(bx + bw - 1, by, 1, bh);
     drawText(ctx, R.title, bx + 6, by + 4, { color: R.color, shadow: null });
     R.lines.forEach((L, i) => {
-      const n = Math.max(0, Math.min(L.text.length, Math.floor((R.t - L.at) * 22)));
-      if (n > 0) drawText(ctx, L.text.slice(0, n), bx + 6, by + 14 + i * 10, { color: '#f5f3ff', shadow: null });
+      const text = tr(L.text), n = Math.max(0, Math.min(text.length, Math.floor((R.t - L.at) * 22)));
+      if (n > 0) drawText(ctx, text.slice(0, n), bx + 6, by + 14 + i * 10, { color: '#f5f3ff', shadow: null });
     });
     if (R.t > 5.2) for (let i = 0; i < 24; i++) { ctx.fillStyle = Math.random() < 0.5 ? '#4a4a5a' : '#8a8a9a'; ctx.fillRect(bx + 6 + Math.floor(Math.random() * (bw - 14)), by + 14 + Math.floor(Math.random() * 16), 3, 1); } // estática
   }

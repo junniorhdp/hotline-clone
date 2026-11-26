@@ -17,10 +17,18 @@ Lo que esa prueba **no ha confirmado** (no se dijo): iPhone/iOS en concreto (mod
   `npm ci` → `npm run build` → `upload-pages-artifact` con `dist` → `deploy-pages`)
   → https://junniorhdp.github.io/hotline-clone/ . En Settings → Pages la fuente debe ser
   "GitHub Actions". El workflow también se puede lanzar a mano (`workflow_dispatch`).
+- `npm run check:i18n` — avisa de textos que en inglés saldrían en español (ver "Idioma").
 - `npm run preview` — sirve el build en http://localhost:4173/hotline-clone/
 - Versión: `vite.config.js` define `__APP_VERSION__` (commit de GitHub Actions o "dev") y el título
   la muestra arriba a la izquierda, para comprobar que el navegador no sirve una copia guardada
   (GitHub Pages permite cachear la página ~10 min).
+
+## Idioma (`i18n.js`, `i18n-en.js`)
+- **Inglés por defecto** (lo exigen los portales de juegos); español con el botón **EN / ES** del título (`Menu.languageRect`, tecla L) o en OPCIONES → `LANGUAGE / IDIOMA` (ajuste `language` en `neonrush.settings.v1`; RESTAURAR no lo cambia).
+- El código **sigue escribiendo los textos en español**; `drawText` y `measureText` (pixelfont.js) los traducen con `tr()` al dibujar. La lógica nunca ve el texto traducido.
+- **Texto nuevo**: añadir su traducción en `src/i18n-en.js` (`{}` = hueco, `{0}`, `{1}` en la traducción) y ejecutar **`npm run check:i18n`** (heurística: no ve todas las frases compuestas ni las palabras sueltas en minúsculas).
+- **Cuidado**: todo texto que se corte antes de dibujarse (tecleado letra a letra o partido en filas) debe pasar por `tr()` ENTERO antes de cortarlo. Lo que escribe el jugador (iniciales) va con `drawText(..., { raw: true })`. La fuente no tiene todos los glifos (sin `*`, comillas dobles, `&` ni `…`).
+- Las descripciones en español del resto de este archivo siguen siendo válidas como texto de origen.
 
 ## Arquitectura (reglas)
 - Todo el código del juego vive en `src/` y es modular, un módulo por responsabilidad:

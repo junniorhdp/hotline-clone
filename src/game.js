@@ -50,6 +50,7 @@ import { Sfx } from './audio.js';
 import { ScreenFx } from './effects.js';
 import { drawSprite, pixelDisc, pixelRect, BLOOD_LEVELS, WORLD_PX, playerBody, drawMaskHead, civHostileColors } from './sprites.js';
 import { drawText, measureText, CELL_H } from './pixelfont.js';
+import { tr, locale, setLang, getLang } from './i18n.js';
 import { civiliansHelp, newKarma, cloneKarma, hostileCivCount, friendlyCivCount } from './street.js';
 import { COLORS, TAU, rand, clamp, angleDiff, closestOnSegment, seededRandom, hashString } from './utils.js';
 
@@ -740,7 +741,7 @@ export class Game {
     } else if (!completed) {
       // Abandonar tras morir SIN entrar al Top 5: directo al menú con un aviso breve (la tabla de récords es para quien bate algo o termina el edificio).
       this.openMenu();
-      this.showToast(`FIN DE PARTIDA · PISO ${this.levelIndex + 1} · ${this.score.total.toLocaleString('es')} PTS`, 3);
+      this.showToast(`FIN DE PARTIDA · PISO ${this.levelIndex + 1} · ${this.score.total.toLocaleString(locale())} PTS`, 3);
     } else {
       this.state = 'gameover';
     }
@@ -862,7 +863,7 @@ export class Game {
     drawText(ctx, title, cx, 8 + this.safe.t, { color: tc, scale: this.fitScale(title, w - 12, 2), align: 'center', shadow: null });
     ctx.restore();
     drawText(ctx, 'INGRESA TUS INICIALES', cx, 28 + this.safe.t, { color: COLORS.text, scale: this.fitScale('INGRESA TUS INICIALES', w - 12, 2), align: 'center', shadow: COLORS.wall });
-    drawText(ctx, `${this.placeLabel(st.position)} · ${s.score.toLocaleString('es')} PTS`, cx, 49 + this.safe.t, { color: COLORS.enemy, align: 'center' });
+    drawText(ctx, `${this.placeLabel(st.position)} · ${s.score.toLocaleString(locale())} PTS`, cx, 49 + this.safe.t, { color: COLORS.enemy, align: 'center' });
 
     const L = this.initialsLayout();
     const tri = (r, up, color) => {
@@ -1759,7 +1760,7 @@ export class Game {
     // Texto: urgencia + resistencia del enemigo (sube con cada forcejeo del piso)
     const label = this.hint(`¡APORREA ${this.keys.label('attack')} / ${this.keys.label('kick')}!`, '¡APORREA ATACAR!');
     if (pulse || !danger) drawText(ctx, label, cx, by - 26, { color: pulse ? '#ffffff' : COLORS.enemy, scale: this.fitScale(label, w - 40, 2), align: 'center' });
-    const res = 'RESISTENCIA X' + sc.mult.toFixed(1).replace('.', ',');
+    const res = 'RESISTENCIA X' + sc.mult.toFixed(1).replace('.', getLang() === 'es' ? ',' : '.');
     drawText(ctx, res, cx, by + 16, { color: sc.mult > 1.2 ? COLORS.blood : '#9d8fb8', align: 'center' });
     ctx.restore();
   }
@@ -3855,7 +3856,7 @@ export class Game {
     R.t += dt;
     const talk = [...R.lines].reverse().find((L) => R.t >= L.from);   // la línea que se está tecleando: un chirrido retro por letra (voz según su máscara)
     if (talk) {
-      const txt = talk.lines.join(' '), n = (t) => Math.max(0, Math.min(txt.length, Math.floor((t - talk.from) * 30)));
+      const txt = talk.lines.map((l) => tr(l)).join(' '), n = (t) => Math.max(0, Math.min(txt.length, Math.floor((t - talk.from) * 30)));
       talkBlips(this, voiceFor(talk.mask, talk.who.gender), txt, n(before), n(R.t));
     }
     this.updateDoors(dt); // los portazos terminan de cerrarse
@@ -3965,7 +3966,7 @@ export class Game {
     ctx.fillStyle = ag.color;
     ctx.fillRect(bx, by, bw, 1); ctx.fillRect(bx, by + bh - 1, bw, 1); ctx.fillRect(bx, by, 1, bh); ctx.fillRect(bx + bw - 1, by, 1, bh);
     // El retrato mueve la boca al hablar igual que en los diálogos del prólogo (con la sangre roja / verde del agente): ver drawTalkingMask.
-    const full = cur.lines.join(' '), typedN = Math.min(full.length, Math.max(0, Math.floor((R.t - cur.from) * 30)));
+    const shown = cur.lines.map((l) => tr(l)), full = shown.join(' '), typedN = Math.min(full.length, Math.max(0, Math.floor((R.t - cur.from) * 30)));
     cur.text = full;
     cur.portrait = { mask: cur.mask, gender: cur.who.gender, level: this.goreOn ? cur.level || 0 : 0, bits: cur.bits || [] };
     drawTalkingMask(ctx, cur, bx + 5, by + 6, typedN, typedN < full.length);
@@ -3973,7 +3974,7 @@ export class Game {
     drawText(ctx, `${ag.name} · RADIO`, bx + 44, by + 5, { color: ag.color });
     // texto tecleado (30 caracteres por segundo)
     let left = Math.floor((R.t - cur.from) * 30);
-    cur.lines.forEach((ln, i) => {
+    shown.forEach((ln, i) => {
       const part = ln.slice(0, Math.max(0, left));
       left -= ln.length;
       if (part) drawText(ctx, part, bx + 44, by + 17 + i * 10, { color: COLORS.text, shadow: null });
@@ -4890,12 +4891,12 @@ export class Game {
       ['MÁSCARA', this.mask.name],
       ['TIEMPO', `${r.time.toFixed(2)} S (PAR ${r.par} S)`],
       ['COMBO MÁXIMO', `X${r.maxCombo}`],
-      ['BONUS DE TIEMPO', `+${r.timeBonus.toLocaleString('es')}`],
+      ['BONUS DE TIEMPO', `+${r.timeBonus.toLocaleString(locale())}`],
       ...(r.challenge ? [['RETO', r.challenge.ok ? `CUMPLIDO +${r.challenge.bonus}` : 'FALLIDO']] : []),
-      ...(r.hostages ? [['REHENES', `${r.hostages.saved}/${r.hostages.total} LIBERADOS${r.hostages.killed ? ` · ${r.hostages.killed} MUERTO${r.hostages.killed > 1 ? 'S' : ''} -${r.hostages.penalty.toLocaleString('es')}` : ''}`]] : []),
-      ['PUNTOS DEL PISO', r.levelScore.toLocaleString('es')],
-      ['PUNTUACIÓN TOTAL', r.total.toLocaleString('es')],
-      ['RÉCORD', this.bestScore.toLocaleString('es')],
+      ...(r.hostages ? [['REHENES', `${r.hostages.saved}/${r.hostages.total} LIBERADOS${r.hostages.killed ? ` · ${r.hostages.killed} MUERTO${r.hostages.killed > 1 ? 'S' : ''} -${r.hostages.penalty.toLocaleString(locale())}` : ''}`]] : []),
+      ['PUNTOS DEL PISO', r.levelScore.toLocaleString(locale())],
+      ['PUNTUACIÓN TOTAL', r.total.toLocaleString(locale())],
+      ['RÉCORD', this.bestScore.toLocaleString(locale())],
     ];
     let y = top + 12 + CELL_H * rankScale + 6;
     for (const [label, value] of lines) {
@@ -4969,7 +4970,7 @@ export class Game {
       }
       const color = mine ? COLORS.player : COLORS.text;
       const floor = e.completed ? 'FIN' : e.floor ? `${e.floor}/${LEVELS.length}` : '-';
-      const values = [this.placeLabel(i + 1), '', e.score.toLocaleString('es'), floor, e.date ? `X${e.combo}` : '-',
+      const values = [this.placeLabel(i + 1), '', e.score.toLocaleString(locale()), floor, e.date ? `X${e.combo}` : '-',
         MASKS.find((m) => m.id === e.mask)?.name || e.maskName || '-', e.date ? formatDate(e.date).slice(0, 8) : 'ANTES'];
       cols.forEach((c, k) => { if (k !== 1) drawText(ctx, values[k], x0 + c.x, rowY, { color, align: c.align || 'left' }); });
       // Iniciales en neón brillante (cian / blanco cálido en la fila propia), con halo.
@@ -4977,7 +4978,7 @@ export class Game {
       const neon = mine ? (Math.floor(now / 220) % 2 ? '#ffffff' : COLORS.enemy) : COLORS.player;
       ctx.shadowColor = mine ? COLORS.wall : COLORS.player;
       ctx.shadowBlur = mine ? 9 : 5;
-      drawText(ctx, e.initials || '???', x0 + cols[1].x, rowY, { color: neon, shadow: null });
+      drawText(ctx, e.initials || '???', x0 + cols[1].x, rowY, { color: neon, shadow: null, raw: true });
       ctx.restore();
     }
   }
@@ -4990,7 +4991,7 @@ export class Game {
     const cx = Math.round(w / 2);
     const title = s.completed ? '¡EDIFICIO COMPLETADO!' : 'FIN DE LA PARTIDA';
     drawText(ctx, title, cx, 6, { color: s.completed ? COLORS.player : COLORS.blood, scale: this.fitScale(title, w - 12), align: 'center' });
-    drawText(ctx, `${s.score.toLocaleString('es')} PTS`, cx, 28, { color: COLORS.text, scale: 2, align: 'center', shadow: COLORS.wall });
+    drawText(ctx, `${s.score.toLocaleString(locale())} PTS`, cx, 28, { color: COLORS.text, scale: 2, align: 'center', shadow: COLORS.wall });
 
     if (s.newRecord) {
       ctx.save();
@@ -5353,7 +5354,7 @@ export class Game {
     }
 
     // Arriba a la derecha SOLO los puntos (sin contador de enemigos, récord ni nombre del piso: tapaban demasiado en móvil); debajo, los avisos raros.
-    drawText(ctx, `${this.score.total.toLocaleString('es')} PTS`, R, 4 + T, { color: COLORS.text, scale: 2, align: 'right', shadow: COLORS.wall });
+    drawText(ctx, `${this.score.total.toLocaleString(locale())} PTS`, R, 4 + T, { color: COLORS.text, scale: 2, align: 'right', shadow: COLORS.wall });
     const flags = [this.sfx.muted && 'SONIDO OFF', !this.fx.enabled && 'EFECTOS OFF', this.fx.enabled && this.fx.lite && 'EFECTOS LIGEROS']
       .filter(Boolean).join(' · ');
     if (flags) drawText(ctx, flags, R, 21 + T, { color: '#9d8fb8', align: 'right' });

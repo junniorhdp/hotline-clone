@@ -1,5 +1,6 @@
 import { clamp } from './utils.js';
 import { MASKS } from './masks.js';
+import { setLang } from './i18n.js';
 
 // Ajustes del jugador: una lista DECLARATIVA (`OPTIONS`) + un gestor (`Settings`) que la guarda en
 // localStorage (`neonrush.settings.v1`) con lectura defensiva y valores por defecto.
@@ -18,6 +19,10 @@ export const SETTINGS_KEY = 'neonrush.settings.v1';
 export const DEFAULT_UNLOCKED = MASKS.filter((m) => !m.lockFloor && !m.secret).map((m) => m.id); // (las secretas se encuentran: ver Game.lootRick)
 
 export const OPTIONS = [
+  // IDIOMA: inglés por defecto (lo exigen los portales de juegos). También se cambia con el botón del título. `keep`: RESTAURAR no lo toca. Ver i18n.js.
+  { id: 'language', section: 'IDIOMA / LANGUAGE', label: 'LANGUAGE / IDIOMA', type: 'choice', default: 'en', keep: true,
+    choices: [{ label: 'ENGLISH', value: 'en' }, { label: 'ESPAÑOL', value: 'es' }],
+    apply: (g, v) => setLang(v) },
   // --- Audio: se conectan a los buses de audio.js (el mute rápido M sigue funcionando por encima) ---
   { id: 'musicVolume', section: 'AUDIO', label: 'MÚSICA', type: 'step', min: 0, max: 100, step: 10, default: 100,
     format: (v) => `${v}%`, apply: (g, v) => g.sfx.setVolumes({ music: v / 100 }) },
@@ -168,7 +173,7 @@ export class Settings {
   }
 
   reset() {
-    for (const o of OPTIONS) if (!o.hidden) this.values[o.id] = o.default; // (el agente elegido no se restaura)
+    for (const o of OPTIONS) if (!o.hidden && !o.keep) this.values[o.id] = o.default; // (el agente elegido y el idioma no se restauran)
     this.save();
     this.applyAll();
   }
